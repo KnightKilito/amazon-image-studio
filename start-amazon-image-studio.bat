@@ -14,8 +14,8 @@ if errorlevel 1 (
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$project = (Resolve-Path -LiteralPath '%PROJECT_DIR%').Path;" ^
-  "$appName = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('5Lqa6ams6YCK5Zu+54mH5bel5L2c5a6k'));" ^
-  "$serverTitle = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('5Lqa6ams6YCK5Zu+54mH5bel5L2c5a6k5byA5Y+R5pyN5Yqh5Zmo'));" ^
+  "$appName = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('5Lqa6ams6YCK5Zu+54mH5bel5L2c5Y+w'));" ^
+  "$serverTitle = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('5Lqa6ams6YCK5Zu+54mH5bel5L2c5Y+w5byA5Y+R5pyN5Yqh5Zmo'));" ^
   "$projectMatch = $project;" ^
   "$pidFile = '%PID_FILE%';" ^
   "$existing = Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1;" ^

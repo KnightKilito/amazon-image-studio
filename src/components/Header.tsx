@@ -90,7 +90,7 @@ export default function Header() {
         <div className="safe-area-x safe-header-inner mx-auto flex max-w-7xl items-center justify-between">
           <h1 className="min-w-0 pr-3">
             <span className="text-[17px] font-bold tracking-tight text-gray-800 transition-colors hover:text-gray-600 dark:text-gray-100 dark:hover:text-gray-300 sm:text-lg">
-              亚马逊图片工作室
+              亚马逊图片工作台
             </span>
           </h1>
           <div className="flex shrink-0 items-center gap-1">

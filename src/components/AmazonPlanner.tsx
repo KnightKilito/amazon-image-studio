@@ -864,7 +864,7 @@ export default function AmazonPlanner() {
       <div className="border-b border-gray-200 px-4 py-4 dark:border-white/[0.08] sm:px-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h2 className="text-lg font-bold tracking-tight text-gray-900 dark:text-gray-50">亚马逊图片工作室</h2>
+            <h2 className="text-lg font-bold tracking-tight text-gray-900 dark:text-gray-50">亚马逊图片工作台</h2>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
               <span>OpenAI gpt-image-2</span>
               <span className="h-1 w-1 rounded-full bg-gray-300 dark:bg-gray-600" />

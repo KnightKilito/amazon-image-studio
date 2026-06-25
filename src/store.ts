@@ -83,7 +83,12 @@ const AGENT_CONVERSATION_TITLE_MAX_LENGTH = 28
 const ERROR_TOAST_MAX_LENGTH = 80
 const API_MAX_INPUT_IMAGES = 16
 const REFERENCE_IMAGE_LIMIT_RE = /reference image count exceeds limit:\s*count\s*=\s*(\d+)\s*,\s*limit\s*=\s*(\d+)/i
+const DEFAULT_ADMIN_ACCESS = {
+  allowGuestEditApiUrl: true,
+  allowGuestViewApiUrl: true,
+}
 type ToastType = 'info' | 'success' | 'error'
+type AdminAccessSettings = typeof DEFAULT_ADMIN_ACCESS
 type AgentInputDraft = {
   prompt: string
   inputImages: InputImage[]
@@ -643,6 +648,7 @@ export function getPersistedState(state: AppState) {
     supportPromptDismissed: state.supportPromptDismissed,
     supportPromptOpen: state.supportPromptOpen,
     supportPromptSkippedForImportedData: state.supportPromptSkippedForImportedData,
+    adminAccess: state.adminAccess,
   }
 }
 
@@ -699,6 +705,11 @@ export function mergePersistedState(persistedState: unknown, currentState: AppSt
     supportPromptDismissed: Boolean(persisted.supportPromptDismissed),
     supportPromptOpen: Boolean(persisted.supportPromptOpen),
     supportPromptSkippedForImportedData: Boolean(persisted.supportPromptSkippedForImportedData),
+    adminAccess: {
+      ...DEFAULT_ADMIN_ACCESS,
+      ...(persisted.adminAccess && typeof persisted.adminAccess === 'object' ? persisted.adminAccess : {}),
+    },
+    isAdminAuthenticated: false,
     prompt: galleryInputDraft?.prompt ?? '',
     inputImages: galleryInputDraft?.inputImages ?? [],
     maskDraft: galleryInputDraft?.maskDraft ?? null,
@@ -718,6 +729,10 @@ interface AppState {
   setSettings: (s: Partial<AppSettings>) => void
   dismissedCodexCliPrompts: string[]
   dismissCodexCliPrompt: (key: string) => void
+  adminAccess: AdminAccessSettings
+  isAdminAuthenticated: boolean
+  setAdminAccess: (patch: Partial<AdminAccessSettings>) => void
+  setAdminAuthenticated: (authenticated: boolean) => void
 
   // 输入
   prompt: string
@@ -1120,6 +1135,15 @@ export const useStore = create<AppState>()(
           ? st.dismissedCodexCliPrompts
           : [...st.dismissedCodexCliPrompts, key],
       })),
+      adminAccess: { ...DEFAULT_ADMIN_ACCESS },
+      isAdminAuthenticated: false,
+      setAdminAccess: (patch) => set((state) => ({
+        adminAccess: {
+          ...state.adminAccess,
+          ...patch,
+        },
+      })),
+      setAdminAuthenticated: (isAdminAuthenticated) => set({ isAdminAuthenticated }),
 
       // Input
       prompt: '',

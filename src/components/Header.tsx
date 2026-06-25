@@ -6,9 +6,20 @@ import ViewportTooltip from './ViewportTooltip'
 import HelpModal from './HelpModal'
 import { HelpCircleIcon, InstallIcon, SettingsIcon } from './icons'
 
+const ADMIN_USERNAME = 'admin'
+const ADMIN_PASSWORD_SHA256 = '757c484a1e18c9f3724235680fba5790cbe59530f65a0d1360bc054c28da682c'
+
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>
+}
+
+async function sha256Hex(text: string) {
+  const bytes = new TextEncoder().encode(text)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
 }
 
 function isInstalledPwa() {
@@ -16,16 +27,149 @@ function isInstalledPwa() {
   return window.matchMedia('(display-mode: standalone)').matches || nav.standalone === true
 }
 
+function AdminModal({ onClose }: { onClose: () => void }) {
+  const adminAccess = useStore((s) => s.adminAccess)
+  const isAdminAuthenticated = useStore((s) => s.isAdminAuthenticated)
+  const setAdminAccess = useStore((s) => s.setAdminAccess)
+  const setAdminAuthenticated = useStore((s) => s.setAdminAuthenticated)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [isChecking, setIsChecking] = useState(false)
+
+  const handleLogin = async () => {
+    setError('')
+    setIsChecking(true)
+    try {
+      const passwordHash = await sha256Hex(password)
+      if (username.trim() === ADMIN_USERNAME && passwordHash === ADMIN_PASSWORD_SHA256) {
+        setAdminAuthenticated(true)
+        setPassword('')
+        return
+      }
+      setError('账号或密码不正确')
+    } catch {
+      setError('当前浏览器不支持安全登录校验')
+    } finally {
+      setIsChecking(false)
+    }
+  }
+
+  return (
+    <div
+      data-no-drag-select
+      className="fixed inset-0 z-[120] flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div className="absolute inset-0 bg-black/20 backdrop-blur-md dark:bg-black/40" />
+      <div
+        className="relative z-10 w-full max-w-sm rounded-2xl border border-white/50 bg-white/95 p-5 shadow-[0_8px_40px_rgb(0,0,0,0.12)] ring-1 ring-black/5 dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-base font-bold text-gray-800 dark:text-gray-100">管理员</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg px-2 py-1 text-sm text-gray-500 transition hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-white/[0.06]"
+          >
+            关闭
+          </button>
+        </div>
+
+        {isAdminAuthenticated ? (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-200">
+              已登录管理员
+            </div>
+            <div className="space-y-3">
+              <label className="flex items-center justify-between gap-4 rounded-xl border border-gray-200/70 px-3 py-3 dark:border-white/[0.08]">
+                <span className="text-sm text-gray-700 dark:text-gray-200">允许游客修改 API 请求地址</span>
+                <button
+                  type="button"
+                  onClick={() => setAdminAccess({ allowGuestEditApiUrl: !adminAccess.allowGuestEditApiUrl })}
+                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${adminAccess.allowGuestEditApiUrl ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                  role="switch"
+                  aria-checked={adminAccess.allowGuestEditApiUrl}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${adminAccess.allowGuestEditApiUrl ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                </button>
+              </label>
+              <label className="flex items-center justify-between gap-4 rounded-xl border border-gray-200/70 px-3 py-3 dark:border-white/[0.08]">
+                <span className="text-sm text-gray-700 dark:text-gray-200">允许游客查看 API 请求地址</span>
+                <button
+                  type="button"
+                  onClick={() => setAdminAccess({ allowGuestViewApiUrl: !adminAccess.allowGuestViewApiUrl })}
+                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${adminAccess.allowGuestViewApiUrl ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                  role="switch"
+                  aria-checked={adminAccess.allowGuestViewApiUrl}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${adminAccess.allowGuestViewApiUrl ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                </button>
+              </label>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAdminAuthenticated(false)}
+              className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]"
+            >
+              退出管理员
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <label className="block">
+              <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">账号</span>
+              <input
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                type="text"
+                autoComplete="username"
+                className="w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">密码</span>
+              <input
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void handleLogin()
+                }}
+                type="password"
+                autoComplete="current-password"
+                className="w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200"
+              />
+            </label>
+            {error && <div className="text-sm text-red-500">{error}</div>}
+            <button
+              type="button"
+              onClick={() => void handleLogin()}
+              disabled={isChecking}
+              className="w-full rounded-xl bg-blue-500 px-3 py-2.5 text-sm font-medium text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isChecking ? '登录中...' : '登录'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function Header() {
   const setShowSettings = useStore((s) => s.setShowSettings)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
+  const isAdminAuthenticated = useStore((s) => s.isAdminAuthenticated)
   const [showHelp, setShowHelp] = useState(false)
+  const [showAdmin, setShowAdmin] = useState(false)
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [isPwaInstalled, setIsPwaInstalled] = useState(isInstalledPwa)
 
   const installTooltip = useTooltip()
   const helpTooltip = useTooltip()
   const settingsTooltip = useTooltip()
+  const adminTooltip = useTooltip()
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (event: Event) => {
@@ -147,6 +291,24 @@ export default function Header() {
                 设置
               </ViewportTooltip>
             </div>
+            <div
+              className="relative"
+              {...adminTooltip.handlers}
+            >
+              <button
+                onClick={() => {
+                  dismissAllTooltips()
+                  setShowAdmin(true)
+                }}
+                className={`rounded-lg px-2.5 py-2 text-xs font-semibold transition-colors ${isAdminAuthenticated ? 'bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-400/10 dark:text-blue-300 dark:hover:bg-blue-400/15' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-900'}`}
+                aria-label="管理员登录"
+              >
+                {isAdminAuthenticated ? '管理员' : '管理员登录'}
+              </button>
+              <ViewportTooltip visible={adminTooltip.visible} className="whitespace-nowrap">
+                管理游客权限
+              </ViewportTooltip>
+            </div>
           </div>
         </div>
       </header>
@@ -155,6 +317,7 @@ export default function Header() {
         <div className="safe-header-inner" />
       </div>
       {showHelp && <HelpModal appMode="gallery" onClose={() => setShowHelp(false)} />}
+      {showAdmin && <AdminModal onClose={() => setShowAdmin(false)} />}
     </>
   )
 }

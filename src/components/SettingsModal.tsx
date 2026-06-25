@@ -288,6 +288,8 @@ export default function SettingsModal() {
   const setReusedTaskApiProfile = useStore((s) => s.setReusedTaskApiProfile)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const showToast = useStore((s) => s.showToast)
+  const adminAccess = useStore((s) => s.adminAccess)
+  const isAdminAuthenticated = useStore((s) => s.isAdminAuthenticated)
   const importInputRef = useRef<HTMLInputElement>(null)
   const profileMenuRef = useRef<HTMLDivElement>(null)
   const profileMenuTriggerRef = useRef<HTMLButtonElement>(null)
@@ -336,6 +338,10 @@ export default function SettingsModal() {
   const [copyImportUrlProfile, setCopyImportUrlProfile] = useState<ApiProfile | null>(null)
   const [copyImportUrlOptions, setCopyImportUrlOptions] = useState<CopyImportUrlOptions>(readCopyImportUrlOptions)
 
+  useEffect(() => {
+    if (activeTab === 'about') setActiveTab('api')
+  }, [activeTab])
+
   const apiProxyConfig = readClientDevProxyConfig()
   const apiProxyAvailable = isApiProxyAvailable(apiProxyConfig)
   const apiProxyLocked = isApiProxyLocked(apiProxyConfig)
@@ -344,6 +350,8 @@ export default function SettingsModal() {
   const apiProxyEnabled = apiProxyAvailable && activeProfile.provider === 'openai' && apiProxyChecked
   const activeProviderIsOpenAICompatible = isOpenAICompatibleProvider(draft, activeProfile.provider)
   const activeProviderUsesApiUrl = activeProviderIsOpenAICompatible || activeProfile.provider === 'fal'
+  const canViewApiUrl = isAdminAuthenticated || adminAccess.allowGuestViewApiUrl
+  const canEditApiUrl = isAdminAuthenticated || adminAccess.allowGuestEditApiUrl
   const activeCustomProvider = draft.customProviders.find((provider) => provider.id === activeProfile.provider)
   const defaultProviderOrder = ['openai', 'fal', ...draft.customProviders.map(p => p.id)]
   const providerOrder = draft.providerOrder || defaultProviderOrder
@@ -562,7 +570,8 @@ export default function SettingsModal() {
 
     if (profile.provider === 'openai') {
       const baseUrl = profile.baseUrl.trim() || DEFAULT_SETTINGS.baseUrl
-      url.searchParams.set('apiUrl', options.useNewApiAddress && !options.includeApiKey ? '{address}' : normalizeBaseUrl(baseUrl))
+      const maskApiAddress = !canViewApiUrl || (options.useNewApiAddress && !options.includeApiKey)
+      url.searchParams.set('apiUrl', maskApiAddress ? '{address}' : normalizeBaseUrl(baseUrl))
       if (options.includeApiKey && profile.apiKey.trim()) {
         url.searchParams.set('apiKey', profile.apiKey.trim())
       } else if (!options.includeApiKey && options.useNewApiKey) {
@@ -576,8 +585,8 @@ export default function SettingsModal() {
       if (profile.streamPartialImages !== DEFAULT_STREAM_PARTIAL_IMAGES) url.searchParams.set('streamPartialImages', String(normalizeStreamPartialImages(profile.streamPartialImages)))
 
       let result = url.toString()
+      if (maskApiAddress) result = result.replace('%7Baddress%7D', '{address}')
       if (!options.includeApiKey) {
-        if (options.useNewApiAddress) result = result.replace('%7Baddress%7D', '{address}')
         if (options.useNewApiKey) result = result.replace('%7Bkey%7D', '{key}')
         if (options.useNewApiModel) result = result.replace('%7Bmodel%7D', '{model}')
       }
@@ -594,6 +603,7 @@ export default function SettingsModal() {
       if (options.useNewApiKey) importProfile.apiKey = '{key}'
       if (options.useNewApiModel) importProfile.model = '{model}'
     }
+    if (!canViewApiUrl) importProfile.baseUrl = '{address}'
     url.searchParams.set('settings', JSON.stringify({
       customProviders: provider ? [provider] : [],
       profiles: [importProfile],
@@ -601,7 +611,7 @@ export default function SettingsModal() {
 
     let result = url.toString()
     if (!options.includeApiKey) {
-      if (options.useNewApiAddress) result = result.replace(/%7Baddress%7D/g, '{address}')
+      if (options.useNewApiAddress || !canViewApiUrl) result = result.replace(/%7Baddress%7D/g, '{address}')
       if (options.useNewApiKey) result = result.replace(/%7Bkey%7D/g, '{key}')
       if (options.useNewApiModel) result = result.replace(/%7Bmodel%7D/g, '{model}')
     }
@@ -1126,15 +1136,6 @@ export default function SettingsModal() {
                 </svg>
                 数据管理
               </button>
-              <button
-                onClick={() => setActiveTab('about')}
-                className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-xl transition-colors ${activeTab === 'about' ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                关于
-              </button>
             </nav>
           </div>
 
@@ -1489,7 +1490,7 @@ export default function SettingsModal() {
               </div>
 
               {/* 3. API URL */}
-              {activeProviderUsesApiUrl && (
+              {activeProviderUsesApiUrl && canViewApiUrl && (
                 <label className="block">
                   <div className="mb-1.5 flex items-center justify-between">
                     <span className="block text-sm text-gray-600 dark:text-gray-300">API URL</span>
@@ -1499,9 +1500,9 @@ export default function SettingsModal() {
                     onChange={(e) => updateActiveProfile({ baseUrl: e.target.value })}
                     onBlur={(e) => commitActiveProfilePatch({ baseUrl: e.target.value })}
                     type="text"
-                    disabled={apiProxyEnabled}
+                    disabled={apiProxyEnabled || !canEditApiUrl}
                     placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_BASE_URL : DEFAULT_SETTINGS.baseUrl}
-                    className={`w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50 ${apiProxyEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    className={`w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50 ${apiProxyEnabled || !canEditApiUrl ? 'opacity-50 cursor-not-allowed' : ''}`}
                   />
                   <div data-selectable-text className="mt-1.5 min-h-[22px] flex items-center text-xs text-gray-500 dark:text-gray-500">
                     {apiProxyEnabled ? (

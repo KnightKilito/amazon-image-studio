@@ -1,4 +1,4 @@
-import type { ApiProfile } from '../types'
+import type { ApiMode, ApiProfile } from '../types'
 import { DEFAULT_CHAT_MODEL, DEFAULT_RESPONSES_MODEL, isOfficialDeepSeekPlannerProfile } from './apiProfiles'
 import { formatAmazonAPlusReferenceMaterial, formatAmazonListingReferenceMaterial } from './amazonKnowledge'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
@@ -39,6 +39,7 @@ interface PlannerApiPayload {
 }
 
 const DEEPSEEK_TEXT_ONLY_PLANNER_GUARD = 'Because DeepSeek cannot receive or understand reference images in this request, do not infer or describe product facts that are not explicitly present in the listing text or user-provided product facts. Do not invent colors, shapes, structures, accessories, logos, bundle quantity, package contents, materials, printed text, ports, buttons, or product variants. If a visual detail is unknown, keep the prompt neutral and refer to the exact product described by the provided facts.'
+const RELAY_TEXT_ONLY_PLANNER_GUARD = 'Because the previous planner request with reference images failed through an OpenAI-compatible relay, this retry does not include reference images. Use only the listing text and user-provided product facts. Do not infer colors, shapes, structures, accessories, logos, bundle quantity, package contents, materials, printed text, ports, buttons, or product variants unless they are explicitly present in those facts.'
 const PRODUCT_REFERENCE_FACTS_ONLY_PLANNER_GUIDE = [
   'Product reference image rule:',
   '- Use product reference images only to identify product facts: real appearance, color, shape, structure, included accessories, materials, package contents, and feature evidence.',
@@ -532,15 +533,56 @@ function buildPlannerInstructions(
   baseDraft: AmazonPromptDraft,
   mode: AmazonPlannerMode,
   aPlusType: APlusContentType,
-  options: { textOnlyReferenceGuard?: boolean; listingImageCount?: number; aPlusModuleSpecs?: AmazonAPlusModuleSpec[] } = {},
+  options: { textOnlyReferenceGuard?: boolean | string; listingImageCount?: number; aPlusModuleSpecs?: AmazonAPlusModuleSpec[]; compact?: boolean } = {},
 ) {
   const listingImageCount = normalizeListingImageCount(options.listingImageCount)
   const aPlusModuleSpecs = normalizeAPlusModuleSpecs(aPlusType, options.aPlusModuleSpecs)
+  const textOnlyReferenceGuard = typeof options.textOnlyReferenceGuard === 'string'
+    ? options.textOnlyReferenceGuard
+    : options.textOnlyReferenceGuard
+      ? DEEPSEEK_TEXT_ONLY_PLANNER_GUARD
+      : ''
+  const baseInstructions = options.compact
+    ? buildCompactPlannerInstructions(baseDraft, mode, aPlusType, { listingImageCount, aPlusModuleSpecs })
+    : mode === 'aplus'
+      ? buildAPlusPlannerInstructions(baseDraft, aPlusType, aPlusModuleSpecs)
+      : buildListingPlannerInstructions(baseDraft, listingImageCount)
   return [
-    mode === 'aplus'
-    ? buildAPlusPlannerInstructions(baseDraft, aPlusType, aPlusModuleSpecs)
-    : buildListingPlannerInstructions(baseDraft, listingImageCount),
-    options.textOnlyReferenceGuard ? DEEPSEEK_TEXT_ONLY_PLANNER_GUARD : '',
+    baseInstructions,
+    textOnlyReferenceGuard,
+  ].filter(Boolean).join('\n')
+}
+
+function buildCompactPlannerInstructions(
+  baseDraft: AmazonPromptDraft,
+  mode: AmazonPlannerMode,
+  aPlusType: APlusContentType,
+  options: { listingImageCount: number; aPlusModuleSpecs: AmazonAPlusModuleSpec[] },
+) {
+  if (mode === 'aplus') {
+    const specs = normalizeAPlusModuleSpecs(aPlusType, options.aPlusModuleSpecs)
+    return [
+      'You are an Amazon A+ Content image-planning agent. Return only one valid JSON object.',
+      `Create exactly ${specs.length} A+ image module plans in this order: ${specs.map((spec) => `${spec.slot} ${spec.label} ${getAPlusModuleUploadSize(spec)}px`).join('; ')}.`,
+      'Use only facts from the listing and user-provided product facts. Do not invent brand claims, certifications, logos, package contents, sizes, materials, colors, accessories, reviews, pricing, or guarantees.',
+      'Each planMarkdown must be concise Simplified Chinese. Each prompt and negativePrompt must be professional English for image generation.',
+      'For A+ modules, make the composition Amazon-ready, readable on mobile, product-focused, and compliant: no pricing, reviews, QR codes, external links, medical claims, competitor names, or unsupported superlatives.',
+      'Return seriesStyleGuide as a short English guide for product consistency only.',
+      baseDraft.brand ? `Known brand/model: ${baseDraft.brand}` : '',
+      baseDraft.category ? `Known category: ${baseDraft.category}` : '',
+    ].filter(Boolean).join('\n')
+  }
+
+  const slots = getAmazonListingImageSlots(options.listingImageCount)
+  return [
+    'You are an Amazon listing image-planning agent. Return only one valid JSON object.',
+    `Create exactly ${slots.length} image plans in this order: ${slots.join(', ')}.`,
+    'Use only facts from the listing and user-provided product facts. Do not invent colors, shapes, accessories, package contents, logos, sizes, materials, certifications, reviews, pricing, or guarantees.',
+    'MAIN must be Amazon-compliant: exact product only, pure white background, no text, no props, no badges, no watermark.',
+    'Secondary images may use concise US-English on-image copy and callouts, but must stay factual, readable, product-focused, and compliant.',
+    'Each planMarkdown must be concise Simplified Chinese. Each prompt and negativePrompt must be professional English for image generation.',
+    'Return seriesStyleGuide as a short English guide for product consistency only.',
+    baseDraft.category ? `Known category: ${baseDraft.category}` : '',
   ].filter(Boolean).join('\n')
 }
 
@@ -658,7 +700,7 @@ function buildChatPlannerSystemPrompt(
   baseDraft: AmazonPromptDraft,
   mode: AmazonPlannerMode,
   aPlusType: APlusContentType,
-  options: { textOnlyReferenceGuard?: boolean; listingImageCount?: number; aPlusModuleSpecs?: AmazonAPlusModuleSpec[] } = {},
+  options: { textOnlyReferenceGuard?: boolean | string; listingImageCount?: number; aPlusModuleSpecs?: AmazonAPlusModuleSpec[]; compact?: boolean } = {},
 ) {
   return [
     buildPlannerInstructions(baseDraft, mode, aPlusType, options),
@@ -668,6 +710,34 @@ function buildChatPlannerSystemPrompt(
       aPlusModuleSpecs: options.aPlusModuleSpecs,
     }),
   ].join('\n\n')
+}
+
+class PlannerHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly apiMessage: string,
+  ) {
+    super(`HTTP ${status}: ${apiMessage}`)
+    this.name = 'PlannerHttpError'
+  }
+}
+
+function shouldRetryPlannerWithoutReferenceImages(err: unknown): boolean {
+  if (!(err instanceof PlannerHttpError)) return false
+  if ([408, 500, 502, 503, 504, 520, 522, 524].includes(err.status)) return true
+
+  return /timeout|timed out|openai_error|gateway|cloudflare|image_url|input_image|unsupported.*image|multimodal|content.*array/i.test(err.apiMessage)
+}
+
+function combinePlannerRetryErrors(errors: Array<{ label: string; error: unknown }>): Error {
+  return new Error([
+    'AI planner failed after automatic fallbacks.',
+    '',
+    ...errors.map(({ label, error }) => {
+      const message = error instanceof Error ? error.message : String(error)
+      return `${label}: ${message}`
+    }),
+  ].join('\n'))
 }
 
 export async function callAmazonPlannerApi(options: {
@@ -692,78 +762,134 @@ export async function callAmazonPlannerApi(options: {
   const schema = mode === 'aplus' ? createAPlusPlannerSchema(aPlusModuleSpecs) : createListingPlannerSchema(listingImageCount)
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(options.profile.apiProxy, proxyConfig, options.profile.baseUrl)
-  const useChatCompletions = options.profile.apiMode === 'chat'
   const isDeepSeekPlannerProfile = isOfficialDeepSeekPlannerProfile(options.profile)
-  const inputText = buildPlannerInputText(options.listingText, mode, aPlusType, {
-    includeReferenceImageInstruction: !isDeepSeekPlannerProfile,
-    userProductFacts: isDeepSeekPlannerProfile ? buildUserProductFactsText(options.baseDraft) : '',
-    listingImageCount,
-    aPlusModuleSpecs,
-  })
-  const referenceImageDataUrls = isDeepSeekPlannerProfile
-    ? []
-    : options.referenceImageDataUrls ?? []
-  const response = await fetch(
-    useChatCompletions
-      ? buildApiUrl(options.profile.baseUrl, 'chat/completions', proxyConfig, useApiProxy, { prefixV1: false })
-      : buildApiUrl(options.profile.baseUrl, 'responses', proxyConfig, useApiProxy),
-    {
-    method: 'POST',
-    signal: options.signal,
-    headers: {
-      Authorization: `Bearer ${options.profile.apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    cache: 'no-store',
-    body: JSON.stringify(useChatCompletions
-      ? {
-          model,
-          messages: [
-            {
-              role: 'system',
-              content: buildChatPlannerSystemPrompt(options.baseDraft, mode, aPlusType, {
-                textOnlyReferenceGuard: isDeepSeekPlannerProfile,
-                listingImageCount,
-                aPlusModuleSpecs,
-              }),
-            },
-            {
-              role: 'user',
-              content: buildChatPlannerUserContent(inputText, referenceImageDataUrls),
-            },
-          ],
-          response_format: { type: 'json_object' },
-          stream: false,
-        }
-      : {
-          model,
-          instructions: buildPlannerInstructions(options.baseDraft, mode, aPlusType, {
-            textOnlyReferenceGuard: isDeepSeekPlannerProfile,
-            listingImageCount,
-            aPlusModuleSpecs,
-          }),
-          input: buildResponsesPlannerInput(inputText, referenceImageDataUrls),
-          text: {
-            format: {
-              type: 'json_schema',
-              name: mode === 'aplus' ? 'amazon_aplus_image_plan' : 'amazon_listing_image_plan',
-              strict: true,
-              schema,
-            },
-          },
-          stream: false,
-        },
-    ),
-    },
-  )
 
-  if (!response.ok) {
-    const message = await getApiErrorMessage(response)
-    throw new Error(`HTTP ${response.status}: ${message}`)
+  const performPlannerRequest = async (
+    forceTextOnly: boolean,
+    apiMode: ApiMode = options.profile.apiMode,
+    compact = false,
+  ): Promise<PlannerApiResult> => {
+    const useChatCompletions = apiMode === 'chat'
+    const useTextOnly = isDeepSeekPlannerProfile || forceTextOnly
+    const textOnlyReferenceGuard = isDeepSeekPlannerProfile
+      ? true
+      : forceTextOnly
+        ? RELAY_TEXT_ONLY_PLANNER_GUARD
+        : false
+    const inputText = buildPlannerInputText(options.listingText, mode, aPlusType, {
+      includeReferenceImageInstruction: !useTextOnly,
+      userProductFacts: useTextOnly ? buildUserProductFactsText(options.baseDraft) : '',
+      listingImageCount,
+      aPlusModuleSpecs,
+    })
+    const referenceImageDataUrls = useTextOnly
+      ? []
+      : options.referenceImageDataUrls ?? []
+    const response = await fetch(
+      useChatCompletions
+        ? buildApiUrl(options.profile.baseUrl, 'chat/completions', proxyConfig, useApiProxy, { prefixV1: false })
+        : buildApiUrl(options.profile.baseUrl, 'responses', proxyConfig, useApiProxy),
+      {
+      method: 'POST',
+      signal: options.signal,
+      headers: {
+        Authorization: `Bearer ${options.profile.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      cache: 'no-store',
+      body: JSON.stringify(useChatCompletions
+        ? {
+            model,
+            messages: [
+              {
+                role: 'system',
+                content: buildChatPlannerSystemPrompt(options.baseDraft, mode, aPlusType, {
+                  textOnlyReferenceGuard,
+                  listingImageCount,
+                  aPlusModuleSpecs,
+                  compact,
+                }),
+              },
+              {
+                role: 'user',
+                content: buildChatPlannerUserContent(inputText, referenceImageDataUrls),
+              },
+            ],
+            response_format: { type: 'json_object' },
+            stream: false,
+          }
+        : {
+            model,
+            instructions: buildPlannerInstructions(options.baseDraft, mode, aPlusType, {
+              textOnlyReferenceGuard,
+              listingImageCount,
+              aPlusModuleSpecs,
+              compact,
+            }),
+            input: buildResponsesPlannerInput(inputText, referenceImageDataUrls),
+            text: {
+              format: {
+                type: 'json_schema',
+                name: mode === 'aplus' ? 'amazon_aplus_image_plan' : 'amazon_listing_image_plan',
+                strict: true,
+                schema,
+              },
+            },
+            stream: false,
+          },
+      ),
+      },
+    )
+
+    if (!response.ok) {
+      const message = await getApiErrorMessage(response)
+      throw new PlannerHttpError(response.status, message)
+    }
+    const text = await readPlannerResponseText(response)
+    const payload = parsePlannerPayload(text)
+    return mode === 'aplus'
+      ? normalizeAPlusPlannerApiPayload(payload, aPlusType, aPlusGenerationTier, aPlusModuleSpecs)
+      : normalizeListingPlannerApiPayload(payload, listingImageCount)
   }
-  const text = await readPlannerResponseText(response)
-  const payload = parsePlannerPayload(text)
-  return mode === 'aplus'
-    ? normalizeAPlusPlannerApiPayload(payload, aPlusType, aPlusGenerationTier, aPlusModuleSpecs)
-    : normalizeListingPlannerApiPayload(payload, listingImageCount)
+
+  const canRetryWithoutReferences = !isDeepSeekPlannerProfile && Boolean(options.referenceImageDataUrls?.length)
+  const errors: Array<{ label: string; error: unknown }> = []
+  try {
+    return await performPlannerRequest(false)
+  } catch (err) {
+    errors.push({ label: canRetryWithoutReferences ? 'Reference image attempt' : 'Planner attempt', error: err })
+    if (options.signal?.aborted || !shouldRetryPlannerWithoutReferenceImages(err)) throw err
+    if (!canRetryWithoutReferences && options.profile.apiMode === 'chat') throw err
+  }
+
+  if (canRetryWithoutReferences) {
+    try {
+      return await performPlannerRequest(true)
+    } catch (retryErr) {
+      errors.push({ label: 'Text-only retry', error: retryErr })
+      if (options.signal?.aborted || !shouldRetryPlannerWithoutReferenceImages(retryErr)) {
+        throw combinePlannerRetryErrors(errors)
+      }
+    }
+  }
+
+  if (options.profile.apiMode !== 'chat') {
+    try {
+      return await performPlannerRequest(true, 'chat', true)
+    } catch (chatErr) {
+      errors.push({ label: 'Chat Completions compact retry', error: chatErr })
+      if (options.signal?.aborted) throw chatErr
+    }
+  }
+
+  if (options.profile.apiMode === 'chat') {
+    try {
+      return await performPlannerRequest(true, 'chat', true)
+    } catch (compactErr) {
+      errors.push({ label: 'Compact text-only retry', error: compactErr })
+      if (options.signal?.aborted) throw compactErr
+    }
+  }
+
+  throw combinePlannerRetryErrors(errors)
 }

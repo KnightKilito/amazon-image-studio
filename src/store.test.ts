@@ -93,6 +93,7 @@ vi.mock('./lib/agentApi', () => ({
   }),
 }))
 import { clearAmazonPlannerSessions, clearImages, getAllAmazonPlannerSessions, putAmazonPlannerSession, putImage } from './lib/db'
+import { callImageApi } from './lib/api'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
 import { cleanStaleAgentInputDrafts, clearData, editOutputs, exportData, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
 
@@ -201,8 +202,23 @@ function importFile(data: ExportData): File {
   return { arrayBuffer: async () => buffer } as File
 }
 
+async function waitForCondition(predicate: () => boolean, attempts = 25) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+  expect(predicate()).toBe(true)
+}
+
 describe('mask draft lifecycle in store actions', () => {
   beforeEach(() => {
+    vi.mocked(callImageApi).mockReset()
+    vi.mocked(callImageApi).mockResolvedValue({
+      images: [],
+      actualParams: {},
+      actualParamsList: [],
+      revisedPrompts: [],
+    })
     useStore.setState({
       settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key' },
       prompt: 'prompt',
@@ -502,6 +518,65 @@ describe('mask draft lifecycle in store actions', () => {
 
     expect(useStore.getState().tasks).toHaveLength(0)
     expect(useStore.getState().showToast).toHaveBeenCalledWith(expect.stringContaining('实际参考图数量不能超过 16 张'), 'error')
+  })
+
+  it('asks before retrying generation with the provider reference image limit and preserves the hidden style reference', async () => {
+    const styleImage = { id: 'style-reference-image', dataUrl: 'data:image/png;base64,style' }
+    const productImages = Array.from({ length: 8 }, (_, index) => ({
+      id: `product-reference-${index + 1}`,
+      dataUrl: `data:image/png;base64,product-${index + 1}`,
+    }))
+    for (const image of [...productImages, styleImage]) {
+      await putImage(image)
+    }
+    vi.mocked(callImageApi)
+      .mockRejectedValueOnce(new Error('reference image count exceeds limit: count=9, limit=3 (request id: test-request)'))
+      .mockResolvedValueOnce({
+        images: ['data:image/png;base64,output'],
+        actualParams: {},
+        actualParamsList: [],
+        revisedPrompts: [],
+      })
+    useStore.setState({
+      prompt: 'listing prompt',
+      inputImages: productImages,
+      pendingTaskCategory: {
+        mode: 'prompt-match',
+        prompt: 'listing prompt',
+        category: {
+          productTitle: 'Large Folding Umbrella',
+          workflow: 'amazon-listing',
+          amazonSlot: 'PT01',
+          styleReferenceImageId: styleImage.id,
+        },
+      },
+    })
+
+    const submitted = await submitTask()
+
+    expect(submitted).toBe(true)
+    await waitForCondition(() => vi.mocked(callImageApi).mock.calls.length >= 1)
+    expect(vi.mocked(callImageApi)).toHaveBeenCalledTimes(1)
+    const firstCall = vi.mocked(callImageApi).mock.calls[0]?.[0]
+    expect(firstCall?.inputImageDataUrls).toHaveLength(9)
+    expect(useStore.getState().tasks[0]?.status).toBe('error')
+    expect(useStore.getState().setConfirmDialog).toHaveBeenCalledWith(expect.objectContaining({
+      title: '参考图数量受限',
+      message: expect.stringContaining('最多支持 3 张参考图'),
+      confirmText: '只传 3 张继续',
+      cancelText: '取消，不继续',
+    }))
+
+    const confirmDialogCalls = vi.mocked(useStore.getState().setConfirmDialog).mock.calls
+    const dialog = confirmDialogCalls[confirmDialogCalls.length - 1]?.[0]
+    dialog?.action?.()
+    await waitForCondition(() => vi.mocked(callImageApi).mock.calls.length >= 2)
+    const retryCall = vi.mocked(callImageApi).mock.calls[1]?.[0]
+    expect(retryCall?.inputImageDataUrls).toEqual([
+      productImages[0]!.dataUrl,
+      productImages[1]!.dataUrl,
+      styleImage.dataUrl,
+    ])
   })
 
   it('does not apply stale pending category after the prompt changes', async () => {

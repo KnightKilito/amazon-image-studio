@@ -82,6 +82,7 @@ const AGENT_STOPPED_MESSAGE = '已停止生成。'
 const AGENT_CONVERSATION_TITLE_MAX_LENGTH = 28
 const ERROR_TOAST_MAX_LENGTH = 80
 const API_MAX_INPUT_IMAGES = 16
+const REFERENCE_IMAGE_LIMIT_RE = /reference image count exceeds limit:\s*count\s*=\s*(\d+)\s*,\s*limit\s*=\s*(\d+)/i
 type ToastType = 'info' | 'success' | 'error'
 type AgentInputDraft = {
   prompt: string
@@ -150,6 +151,38 @@ function resolvePendingTaskCategory(
     ? pendingTaskCategory.category
     : { workflow: 'gallery' }
   return removeMainStyleReference(category)
+}
+
+function getReferenceImageLimitFromError(err: unknown): number | null {
+  const message = err instanceof Error ? err.message : String(err)
+  const match = message.match(REFERENCE_IMAGE_LIMIT_RE)
+  if (!match) return null
+
+  const limit = Number(match[2])
+  if (!Number.isFinite(limit) || limit < 1) return null
+  return Math.trunc(limit)
+}
+
+function limitReferenceImagesForRetry<T>(
+  items: T[],
+  inputImageIds: string[],
+  category: TaskRecord['category'],
+  limit: number,
+): T[] {
+  if (items.length <= limit) return items
+
+  const styleReferenceImageId = category?.styleReferenceImageId?.trim()
+  const styleReferenceIndex = styleReferenceImageId ? inputImageIds.indexOf(styleReferenceImageId) : -1
+  const keepStyleReference = styleReferenceIndex >= 0 && styleReferenceIndex < items.length && limit > 0
+  const productLimit = keepStyleReference ? limit - 1 : limit
+  const limited: T[] = []
+
+  for (let index = 0; index < items.length && limited.length < productLimit; index += 1) {
+    if (index !== styleReferenceIndex) limited.push(items[index])
+  }
+  if (keepStyleReference) limited.push(items[styleReferenceIndex])
+
+  return limited
 }
 
 export function getErrorToastMessage(message: string): string {
@@ -3543,7 +3576,7 @@ async function executeAgentRound(
   }
 }
 
-async function executeTask(taskId: string) {
+async function executeTask(taskId: string, options: { referenceImageLimit?: number } = {}) {
   const { settings } = useStore.getState()
   const task = useStore.getState().tasks.find((t) => t.id === taskId)
   if (!task) return
@@ -3587,12 +3620,13 @@ async function executeTask(taskId: string) {
       if (!maskDataUrl) throw new Error('遮罩图片已不存在')
     }
     const preparedPayload = await prepareReferenceImageAndMaskPayload(inputDataUrls, maskDataUrl)
-    const apiInputDataUrls = preparedPayload.dataUrls
+    const apiInputDataUrls = options.referenceImageLimit && !maskDataUrl
+      ? limitReferenceImagesForRetry(preparedPayload.dataUrls, task.inputImageIds, task.category, options.referenceImageLimit)
+      : preparedPayload.dataUrls
     const apiMaskDataUrl = preparedPayload.maskDataUrl
-
     const result = await callImageApi({
       settings: requestSettings,
-      prompt: replaceImageMentionsForApi(task.prompt, inputDataUrls.length),
+      prompt: replaceImageMentionsForApi(task.prompt, apiInputDataUrls.length),
       params: task.params,
       inputImageDataUrls: apiInputDataUrls,
       maskDataUrl: apiMaskDataUrl,
@@ -3703,6 +3737,49 @@ async function executeTask(taskId: string) {
       ? { requestId: latestTask.falRequestId, endpoint: latestTask.falEndpoint }
       : null)
     const latestCustomTaskInfo = customTaskInfo ?? (latestTask.customTaskId ? { taskId: latestTask.customTaskId } : null)
+    const referenceImageLimit = !latestTask.maskImageId ? getReferenceImageLimitFromError(err) : null
+    if (
+      referenceImageLimit &&
+      !options.referenceImageLimit &&
+      latestTask.inputImageIds.length > referenceImageLimit
+    ) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      updateTaskInStore(taskId, {
+        status: 'error',
+        error: errorMessage,
+        ...getRawErrorPayload(err),
+        falRecoverable: false,
+        customRecoverable: false,
+        finishedAt: Date.now(),
+        elapsed: Date.now() - task.createdAt,
+      })
+      useStore.getState().setDetailTaskId(taskId)
+      useStore.getState().setConfirmDialog({
+        title: '参考图数量受限',
+        message: `当前生图接口最多支持 ${referenceImageLimit} 张参考图，本次任务实际需要发送 ${latestTask.inputImageIds.length} 张。\n\n是否只上传前 ${referenceImageLimit} 张继续生图？如果本任务带隐藏风格参考图，会优先保留风格参考图，并使用前 ${Math.max(0, referenceImageLimit - 1)} 张产品参考图。\n\n取消后不会继续请求，你可以切换生图 API 中转站后再重试。`,
+        confirmText: `只传 ${referenceImageLimit} 张继续`,
+        cancelText: '取消，不继续',
+        tone: 'warning',
+        action: () => {
+          updateTaskInStore(taskId, {
+            status: 'running',
+            error: null,
+            outputImages: [],
+            streamPartialImageIds: undefined,
+            rawImageUrls: undefined,
+            actualParams: undefined,
+            actualParamsByImage: undefined,
+            revisedPromptByImage: undefined,
+            finishedAt: null,
+            elapsed: null,
+            falRecoverable: false,
+            customRecoverable: false,
+          })
+          executeTask(taskId, { referenceImageLimit })
+        },
+      })
+      return
+    }
     if (latestTask.apiProvider === 'fal' && latestFalRequestInfo && isFalConnectionRecoverableError(err)) {
       updateTaskInStore(taskId, {
         status: 'error',

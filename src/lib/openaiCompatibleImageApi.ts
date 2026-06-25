@@ -546,6 +546,11 @@ async function parseImagesApiStreamResponse(
   }
 }
 
+function isMissingFinalStreamImageError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err)
+  return /流式.*(最终|可用).*图片|娴佸紡.*(鏈繑鍥炴渶缁堝浘鐗囨暟鎹|鏈繑鍥炲彲鐢ㄥ浘鐗囨暟鎹)/i.test(message)
+}
+
 function getResponsesStreamPayload(event: Record<string, unknown>): ResponsesApiResponse | null {
   const response = event.response
   if (isRecordValue(response)) return response as ResponsesApiResponse
@@ -883,7 +888,12 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile, cu
     }
 
     if (profile.streamImages && isEventStreamResponse(response)) {
-      return parseImagesApiStreamResponse(response, mime, opts.onPartialImage)
+      try {
+        return await parseImagesApiStreamResponse(response, mime, opts.onPartialImage)
+      } catch (err) {
+        if (!isMissingFinalStreamImageError(err)) throw err
+        return callImagesApiSingle(opts, { ...profile, streamImages: false }, customProvider)
+      }
     }
 
     return parseImagesApiResponse(await response.json() as ImageApiResponse, mime, controller.signal)
@@ -1273,7 +1283,12 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
     }
 
     if (profile.streamImages && isEventStreamResponse(response)) {
-      return parseResponsesApiStreamResponse(response, mime, opts.onPartialImage)
+      try {
+        return await parseResponsesApiStreamResponse(response, mime, opts.onPartialImage)
+      } catch (err) {
+        if (!isMissingFinalStreamImageError(err)) throw err
+        return callResponsesImageApiSingle(opts, { ...profile, streamImages: false })
+      }
     }
 
     const payload = await response.json() as ResponsesApiResponse

@@ -1,3 +1,7 @@
+# 说明
+
+本项目来源于https://github.com/Ali-Aria/amazon-image-studio，在本人自己的需求下进行修改自用
+
 # 亚马逊图片工作台
 
 亚马逊图片工作台是一个面向 Amazon Listing 的产品图片策划与生成工作台，基于 [CookSleep/gpt_image_playground](https://github.com/CookSleep/gpt_image_playground) 修改。

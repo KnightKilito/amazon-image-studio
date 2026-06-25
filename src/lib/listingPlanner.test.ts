@@ -488,6 +488,129 @@ describe('callAmazonPlannerApi', () => {
     expect(result.plans).toHaveLength(7)
   })
 
+  it('retries Chat Completions planning without reference images after relay timeout errors', async () => {
+    const apiPayload = createApiPayload('Text fallback planned tumbler')
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => {
+      if (fetchMock.mock.calls.length === 1) {
+        return new Response(JSON.stringify({
+          error: { message: 'openai_error' },
+        }), {
+          status: 524,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: JSON.stringify(apiPayload),
+            },
+            finish_reason: 'stop',
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: {
+        ...DEFAULT_AMAZON_PROMPT_DRAFT,
+        color: 'matte black',
+        packageIncludes: '1 tumbler, 1 straw',
+      },
+      referenceImageDataUrls: ['data:image/png;base64,ref-chat'],
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://relay.example.com/v1',
+        apiKey: 'relay-key',
+        apiMode: 'chat',
+        model: DEFAULT_CHAT_MODEL,
+      }),
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const firstBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
+    expect(firstBody.messages[1].content[1]).toEqual({
+      type: 'image_url',
+      image_url: { url: 'data:image/png;base64,ref-chat' },
+    })
+
+    const retryBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))
+    expect(retryBody.messages[0].content).toContain('previous planner request with reference images failed')
+    expect(retryBody.messages[0].content).not.toContain('Because DeepSeek cannot receive or understand reference images')
+    expect(typeof retryBody.messages[1].content).toBe('string')
+    expect(retryBody.messages[1].content).toContain('User-provided product facts')
+    expect(retryBody.messages[1].content).toContain('- Color: matte black')
+    expect(retryBody.messages[1].content).toContain('- Package includes: 1 tumbler, 1 straw')
+    expect(JSON.stringify(retryBody.messages)).not.toContain('image_url')
+    expect(result.parsed.title).toBe('Text fallback planned tumbler')
+    expect(result.plans).toHaveLength(7)
+  })
+
+  it('uses a compact text-only Chat retry when both reference and full text planning time out', async () => {
+    const apiPayload = createApiPayload('Compact fallback planned tumbler')
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => {
+      if (fetchMock.mock.calls.length <= 2) {
+        return new Response(JSON.stringify({
+          error: { message: 'openai_error' },
+        }), {
+          status: 524,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: JSON.stringify(apiPayload),
+            },
+            finish_reason: 'stop',
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: {
+        ...DEFAULT_AMAZON_PROMPT_DRAFT,
+        color: 'matte black',
+        packageIncludes: '1 tumbler, 1 straw',
+      },
+      referenceImageDataUrls: ['data:image/png;base64,ref-chat'],
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://relay.example.com/v1',
+        apiKey: 'relay-key',
+        apiMode: 'chat',
+        model: DEFAULT_CHAT_MODEL,
+      }),
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    const compactBody = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))
+    expect(compactBody.messages[0].content).toContain('Return only one valid JSON object')
+    expect(compactBody.messages[0].content).toContain('MAIN must be Amazon-compliant')
+    expect(compactBody.messages[0].content).not.toContain('Amazon Listing reference material for the planner')
+    expect(compactBody.messages[0].content).not.toContain('pure white background RGB 255,255,255')
+    expect(typeof compactBody.messages[1].content).toBe('string')
+    expect(JSON.stringify(compactBody.messages)).not.toContain('image_url')
+    expect(result.parsed.title).toBe('Compact fallback planned tumbler')
+    expect(result.plans).toHaveLength(7)
+  })
+
   it('uses the requested Listing image count in Chat Completions schema guidance', async () => {
     const apiPayload = createApiPayload('Chat 10 image tumbler', 10)
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({

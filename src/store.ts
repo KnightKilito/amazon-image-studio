@@ -5,6 +5,7 @@ import type {
   AgentMessage,
   AgentRound,
   AmazonPlannerSession,
+  AdminAccessSettings,
   ApiMode,
   ApiProfile,
   AppSettings,
@@ -19,7 +20,7 @@ import type {
   ResponsesApiResponse,
   ResponsesOutputItem,
 } from './types'
-import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_PARAMS } from './types'
+import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_PARAMS, DEFAULT_REFERENCE_IMAGE_UPLOAD_LIMIT } from './types'
 import { canApiProfileGenerateImages, DEFAULT_SETTINGS, getActiveApiProfile, getCustomProviderDefinition, mergeImportedSettings, normalizeSettings, validateApiProfile } from './lib/apiProfiles'
 import { dismissAllTooltips } from './lib/tooltipDismiss'
 import { remapImageMentionsForOrder, replaceImageMentionsForApi } from './lib/promptImageMentions'
@@ -55,6 +56,7 @@ import { getChangedParams, normalizeParamsForSettings } from './lib/paramCompati
 import { prepareReferenceImageAndMaskPayload } from './lib/referenceImagePayload'
 import { getTaskHistoryCategory } from './lib/taskHistory'
 import { isAmazonListingMainSlot } from './lib/listingPlanner'
+import { fetchAdminSettings, readAdminToken, saveAdminSettings } from './lib/adminApi'
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 
 // ===== Image cache =====
@@ -81,14 +83,19 @@ const OPENAI_INTERRUPTED_ERROR = '请求中断'
 const AGENT_STOPPED_MESSAGE = '已停止生成。'
 const AGENT_CONVERSATION_TITLE_MAX_LENGTH = 28
 const ERROR_TOAST_MAX_LENGTH = 80
-const API_MAX_INPUT_IMAGES = 16
 const REFERENCE_IMAGE_LIMIT_RE = /reference image count exceeds limit:\s*count\s*=\s*(\d+)\s*,\s*limit\s*=\s*(\d+)/i
 const DEFAULT_ADMIN_ACCESS = {
   allowGuestEditApiUrl: true,
   allowGuestViewApiUrl: true,
-}
+  allowGuestCreateApiProfile: false,
+  unifiedGuestPlannerApiUrlEnabled: false,
+  unifiedGuestPlannerApiUrl: '',
+  unifiedGuestImageApiUrlEnabled: false,
+  unifiedGuestImageApiUrl: '',
+  referenceImageUploadLimit: DEFAULT_REFERENCE_IMAGE_UPLOAD_LIMIT,
+} satisfies AdminAccessSettings
 type ToastType = 'info' | 'success' | 'error'
-type AdminAccessSettings = typeof DEFAULT_ADMIN_ACCESS
+type GuestUnifiedApiUrlKind = 'planner' | 'image'
 type AgentInputDraft = {
   prompt: string
   inputImages: InputImage[]
@@ -166,6 +173,10 @@ function getReferenceImageLimitFromError(err: unknown): number | null {
   const limit = Number(match[2])
   if (!Number.isFinite(limit) || limit < 1) return null
   return Math.trunc(limit)
+}
+
+function getReferenceImageUploadLimit(adminAccess: AdminAccessSettings) {
+  return normalizeAdminAccess(adminAccess).referenceImageUploadLimit
 }
 
 function limitReferenceImagesForRetry<T>(
@@ -665,6 +676,25 @@ function normalizePersistedParams(value: unknown): TaskParams {
   return isLegacyPngDefault ? { ...DEFAULT_PARAMS } : params
 }
 
+function normalizeAdminAccess(value: unknown): AdminAccessSettings {
+  const input = value && typeof value === 'object' ? value as Partial<AdminAccessSettings> : {}
+  const limit = Number(input.referenceImageUploadLimit)
+  return {
+    ...DEFAULT_ADMIN_ACCESS,
+    ...input,
+    allowGuestEditApiUrl: input.allowGuestEditApiUrl ?? DEFAULT_ADMIN_ACCESS.allowGuestEditApiUrl,
+    allowGuestViewApiUrl: input.allowGuestViewApiUrl ?? DEFAULT_ADMIN_ACCESS.allowGuestViewApiUrl,
+    allowGuestCreateApiProfile: input.allowGuestCreateApiProfile ?? DEFAULT_ADMIN_ACCESS.allowGuestCreateApiProfile,
+    unifiedGuestPlannerApiUrlEnabled: input.unifiedGuestPlannerApiUrlEnabled ?? DEFAULT_ADMIN_ACCESS.unifiedGuestPlannerApiUrlEnabled,
+    unifiedGuestPlannerApiUrl: typeof input.unifiedGuestPlannerApiUrl === 'string' ? input.unifiedGuestPlannerApiUrl : DEFAULT_ADMIN_ACCESS.unifiedGuestPlannerApiUrl,
+    unifiedGuestImageApiUrlEnabled: input.unifiedGuestImageApiUrlEnabled ?? DEFAULT_ADMIN_ACCESS.unifiedGuestImageApiUrlEnabled,
+    unifiedGuestImageApiUrl: typeof input.unifiedGuestImageApiUrl === 'string' ? input.unifiedGuestImageApiUrl : DEFAULT_ADMIN_ACCESS.unifiedGuestImageApiUrl,
+    referenceImageUploadLimit: Number.isFinite(limit)
+      ? Math.max(1, Math.min(64, Math.trunc(limit)))
+      : DEFAULT_ADMIN_ACCESS.referenceImageUploadLimit,
+  }
+}
+
 export function mergePersistedState(persistedState: unknown, currentState: AppState): AppState {
   if (!persistedState || typeof persistedState !== 'object') return currentState
 
@@ -705,10 +735,7 @@ export function mergePersistedState(persistedState: unknown, currentState: AppSt
     supportPromptDismissed: Boolean(persisted.supportPromptDismissed),
     supportPromptOpen: Boolean(persisted.supportPromptOpen),
     supportPromptSkippedForImportedData: Boolean(persisted.supportPromptSkippedForImportedData),
-    adminAccess: {
-      ...DEFAULT_ADMIN_ACCESS,
-      ...(persisted.adminAccess && typeof persisted.adminAccess === 'object' ? persisted.adminAccess : {}),
-    },
+    adminAccess: normalizeAdminAccess(persisted.adminAccess),
     isAdminAuthenticated: false,
     prompt: galleryInputDraft?.prompt ?? '',
     inputImages: galleryInputDraft?.inputImages ?? [],
@@ -718,6 +745,28 @@ export function mergePersistedState(persistedState: unknown, currentState: AppSt
 }
 
 // ===== Store 类型 =====
+
+function getGuestUnifiedApiUrl(adminAccess: AdminAccessSettings, kind: GuestUnifiedApiUrlKind) {
+  const enabled = kind === 'planner'
+    ? adminAccess.unifiedGuestPlannerApiUrlEnabled
+    : adminAccess.unifiedGuestImageApiUrlEnabled
+  const apiUrl = kind === 'planner'
+    ? adminAccess.unifiedGuestPlannerApiUrl
+    : adminAccess.unifiedGuestImageApiUrl
+
+  return enabled ? apiUrl.trim() : ''
+}
+
+export function applyGuestUnifiedApiUrl(
+  profile: ApiProfile,
+  kind: GuestUnifiedApiUrlKind,
+  adminAccess: AdminAccessSettings,
+  isAdminAuthenticated: boolean,
+): ApiProfile {
+  if (isAdminAuthenticated) return profile
+  const unifiedApiUrl = getGuestUnifiedApiUrl(adminAccess, kind)
+  return unifiedApiUrl ? { ...profile, baseUrl: unifiedApiUrl } : profile
+}
 
 interface AppState {
   // 模式
@@ -731,7 +780,8 @@ interface AppState {
   dismissCodexCliPrompt: (key: string) => void
   adminAccess: AdminAccessSettings
   isAdminAuthenticated: boolean
-  setAdminAccess: (patch: Partial<AdminAccessSettings>) => void
+  syncAdminAccess: () => Promise<void>
+  setAdminAccess: (patch: Partial<AdminAccessSettings>, options?: { persist?: boolean }) => void
   setAdminAuthenticated: (authenticated: boolean) => void
 
   // 输入
@@ -1137,12 +1187,33 @@ export const useStore = create<AppState>()(
       })),
       adminAccess: { ...DEFAULT_ADMIN_ACCESS },
       isAdminAuthenticated: false,
-      setAdminAccess: (patch) => set((state) => ({
-        adminAccess: {
-          ...state.adminAccess,
+      syncAdminAccess: async () => {
+        try {
+          const { adminAccess } = await fetchAdminSettings()
+          set({ adminAccess: normalizeAdminAccess(adminAccess) })
+        } catch {
+          // The app can still run with local defaults when the optional Node admin API is offline.
+        }
+      },
+      setAdminAccess: (patch, options = {}) => {
+        const nextAccess = normalizeAdminAccess({
+          ...useStore.getState().adminAccess,
           ...patch,
-        },
-      })),
+        })
+        set({ adminAccess: nextAccess })
+        if (options.persist === false) return
+
+        const token = readAdminToken()
+        if (!token) return
+        void saveAdminSettings(token, nextAccess)
+          .then(({ adminAccess }) => set({ adminAccess: normalizeAdminAccess(adminAccess) }))
+          .catch((err) => {
+            useStore.getState().showToast(
+              `管理员设置保存失败：${err instanceof Error ? err.message : String(err)}`,
+              'error',
+            )
+          })
+      },
       setAdminAuthenticated: (isAdminAuthenticated) => set({ isAdminAuthenticated }),
 
       // Input
@@ -1566,7 +1637,10 @@ export function showCodexCliPrompt(force = false, reason = '接口返回的提�
 
 function getFalRecoveryProfile(settings: AppSettings, task: TaskRecord) {
   const taskProfile = getTaskApiProfile(settings, task)
-  if (taskProfile?.provider === 'fal') return taskProfile
+  if (taskProfile?.provider === 'fal') {
+    const { adminAccess, isAdminAuthenticated } = useStore.getState()
+    return applyGuestUnifiedApiUrl(taskProfile, 'image', adminAccess, isAdminAuthenticated)
+  }
   return null
 }
 
@@ -1574,7 +1648,10 @@ function getCustomRecoveryProfile(settings: AppSettings, task: TaskRecord) {
   const provider = task.apiProvider
   if (!provider || provider === 'openai' || provider === 'fal') return null
   const taskProfile = getTaskApiProfile(settings, task)
-  if (taskProfile?.provider === provider) return taskProfile
+  if (taskProfile?.provider === provider) {
+    const { adminAccess, isAdminAuthenticated } = useStore.getState()
+    return applyGuestUnifiedApiUrl(taskProfile, 'image', adminAccess, isAdminAuthenticated)
+  }
   return null
 }
 
@@ -1983,11 +2060,11 @@ export async function initStore() {
 
 /** 提交新任务 */
 export async function submitTask(options: { allowFullMask?: boolean; useCurrentApiProfileWhenReusedMissing?: boolean } = {}): Promise<boolean> {
-  const { settings, prompt, inputImages, maskDraft, params, reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, pendingTaskCategory, showToast, setConfirmDialog } =
+  const { settings, prompt, inputImages, maskDraft, params, reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, pendingTaskCategory, showToast, setConfirmDialog, adminAccess, isAdminAuthenticated } =
     useStore.getState()
 
   const normalizedSettings = normalizeSettings(settings)
-  let activeProfile = getActiveApiProfile(settings)
+  let activeProfile = applyGuestUnifiedApiUrl(getActiveApiProfile(settings), 'image', adminAccess, isAdminAuthenticated)
   let requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
   if (normalizedSettings.reuseTaskApiProfileTemporarily && (reusedTaskApiProfileId || reusedTaskApiProfileMissing)) {
     const reusedProfile = getReusedTaskApiProfile(normalizedSettings, reusedTaskApiProfileId)
@@ -2007,8 +2084,8 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
         return false
       }
     } else {
-      activeProfile = reusedProfile
-      requestSettings = createSettingsForApiProfile(normalizedSettings, reusedProfile)
+      activeProfile = applyGuestUnifiedApiUrl(reusedProfile, 'image', adminAccess, isAdminAuthenticated)
+      requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
     }
   }
 
@@ -2072,8 +2149,9 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
 
   const styleReferenceImageId = category.styleReferenceImageId?.trim()
   if (styleReferenceImageId && !orderedInputImages.some((img) => img.id === styleReferenceImageId)) {
-    if (orderedInputImages.length + 1 > API_MAX_INPUT_IMAGES) {
-      showToast(`已选择隐藏风格参考板，实际参考图数量不能超过 ${API_MAX_INPUT_IMAGES} 张；请删除一张产品参考图后再提交。`, 'error')
+    const referenceImageUploadLimit = getReferenceImageUploadLimit(adminAccess)
+    if (orderedInputImages.length + 1 > referenceImageUploadLimit) {
+      showToast(`已选择隐藏风格参考板，实际参考图数量不能超过 ${referenceImageUploadLimit} 张；请删除一张产品参考图后再提交。`, 'error')
       return false
     }
     const dataUrl = await ensureImageCached(styleReferenceImageId)
@@ -3601,7 +3679,7 @@ async function executeAgentRound(
 }
 
 async function executeTask(taskId: string, options: { referenceImageLimit?: number } = {}) {
-  const { settings } = useStore.getState()
+  const { settings, adminAccess, isAdminAuthenticated } = useStore.getState()
   const task = useStore.getState().tasks.find((t) => t.id === taskId)
   if (!task) return
   const taskProfile = getTaskApiProfile(settings, task)
@@ -3616,7 +3694,7 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
     })
     return
   }
-  const activeProfile = taskProfile ?? getActiveApiProfile(settings)
+  const activeProfile = applyGuestUnifiedApiUrl(taskProfile ?? getActiveApiProfile(settings), 'image', adminAccess, isAdminAuthenticated)
   const requestSettings = createSettingsForApiProfile(settings, activeProfile)
   const taskProvider = task.apiProvider ?? activeProfile.provider
   let falRequestInfo: { requestId: string; endpoint: string } | null = task.falRequestId && task.falEndpoint
@@ -3873,8 +3951,8 @@ export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>) {
 
 /** 重试失败的任务：创建新任务并执行 */
 export async function retryTask(task: TaskRecord) {
-  const { settings, setConfirmDialog } = useStore.getState()
-  const activeProfile = getActiveApiProfile(settings)
+  const { settings, setConfirmDialog, adminAccess, isAdminAuthenticated } = useStore.getState()
+  const activeProfile = applyGuestUnifiedApiUrl(getActiveApiProfile(settings), 'image', adminAccess, isAdminAuthenticated)
   if (!canApiProfileGenerateImages(activeProfile)) {
     setConfirmDialog({
       title: '当前配置不能生图',
@@ -3887,7 +3965,8 @@ export async function retryTask(task: TaskRecord) {
     })
     return
   }
-  const normalizedParams = normalizeParamsForSettings(task.params, settings, { hasInputImages: task.inputImageIds.length > 0 })
+  const requestSettings = createSettingsForApiProfile(settings, activeProfile)
+  const normalizedParams = normalizeParamsForSettings(task.params, requestSettings, { hasInputImages: task.inputImageIds.length > 0 })
   const taskId = genId()
   const newTask: TaskRecord = {
     id: taskId,

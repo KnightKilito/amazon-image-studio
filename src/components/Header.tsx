@@ -2,24 +2,14 @@ import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import { useTooltip } from '../hooks/useTooltip'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
+import { loginAdmin, logoutAdmin, readAdminToken, saveAdminToken } from '../lib/adminApi'
 import ViewportTooltip from './ViewportTooltip'
 import HelpModal from './HelpModal'
 import { HelpCircleIcon, InstallIcon, SettingsIcon } from './icons'
 
-const ADMIN_USERNAME = 'admin'
-const ADMIN_PASSWORD_SHA256 = '757c484a1e18c9f3724235680fba5790cbe59530f65a0d1360bc054c28da682c'
-
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>
-}
-
-async function sha256Hex(text: string) {
-  const bytes = new TextEncoder().encode(text)
-  const digest = await crypto.subtle.digest('SHA-256', bytes)
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('')
 }
 
 function isInstalledPwa() {
@@ -32,6 +22,7 @@ function AdminModal({ onClose }: { onClose: () => void }) {
   const isAdminAuthenticated = useStore((s) => s.isAdminAuthenticated)
   const setAdminAccess = useStore((s) => s.setAdminAccess)
   const setAdminAuthenticated = useStore((s) => s.setAdminAuthenticated)
+  const syncAdminAccess = useStore((s) => s.syncAdminAccess)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -41,18 +32,24 @@ function AdminModal({ onClose }: { onClose: () => void }) {
     setError('')
     setIsChecking(true)
     try {
-      const passwordHash = await sha256Hex(password)
-      if (username.trim() === ADMIN_USERNAME && passwordHash === ADMIN_PASSWORD_SHA256) {
-        setAdminAuthenticated(true)
-        setPassword('')
-        return
-      }
-      setError('账号或密码不正确')
-    } catch {
-      setError('当前浏览器不支持安全登录校验')
+      const result = await loginAdmin(username, password)
+      saveAdminToken(result.token)
+      setAdminAccess(result.adminAccess, { persist: false })
+      setAdminAuthenticated(true)
+      setPassword('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setIsChecking(false)
     }
+  }
+
+  const handleLogout = async () => {
+    const token = readAdminToken()
+    saveAdminToken('')
+    setAdminAuthenticated(false)
+    await logoutAdmin(token).catch(() => {})
+    await syncAdminAccess()
   }
 
   return (
@@ -63,7 +60,7 @@ function AdminModal({ onClose }: { onClose: () => void }) {
     >
       <div className="absolute inset-0 bg-black/20 backdrop-blur-md dark:bg-black/40" />
       <div
-        className="relative z-10 w-full max-w-sm rounded-2xl border border-white/50 bg-white/95 p-5 shadow-[0_8px_40px_rgb(0,0,0,0.12)] ring-1 ring-black/5 dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10"
+        className="relative z-10 max-h-[85vh] w-full max-w-sm overflow-y-auto rounded-2xl border border-white/50 bg-white/95 p-5 shadow-[0_8px_40px_rgb(0,0,0,0.12)] ring-1 ring-black/5 dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
@@ -107,10 +104,80 @@ function AdminModal({ onClose }: { onClose: () => void }) {
                   <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${adminAccess.allowGuestViewApiUrl ? 'translate-x-4' : 'translate-x-0.5'}`} />
                 </button>
               </label>
+              <label className="flex items-center justify-between gap-4 rounded-xl border border-gray-200/70 px-3 py-3 dark:border-white/[0.08]">
+                <span className="text-sm text-gray-700 dark:text-gray-200">允许游客创建新 API 配置</span>
+                <button
+                  type="button"
+                  onClick={() => setAdminAccess({ allowGuestCreateApiProfile: !adminAccess.allowGuestCreateApiProfile })}
+                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${adminAccess.allowGuestCreateApiProfile ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                  role="switch"
+                  aria-checked={adminAccess.allowGuestCreateApiProfile}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${adminAccess.allowGuestCreateApiProfile ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                </button>
+              </label>
+              <div className="rounded-xl border border-gray-200/70 px-3 py-3 dark:border-white/[0.08]">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-sm text-gray-700 dark:text-gray-200">统一游客 AI 策划 API URL</span>
+                  <button
+                    type="button"
+                    onClick={() => setAdminAccess({ unifiedGuestPlannerApiUrlEnabled: !adminAccess.unifiedGuestPlannerApiUrlEnabled })}
+                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${adminAccess.unifiedGuestPlannerApiUrlEnabled ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                    role="switch"
+                    aria-checked={adminAccess.unifiedGuestPlannerApiUrlEnabled}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${adminAccess.unifiedGuestPlannerApiUrlEnabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+                {adminAccess.unifiedGuestPlannerApiUrlEnabled && (
+                  <input
+                    value={adminAccess.unifiedGuestPlannerApiUrl}
+                    onChange={(event) => setAdminAccess({ unifiedGuestPlannerApiUrl: event.target.value })}
+                    type="text"
+                    placeholder="https://api.example.com/v1"
+                    className="mt-3 w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200"
+                  />
+                )}
+              </div>
+              <div className="rounded-xl border border-gray-200/70 px-3 py-3 dark:border-white/[0.08]">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-sm text-gray-700 dark:text-gray-200">统一游客 AI 生图 API URL</span>
+                  <button
+                    type="button"
+                    onClick={() => setAdminAccess({ unifiedGuestImageApiUrlEnabled: !adminAccess.unifiedGuestImageApiUrlEnabled })}
+                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${adminAccess.unifiedGuestImageApiUrlEnabled ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                    role="switch"
+                    aria-checked={adminAccess.unifiedGuestImageApiUrlEnabled}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${adminAccess.unifiedGuestImageApiUrlEnabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+                {adminAccess.unifiedGuestImageApiUrlEnabled && (
+                  <input
+                    value={adminAccess.unifiedGuestImageApiUrl}
+                    onChange={(event) => setAdminAccess({ unifiedGuestImageApiUrl: event.target.value })}
+                    type="text"
+                    placeholder="https://api.example.com/v1"
+                    className="mt-3 w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200"
+                  />
+                )}
+              </div>
+              <label className="block rounded-xl border border-gray-200/70 px-3 py-3 dark:border-white/[0.08]">
+                <span className="mb-2 block text-sm text-gray-700 dark:text-gray-200">上传参考图上限数量</span>
+                <input
+                  value={adminAccess.referenceImageUploadLimit}
+                  onChange={(event) => setAdminAccess({ referenceImageUploadLimit: event.target.valueAsNumber })}
+                  type="number"
+                  min={1}
+                  max={64}
+                  step={1}
+                  className="w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200"
+                />
+              </label>
             </div>
             <button
               type="button"
-              onClick={() => setAdminAuthenticated(false)}
+              onClick={() => void handleLogout()}
               className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]"
             >
               退出管理员

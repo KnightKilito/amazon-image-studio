@@ -10,6 +10,18 @@
 
 项目仓库：[Ali-Aria/amazon-image-studio](https://github.com/Ali-Aria/amazon-image-studio)
 
+## 管理员统一配置
+
+前端不会直接连接 MySQL。统一游客 API URL、游客权限、参考图上限和管理员账号密码由 Node 管理 API 读写 MySQL。
+
+```bash
+npm run admin:server
+```
+
+首次启动会自动创建 `amazon_image_studio` 数据库，以及 `admin_users`、`admin_settings` 表。默认管理员账号为 `admin`，密码沿用旧前端内置管理员密码；可在首次启动前通过 `AIS_ADMIN_USERNAME`、`AIS_ADMIN_PASSWORD` 或 `AIS_ADMIN_PASSWORD_SHA256` 修改。
+
+常用环境变量：`AIS_DB_HOST`、`AIS_DB_PORT`、`AIS_DB_USER`、`AIS_DB_PASSWORD`、`AIS_DB_NAME`、`AIS_ADMIN_PORT`。开发环境下 Vite 会把 `/admin-api` 代理到 Node 管理 API；生产部署时也需要把 `/admin-api` 转发到该 Node 服务。
+
 ## 开源说明
 
 本仓库公开的是前端应用源码、Amazon 图片策划逻辑、Prompt 模板、知识文档、本地启动脚本和部署配置，采用 [MIT License](LICENSE) 发布。

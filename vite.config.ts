@@ -19,6 +19,27 @@ function loadDevProxyConfig() {
 
 export default defineConfig(({ command }) => {
   const devProxyConfig = command === 'serve' ? loadDevProxyConfig() : null
+  const adminApiPort = process.env.AIS_ADMIN_PORT || '8787'
+  const proxy = {
+    '/admin-api': {
+      target: `http://localhost:${adminApiPort}`,
+      changeOrigin: true,
+    },
+    ...(devProxyConfig?.enabled
+      ? {
+          [devProxyConfig.prefix]: {
+            target: devProxyConfig.target,
+            changeOrigin: devProxyConfig.changeOrigin,
+            secure: devProxyConfig.secure,
+            rewrite: (path: string) =>
+              path.replace(
+                new RegExp(`^${devProxyConfig.prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+                '',
+              ),
+          },
+        }
+      : {}),
+  }
 
   return {
     plugins: [react()],
@@ -29,21 +50,7 @@ export default defineConfig(({ command }) => {
     },
     server: {
       host: true,
-      proxy:
-        devProxyConfig?.enabled
-          ? {
-              [devProxyConfig.prefix]: {
-                target: devProxyConfig.target,
-                changeOrigin: devProxyConfig.changeOrigin,
-                secure: devProxyConfig.secure,
-                rewrite: (path) =>
-                  path.replace(
-                    new RegExp(`^${devProxyConfig.prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
-                    '',
-                  ),
-              },
-            }
-          : undefined,
+      proxy,
     },
   }
 })

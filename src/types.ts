@@ -12,6 +12,18 @@ export type ApiProvider = BuiltInApiProvider | string
 export type CustomProviderTemplate = 'http-image'
 export const DEFAULT_STREAM_PARTIAL_IMAGES = 1
 export const DEFAULT_AGENT_MAX_TOOL_ROUNDS = 15
+export const DEFAULT_REFERENCE_IMAGE_UPLOAD_LIMIT = 16
+
+export interface AdminAccessSettings {
+  allowGuestEditApiUrl: boolean
+  allowGuestViewApiUrl: boolean
+  allowGuestCreateApiProfile: boolean
+  unifiedGuestPlannerApiUrlEnabled: boolean
+  unifiedGuestPlannerApiUrl: string
+  unifiedGuestImageApiUrlEnabled: boolean
+  unifiedGuestImageApiUrl: string
+  referenceImageUploadLimit: number
+}
 
 export type CustomProviderRequestMethod = 'GET' | 'POST'
 export type CustomProviderContentType = 'json' | 'multipart'

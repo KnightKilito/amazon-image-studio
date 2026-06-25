@@ -37,6 +37,7 @@ export default function App() {
     }
 
     initStore()
+    void useStore.getState().syncAdminAccess()
     useStore.getState().setAppMode('gallery')
   }, [setSettings])
 

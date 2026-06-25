@@ -15,6 +15,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "admin:server": "node server/adminServer.mjs",
     "mock:api": "node scripts/mock-image-api.mjs",
     "build": "tsc -b && vite build",
     "deploy:cf": "npm run build && wrangler deploy",
@@ -26,6 +27,7 @@
     "@fal-ai/client": "^1.10.0",
     "core-js": "^3.49.0",
     "fflate": "^0.8.2",
+    "mysql2": "^3.22.5",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",

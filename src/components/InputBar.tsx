@@ -335,8 +335,6 @@ function ButtonTooltip({ visible, text }: { visible: boolean; text: ReactNode })
   )
 }
 
-/** API 支持的最大参考图数量 */
-const API_MAX_IMAGES = 16
 const DESKTOP_DOCK_MIN_WIDTH = 1024
 const DESKTOP_DOCK_BOTTOM_CLEARANCE = 32
 const AT_IMAGE_MENU_WIDTH = 256
@@ -393,6 +391,7 @@ export default function InputBar() {
   const appMode = useStore((s) => s.appMode)
   const setPrompt = useStore((s) => s.setPrompt)
   const inputImages = useStore((s) => s.inputImages)
+  const adminAccess = useStore((s) => s.adminAccess)
   const addInputImage = useStore((s) => s.addInputImage)
   const replaceInputImage = useStore((s) => s.replaceInputImage)
   const removeInputImage = useStore((s) => s.removeInputImage)
@@ -633,6 +632,7 @@ export default function InputBar() {
   const moderationDisabled = isFalProvider
   const compressionDisabled = params.output_format === 'png' || isFalProvider
   const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings)
+  const referenceImageUploadLimit = adminAccess.referenceImageUploadLimit
   const isFalTextToImage = isFalProvider && inputImages.length === 0
   const nDraftValue = Number(nInput)
   const effectiveNValue = Number.isNaN(nDraftValue) ? params.n : nDraftValue
@@ -658,8 +658,8 @@ export default function InputBar() {
         { label: 'medium', value: 'medium' },
         { label: 'high', value: 'high' },
       ]
-  const atImageLimit = inputImages.length >= API_MAX_IMAGES
-  const uploadImageTooltipText = atImageLimit ? `参考图数量已达上限（${API_MAX_IMAGES} 张），无法继续添加` : '上传图片'
+  const atImageLimit = inputImages.length >= referenceImageUploadLimit
+  const uploadImageTooltipText = atImageLimit ? `参考图数量已达上限（${referenceImageUploadLimit} 张），无法继续添加` : '上传图片'
   const compressionHint = useHintTooltip({ enabled: () => compressionDisabled })
   const moderationHint = useHintTooltip({ enabled: () => moderationDisabled })
   const sizeHint = useHintTooltip({ enabled: () => isFalTextToImage })
@@ -956,16 +956,18 @@ export default function InputBar() {
 
   const handleFiles = async (files: FileList | File[]) => {
     try {
-      const currentCount = useStore.getState().inputImages.length
-      if (currentCount >= API_MAX_IMAGES) {
+      const state = useStore.getState()
+      const currentCount = state.inputImages.length
+      const limit = state.adminAccess.referenceImageUploadLimit
+      if (currentCount >= limit) {
         useStore.getState().showToast(
-          `参考图数量已达上限（${API_MAX_IMAGES} 张），无法继续添加`,
+          `参考图数量已达上限（${limit} 张），无法继续添加`,
           'error',
         )
         return
       }
 
-      const remaining = API_MAX_IMAGES - currentCount
+      const remaining = limit - currentCount
       const accepted = Array.from(files).filter((f) => f.type.startsWith('image/'))
       const toAdd = accepted.slice(0, remaining)
       const discarded = accepted.length - toAdd.length
@@ -976,7 +978,7 @@ export default function InputBar() {
 
       if (discarded > 0) {
         useStore.getState().showToast(
-          `已达上限 ${API_MAX_IMAGES} 张，${discarded} 张图片被丢弃`,
+          `已达上限 ${limit} 张，${discarded} 张图片被丢弃`,
           'error',
         )
       }
@@ -1224,7 +1226,15 @@ export default function InputBar() {
         : []
 
       if (imageIds.length > 0) {
-        Promise.all(imageIds.map(async (imageId) => {
+        const state = useStore.getState()
+        const remaining = Math.max(0, state.adminAccess.referenceImageUploadLimit - state.inputImages.length)
+        if (remaining <= 0) {
+          showToast(`参考图数量已达上限（${state.adminAccess.referenceImageUploadLimit} 张），无法继续添加`, 'error')
+          return
+        }
+
+        const acceptedImageIds = imageIds.slice(0, remaining)
+        Promise.all(acceptedImageIds.map(async (imageId) => {
           const dataUrl = await ensureImageCached(imageId)
           if (!dataUrl) {
             showToast('部分图片已不存在', 'error')
@@ -1232,7 +1242,7 @@ export default function InputBar() {
           }
           addInputImage({ id: imageId, dataUrl })
         })).then(() => {
-          showToast('已上传图片', 'success')
+          showToast(imageIds.length > acceptedImageIds.length ? `已上传 ${acceptedImageIds.length} 张图片，其余已超出上限` : '已上传图片', 'success')
         }).catch((err) => showToast(`上传图片失败：${err instanceof Error ? err.message : String(err)}`, 'error'))
       }
     }
@@ -1974,7 +1984,7 @@ export default function InputBar() {
             <div className="text-center">
               {atImageLimit ? (
                 <>
-                  <p className="text-lg font-semibold text-red-500">已达上限 {API_MAX_IMAGES} 张</p>
+                  <p className="text-lg font-semibold text-red-500">已达上限 {referenceImageUploadLimit} 张</p>
                   <p className="text-sm text-gray-400 mt-1">请先移除部分参考图后再添加</p>
                 </>
               ) : (

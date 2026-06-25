@@ -352,6 +352,7 @@ export default function SettingsModal() {
   const activeProviderUsesApiUrl = activeProviderIsOpenAICompatible || activeProfile.provider === 'fal'
   const canViewApiUrl = isAdminAuthenticated || adminAccess.allowGuestViewApiUrl
   const canEditApiUrl = isAdminAuthenticated || adminAccess.allowGuestEditApiUrl
+  const canCreateApiProfile = isAdminAuthenticated || adminAccess.allowGuestCreateApiProfile
   const activeCustomProvider = draft.customProviders.find((provider) => provider.id === activeProfile.provider)
   const defaultProviderOrder = ['openai', 'fal', ...draft.customProviders.map(p => p.id)]
   const providerOrder = draft.providerOrder || defaultProviderOrder
@@ -375,7 +376,9 @@ export default function SettingsModal() {
   ]
 
   const providerOptions = [
-    { label: '创建自定义服务商', value: ADD_CUSTOM_PROVIDER_VALUE, variant: 'action' as const },
+    ...(canCreateApiProfile
+      ? [{ label: '创建自定义服务商', value: ADD_CUSTOM_PROVIDER_VALUE, variant: 'action' as const }]
+      : []),
     ...unorderedProviderOptions.sort((a, b) => {
       const aIndex = providerOrder.indexOf(String(a.value))
       const bIndex = providerOrder.indexOf(String(b.value))
@@ -711,6 +714,11 @@ export default function SettingsModal() {
   }
 
   const createNewProfile = () => {
+    if (!canCreateApiProfile) {
+      showToast('游客暂不能创建新 API 配置', 'error')
+      setShowProfileMenu(false)
+      return
+    }
     setReusedTaskApiProfile(null)
     const profile = createDefaultOpenAIProfile({ id: newId('openai'), name: '新配置' })
     const nextDraft = normalizeDraftSettings({
@@ -723,6 +731,11 @@ export default function SettingsModal() {
   }
 
   const duplicateActiveProfile = () => {
+    if (!canCreateApiProfile) {
+      showToast('游客暂不能创建新 API 配置', 'error')
+      setDuplicateProfileTooltipVisible(false)
+      return
+    }
     setReusedTaskApiProfile(null)
     setDuplicateProfileTooltipVisible(false)
     const profile: ApiProfile = {
@@ -916,6 +929,10 @@ export default function SettingsModal() {
 
   const handleProviderTypeChange = (value: string | number) => {
     if (value === ADD_CUSTOM_PROVIDER_VALUE) {
+      if (!canCreateApiProfile) {
+        showToast('游客暂不能创建新 API 配置', 'error')
+        return
+      }
       setEditingCustomProviderId(null)
       setCustomProviderForm(createDefaultCustomProviderForm())
       setShowCustomProviderImport(true)
@@ -1348,7 +1365,8 @@ export default function SettingsModal() {
                               e.preventDefault()
                               createNewProfile()
                             }}
-                            className="flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-2 text-left text-xs font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10"
+                            disabled={!canCreateApiProfile}
+                            className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs font-medium transition-colors ${canCreateApiProfile ? 'cursor-pointer text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-500/10' : 'cursor-not-allowed text-gray-400 opacity-60 dark:text-gray-500'}`}
                           >
                             <span className="truncate font-semibold">创建新配置</span>
                             <span className="flex h-5 w-5 shrink-0 items-center justify-center">

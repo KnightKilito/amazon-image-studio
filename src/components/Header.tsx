@@ -23,6 +23,7 @@ function AdminModal({ onClose }: { onClose: () => void }) {
   const setAdminAccess = useStore((s) => s.setAdminAccess)
   const setAdminAuthenticated = useStore((s) => s.setAdminAuthenticated)
   const syncAdminAccess = useStore((s) => s.syncAdminAccess)
+  const flushAdminAccessSave = useStore((s) => s.flushAdminAccessSave)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -46,6 +47,7 @@ function AdminModal({ onClose }: { onClose: () => void }) {
 
   const handleLogout = async () => {
     const token = readAdminToken()
+    await flushAdminAccessSave()
     saveAdminToken('')
     setAdminAuthenticated(false)
     await logoutAdmin(token).catch(() => {})

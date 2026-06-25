@@ -22,6 +22,87 @@ npm run admin:server
 
 常用环境变量：`AIS_DB_HOST`、`AIS_DB_PORT`、`AIS_DB_USER`、`AIS_DB_PASSWORD`、`AIS_DB_NAME`、`AIS_ADMIN_PORT`。开发环境下 Vite 会把 `/admin-api` 代理到 Node 管理 API；生产部署时也需要把 `/admin-api` 转发到该 Node 服务。
 
+### 需要修改的配置项
+
+如果你把项目部署到自己的服务器，通常需要改这些配置：
+
+- `AIS_DB_HOST`：MySQL 主机地址，默认 `127.0.0.1`
+- `AIS_DB_PORT`：MySQL 端口，默认 `3306`
+- `AIS_DB_USER`：MySQL 用户名
+- `AIS_DB_PASSWORD`：MySQL 密码
+- `AIS_DB_NAME`：数据库名，默认 `amazon_image_studio`
+- `AIS_ADMIN_PORT`：Node 管理 API 监听端口，默认 `8787`
+- `AIS_ADMIN_USERNAME`：管理员账号，默认 `admin`
+- `AIS_ADMIN_PASSWORD`：管理员明文密码，首次启动时会被转成 SHA-256 后写入数据库
+- `AIS_ADMIN_PASSWORD_SHA256`：如果你已经自己准备好了 SHA-256 密码哈希，可以直接传这个值
+
+管理员在后台里保存的内容会落到数据库表 `admin_settings`，包括：
+
+- 游客是否允许修改 API URL
+- 游客是否允许查看 API URL
+- 游客是否允许创建新 API 配置
+- 统一游客策划 API URL
+- 统一游客生图 API URL
+- 参考图上传上限
+
+如果你只改前端静态文件，不启动 Node 管理 API，那么这些统一配置不会生效。
+
+## 服务器环境要求
+
+新增 Node 后端后，服务器除了能跑前端静态站点，还需要具备这些环境：
+
+- Node.js 20 或更新版本
+- npm
+- MySQL 8.0 或兼容版本
+- 一台能够长期运行 Node 管理 API 的机器或容器
+- 反向代理或网关，例如 Nginx、Caddy、Apache，或者云平台自带转发规则
+- 如果你要把站点放到 HTTPS 域名下，建议给前端和 Node 管理 API 都配好 HTTPS
+
+推荐的最低部署形态是：
+
+- 前端静态资源由 Nginx、CDN、GitHub Pages、Cloudflare Pages、Vercel Static 等托管
+- Node 管理 API 单独跑在服务器上
+- MySQL 只对 Node 管理 API 开放，不要直接暴露给浏览器
+
+## 服务器部署流程
+
+下面是把这个项目部署到自己服务器的一套常见流程：
+
+1. 在服务器上安装 Node.js 20+ 和 MySQL。
+2. 在 MySQL 里准备一个可连接账号，建议单独创建一个只给这个项目用的用户。
+3. 把项目代码部署到服务器，执行 `npm ci` 安装依赖。
+4. 配置环境变量：
+
+```bash
+AIS_DB_HOST=127.0.0.1
+AIS_DB_PORT=3306
+AIS_DB_USER=root
+AIS_DB_PASSWORD=你的MySQL密码
+AIS_DB_NAME=amazon_image_studio
+AIS_ADMIN_PORT=8787
+AIS_ADMIN_USERNAME=admin
+AIS_ADMIN_PASSWORD=你的管理员密码
+```
+
+5. 启动 Node 管理 API：
+
+```bash
+npm run admin:server
+```
+
+6. 确认首次启动后数据库里已经自动创建 `amazon_image_studio`、`admin_users`、`admin_settings`。
+7. 构建前端静态资源：
+
+```bash
+npm run build
+```
+
+8. 把 `dist/` 部署到你的静态托管环境。
+9. 配置反向代理，把前端站点访问到的 `/admin-api` 转发到 Node 管理 API，例如 `http://127.0.0.1:8787/admin-api`。
+10. 打开前端页面，登录管理员，检查统一 URL、游客权限和参考图上限是否已经从数据库读取成功。
+
+如果你使用 Docker、PM2、systemd 或云平台部署，也遵循同样的顺序：先保证 MySQL 可用，再启动 Node 管理 API，最后发布前端静态文件并转发 `/admin-api`。
+
 ## 开源说明
 
 本仓库公开的是前端应用源码、Amazon 图片策划逻辑、Prompt 模板、知识文档、本地启动脚本和部署配置，采用 [MIT License](LICENSE) 发布。
@@ -377,7 +458,8 @@ dist/
 
 ## 静态部署
 
-本项目是 Vite 单页应用，部署平台只需要安装依赖、运行构建命令，并把 `dist/` 作为静态目录发布。
+前端部分仍然是 Vite 单页应用，静态托管平台只需要安装依赖、运行构建命令，并把 `dist/` 作为静态目录发布。  
+如果你启用了新增的 Node 管理后端，静态部署只覆盖前端页面，Node 服务和 MySQL 仍然需要单独部署。
 
 推荐配置：
 

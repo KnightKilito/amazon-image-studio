@@ -96,6 +96,7 @@ const DEFAULT_ADMIN_ACCESS = {
 } satisfies AdminAccessSettings
 type ToastType = 'info' | 'success' | 'error'
 type GuestUnifiedApiUrlKind = 'planner' | 'image'
+let adminAccessSaveChain: Promise<void> = Promise.resolve()
 type AgentInputDraft = {
   prompt: string
   inputImages: InputImage[]
@@ -781,7 +782,8 @@ interface AppState {
   adminAccess: AdminAccessSettings
   isAdminAuthenticated: boolean
   syncAdminAccess: () => Promise<void>
-  setAdminAccess: (patch: Partial<AdminAccessSettings>, options?: { persist?: boolean }) => void
+  flushAdminAccessSave: () => Promise<void>
+  setAdminAccess: (patch: Partial<AdminAccessSettings>, options?: { persist?: boolean }) => Promise<void>
   setAdminAuthenticated: (authenticated: boolean) => void
 
   // 输入
@@ -1195,24 +1197,31 @@ export const useStore = create<AppState>()(
           // The app can still run with local defaults when the optional Node admin API is offline.
         }
       },
+      flushAdminAccessSave: () => adminAccessSaveChain,
       setAdminAccess: (patch, options = {}) => {
         const nextAccess = normalizeAdminAccess({
           ...useStore.getState().adminAccess,
           ...patch,
         })
         set({ adminAccess: nextAccess })
-        if (options.persist === false) return
+        if (options.persist === false) return Promise.resolve()
 
         const token = readAdminToken()
-        if (!token) return
-        void saveAdminSettings(token, nextAccess)
-          .then(({ adminAccess }) => set({ adminAccess: normalizeAdminAccess(adminAccess) }))
+        if (!token) return Promise.resolve()
+
+        adminAccessSaveChain = adminAccessSaveChain
+          .catch(() => {})
+          .then(() => saveAdminSettings(token, useStore.getState().adminAccess))
+          .then(({ adminAccess }) => {
+            set({ adminAccess: normalizeAdminAccess(adminAccess) })
+          })
           .catch((err) => {
             useStore.getState().showToast(
               `管理员设置保存失败：${err instanceof Error ? err.message : String(err)}`,
               'error',
             )
           })
+        return adminAccessSaveChain
       },
       setAdminAuthenticated: (isAdminAuthenticated) => set({ isAdminAuthenticated }),
 

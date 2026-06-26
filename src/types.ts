@@ -23,6 +23,7 @@ export interface AdminAccessSettings {
   unifiedGuestImageApiUrlEnabled: boolean
   unifiedGuestImageApiUrl: string
   referenceImageUploadLimit: number
+  modelIds: string[]
 }
 
 export type CustomProviderRequestMethod = 'GET' | 'POST'

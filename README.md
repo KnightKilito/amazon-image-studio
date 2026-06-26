@@ -43,6 +43,7 @@ npm run admin:server
 - 游客是否允许创建新 API 配置
 - 统一游客策划 API URL
 - 统一游客生图 API URL
+- 模型 ID 可选项列表
 - 参考图上传上限
 
 如果你只改前端静态文件，不启动 Node 管理 API，那么这些统一配置不会生效。
@@ -102,6 +103,33 @@ npm run build
 10. 打开前端页面，登录管理员，检查统一 URL、游客权限和参考图上限是否已经从数据库读取成功。
 
 如果你使用 Docker、PM2、systemd 或云平台部署，也遵循同样的顺序：先保证 MySQL 可用，再启动 Node 管理 API，最后发布前端静态文件并转发 `/admin-api`。
+
+### Nginx 示例
+
+如果前端和 Node 管理 API 部署在同一台服务器上，可以参考下面的 Nginx 思路：
+
+```nginx
+server {
+  listen 80;
+  server_name example.com;
+
+  location /admin-api/ {
+    proxy_pass http://127.0.0.1:8787/admin-api/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location / {
+    root /var/www/amazon-image-studio/dist;
+    try_files $uri $uri/ /index.html;
+  }
+}
+```
+
+如果你把前端静态站点放在 CDN、GitHub Pages、Cloudflare Pages 或 Vercel Static，上面的 `/admin-api` 仍然需要由另一台能够运行 Node 的服务器提供。
 
 ## 开源说明
 

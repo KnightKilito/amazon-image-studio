@@ -93,6 +93,7 @@ const DEFAULT_ADMIN_ACCESS = {
   unifiedGuestImageApiUrlEnabled: false,
   unifiedGuestImageApiUrl: '',
   referenceImageUploadLimit: DEFAULT_REFERENCE_IMAGE_UPLOAD_LIMIT,
+  modelIds: [],
 } satisfies AdminAccessSettings
 type ToastType = 'info' | 'success' | 'error'
 type GuestUnifiedApiUrlKind = 'planner' | 'image'
@@ -680,6 +681,12 @@ function normalizePersistedParams(value: unknown): TaskParams {
 function normalizeAdminAccess(value: unknown): AdminAccessSettings {
   const input = value && typeof value === 'object' ? value as Partial<AdminAccessSettings> : {}
   const limit = Number(input.referenceImageUploadLimit)
+  const modelIds = Array.isArray(input.modelIds)
+    ? Array.from(new Set(input.modelIds
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean)))
+    : DEFAULT_ADMIN_ACCESS.modelIds
   return {
     ...DEFAULT_ADMIN_ACCESS,
     ...input,
@@ -693,6 +700,7 @@ function normalizeAdminAccess(value: unknown): AdminAccessSettings {
     referenceImageUploadLimit: Number.isFinite(limit)
       ? Math.max(1, Math.min(64, Math.trunc(limit)))
       : DEFAULT_ADMIN_ACCESS.referenceImageUploadLimit,
+    modelIds,
   }
 }
 

@@ -20,6 +20,7 @@ const DEFAULT_ADMIN_ACCESS = {
   unifiedGuestImageApiUrlEnabled: false,
   unifiedGuestImageApiUrl: '',
   referenceImageUploadLimit: 16,
+  modelIds: [],
 }
 
 const sessions = new Map()
@@ -84,6 +85,12 @@ async function ensureSchema() {
 function normalizeAdminAccess(value) {
   const input = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
   const limit = Number(input.referenceImageUploadLimit)
+  const modelIds = Array.isArray(input.modelIds)
+    ? Array.from(new Set(input.modelIds
+        .filter((item) => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean)))
+    : DEFAULT_ADMIN_ACCESS.modelIds
   return {
     allowGuestEditApiUrl: Boolean(input.allowGuestEditApiUrl),
     allowGuestViewApiUrl: Boolean(input.allowGuestViewApiUrl),
@@ -93,6 +100,7 @@ function normalizeAdminAccess(value) {
     unifiedGuestImageApiUrlEnabled: Boolean(input.unifiedGuestImageApiUrlEnabled),
     unifiedGuestImageApiUrl: typeof input.unifiedGuestImageApiUrl === 'string' ? input.unifiedGuestImageApiUrl : '',
     referenceImageUploadLimit: Number.isFinite(limit) ? Math.max(1, Math.min(64, Math.trunc(limit))) : DEFAULT_ADMIN_ACCESS.referenceImageUploadLimit,
+    modelIds,
   }
 }
 

@@ -208,18 +208,22 @@ export async function fetchImageUrlAsDataUrl(url: string, fallbackMime: string, 
 export async function getApiErrorMessage(response: Response): Promise<string> {
   let errorMsg = `HTTP ${response.status}`
   try {
-    const errJson = await response.json()
+    const text = await response.text()
+    if (!text.trim()) return errorMsg
+    let errJson: Record<string, any>
+    try {
+      errJson = JSON.parse(text)
+    } catch {
+      errorMsg = text
+      return errorMsg
+    }
     if (errJson.error?.message) errorMsg = errJson.error.message
     else if (typeof errJson.detail === 'string') errorMsg = errJson.detail
     else if (Array.isArray(errJson.detail)) errorMsg = errJson.detail.map((item: unknown) => typeof item === 'string' ? item : JSON.stringify(item)).join('\n')
     else if (typeof errJson.error === 'string') errorMsg = errJson.error
     else if (errJson.message) errorMsg = errJson.message
   } catch {
-    try {
-      errorMsg = await response.text()
-    } catch {
-      /* ignore */
-    }
+    /* response body was not JSON or had already been consumed */
   }
   return errorMsg
 }

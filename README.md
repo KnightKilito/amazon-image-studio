@@ -43,6 +43,14 @@ mysql:
   user: root
   password: "你的MySQL密码"
   database: amazon_image_studio
+
+apiProxy:
+  enabled: true
+  locked: false
+  prefix: /api-proxy
+  target: https://你的接口域名/v1
+  changeOrigin: true
+  secure: true
 ```
 
 这些 YAML 配置项也可以用环境变量覆盖：
@@ -56,6 +64,12 @@ mysql:
 - `adminServer.username` / `AIS_ADMIN_USERNAME`：管理员账号，默认 `admin`
 - `adminServer.password` / `AIS_ADMIN_PASSWORD`：管理员明文密码，首次启动时会被转成 SHA-256 后写入数据库
 - `adminServer.passwordSha256` / `AIS_ADMIN_PASSWORD_SHA256`：如果你已经自己准备好了 SHA-256 密码哈希，可以直接填这个值
+- `apiProxy.enabled` / `AIS_API_PROXY_ENABLED`：是否启用 Node 同源 API 代理，用于解决浏览器跨域
+- `apiProxy.locked` / `AIS_API_PROXY_LOCKED`：是否强制前端使用代理，开启后用户不能关闭设置里的 API 代理
+- `apiProxy.prefix` / `AIS_API_PROXY_PREFIX`：前端访问代理的同源路径，默认 `/api-proxy`
+- `apiProxy.target` / `AIS_API_PROXY_TARGET`：代理转发目标，通常填写管理员统一 API URL，例如 `https://api.example.com/v1`
+- `apiProxy.changeOrigin` / `AIS_API_PROXY_CHANGE_ORIGIN`：转发时是否改写 Host，默认 `true`
+- `apiProxy.secure` / `AIS_API_PROXY_SECURE`：预留的 HTTPS 校验配置，默认 `true`
 
 管理员在后台里保存的内容会落到数据库表 `admin_settings`，包括：
 
@@ -85,7 +99,7 @@ mysql:
 推荐的最低部署形态是：
 
 - 前端静态资源由 Nginx、CDN、GitHub Pages、Cloudflare Pages、Vercel Static 等托管
-- Node 管理 API 单独跑在服务器上
+- Node 管理 API 单独跑在服务器上，同时提供 `/admin-api` 和可选的 `/api-proxy`
 - MySQL 只对 Node 管理 API 开放，不要直接暴露给浏览器
 
 ## 服务器部署流程
@@ -116,7 +130,7 @@ npm run build
 ```
 
 8. 把 `dist/` 部署到你的静态托管环境。
-9. 配置反向代理，把前端站点访问到的 `/admin-api` 转发到 Node 管理 API，例如 `http://127.0.0.1:8787/admin-api`。
+9. 配置反向代理，把前端站点访问到的 `/admin-api` 和 `/api-proxy` 都转发到 Node 管理 API，例如 `http://127.0.0.1:8787/admin-api`、`http://127.0.0.1:8787/api-proxy`。
 10. 打开前端页面，登录管理员，检查统一 URL、游客权限和参考图上限是否已经从数据库读取成功。
 
 如果你使用 Docker、PM2、systemd 或云平台部署，也遵循同样的顺序：先保证 MySQL 可用，再启动 Node 管理 API，最后发布前端静态文件并转发 `/admin-api`。
@@ -130,8 +144,9 @@ npm run build
 - `mysql.host`、`mysql.port`、`mysql.user`、`mysql.password`、`mysql.database`：MySQL 连接信息
 - `adminServer.port`：Node 管理 API 监听端口
 - `adminServer.username`、`adminServer.password`、`adminServer.passwordSha256`：首次初始化管理员账号使用
+- `apiProxy.enabled`、`apiProxy.locked`、`apiProxy.prefix`、`apiProxy.target`：同源 API 代理配置，AI 策划或生图接口跨域时建议开启
 
-如果你用 `systemd`、Docker 或临时命令行部署，也可以继续用 `AIS_DB_HOST`、`AIS_DB_PORT`、`AIS_DB_USER`、`AIS_DB_PASSWORD`、`AIS_DB_NAME`、`AIS_ADMIN_PORT`、`AIS_ADMIN_USERNAME`、`AIS_ADMIN_PASSWORD`、`AIS_ADMIN_PASSWORD_SHA256` 覆盖 YAML。环境变量优先级高于 `config.yaml`。
+如果你用 `systemd`、Docker 或临时命令行部署，也可以继续用 `AIS_DB_HOST`、`AIS_DB_PORT`、`AIS_DB_USER`、`AIS_DB_PASSWORD`、`AIS_DB_NAME`、`AIS_ADMIN_PORT`、`AIS_ADMIN_USERNAME`、`AIS_ADMIN_PASSWORD`、`AIS_ADMIN_PASSWORD_SHA256`、`AIS_API_PROXY_ENABLED`、`AIS_API_PROXY_TARGET` 等环境变量覆盖 YAML。环境变量优先级高于 `config.yaml`。
 
 注意：管理员账号会在首次启动时写入数据库 `admin_users`。如果数据库里已经有同名管理员，后续只改 `config.yaml` 里的 `adminServer.password` 不会自动覆盖数据库密码，需要手动更新数据库或删除旧管理员记录后重新初始化。
 
@@ -145,7 +160,7 @@ CentOS 8 上可以按下面的顺序部署：
 4. 复制 `config.example.yaml` 为 `config.yaml`，填写 MySQL 和管理员信息。
 5. 启动 Node 管理 API，让它读 MySQL 并自动建库建表。
 6. 执行 `npm run build`，把 `dist/` 作为静态前端目录。
-7. 用 Nginx 把站点根目录指向 `dist/`，同时把 `/admin-api` 代理到 `127.0.0.1:8787`。
+7. 用 Nginx 把站点根目录指向 `dist/`，同时把 `/admin-api` 和 `/api-proxy` 代理到 `127.0.0.1:8787`。
 8. 浏览器打开站点，登录管理员，检查统一 URL、权限开关和模型 ID 列表是否都能读到。
 
 如果你用 `systemd`，可以把 Node 管理 API 做成一个独立服务，前端静态文件继续交给 Nginx 托管。这样重启更稳，也方便开机自启。
@@ -166,6 +181,16 @@ server {
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+  }
+
+  location /api-proxy/ {
+    proxy_pass http://127.0.0.1:8787/api-proxy/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 300s;
   }
 
   location / {

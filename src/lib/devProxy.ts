@@ -2,6 +2,7 @@ import { readRuntimeEnv } from './runtimeEnv'
 
 export interface DevProxyConfig {
   enabled: boolean
+  locked?: boolean
   prefix: string
   target: string
   changeOrigin: boolean
@@ -67,6 +68,7 @@ export function normalizeDevProxyConfig(input: unknown): DevProxyConfig | null {
 
   return {
     enabled: Boolean(record.enabled),
+    locked: Boolean(record.locked),
     prefix,
     target,
     changeOrigin: record.changeOrigin !== false,
@@ -103,6 +105,11 @@ export function resolveDevProxyConfig(input: unknown, isDev: boolean): DevProxyC
 }
 
 export function readClientDevProxyConfig(): DevProxyConfig | null {
+  const apiProxyConfig = normalizeDevProxyConfig(
+    typeof __API_PROXY_CONFIG__ === 'undefined' ? null : __API_PROXY_CONFIG__,
+  )
+  if (apiProxyConfig) return apiProxyConfig
+
   return resolveDevProxyConfig(
     typeof __DEV_PROXY_CONFIG__ === 'undefined' ? null : __DEV_PROXY_CONFIG__,
     import.meta.env.DEV,
@@ -117,7 +124,7 @@ export function isApiProxyAvailable(proxyConfig: DevProxyConfig | null = readCli
 }
 
 export function isApiProxyLocked(proxyConfig: DevProxyConfig | null = readClientDevProxyConfig()): boolean {
-  return readRuntimeEnv(import.meta.env.VITE_API_PROXY_LOCKED) === 'true' && isApiProxyAvailable(proxyConfig)
+  return (readRuntimeEnv(import.meta.env.VITE_API_PROXY_LOCKED) === 'true' || Boolean(proxyConfig?.locked)) && isApiProxyAvailable(proxyConfig)
 }
 
 export function shouldUseApiProxy(

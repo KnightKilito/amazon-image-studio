@@ -14,3 +14,14 @@ mysql:
   user: root
   password: "change-me"
   database: amazon_image_studio
+
+apiProxy:
+  # 开启后，前端会把匹配 target 的 API 请求改为同源 /api-proxy/...，由 Node 后端转发，避免浏览器跨域。
+  enabled: false
+  # true 表示前端强制使用代理，用户不能在设置里关闭。
+  locked: false
+  prefix: /api-proxy
+  # 通常填管理员统一设置里使用的 API URL，例如 https://api.example.com/v1。
+  target: ""
+  changeOrigin: true
+  secure: true

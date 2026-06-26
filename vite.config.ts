@@ -5,6 +5,7 @@ import { loadAdminConfig } from './server/config.mjs'
 import { normalizeDevProxyConfig } from './src/lib/devProxy'
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
+const adminConfig = loadAdminConfig()
 
 function loadDevProxyConfig() {
   try {
@@ -19,8 +20,14 @@ function loadDevProxyConfig() {
 }
 
 export default defineConfig(({ command }) => {
-  const devProxyConfig = command === 'serve' ? loadDevProxyConfig() : null
-  const adminApiPort = String(loadAdminConfig().adminServer.port)
+  const configApiProxy = normalizeDevProxyConfig(adminConfig.apiProxy)
+  const fileDevProxyConfig = command === 'serve' ? loadDevProxyConfig() : null
+  const devProxyConfig = command === 'serve'
+    ? (configApiProxy?.enabled ? configApiProxy : fileDevProxyConfig)
+    : null
+  const clientApiProxyConfig = configApiProxy?.enabled ? configApiProxy : devProxyConfig
+  const adminApiPort = String(adminConfig.adminServer.port)
+  const apiProxyUsesAdminServer = Boolean(configApiProxy?.enabled)
   const proxy = {
     '/admin-api': {
       target: `http://localhost:${adminApiPort}`,
@@ -29,14 +36,16 @@ export default defineConfig(({ command }) => {
     ...(devProxyConfig?.enabled
       ? {
           [devProxyConfig.prefix]: {
-            target: devProxyConfig.target,
-            changeOrigin: devProxyConfig.changeOrigin,
-            secure: devProxyConfig.secure,
-            rewrite: (path: string) =>
-              path.replace(
-                new RegExp(`^${devProxyConfig.prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
-                '',
-              ),
+            target: apiProxyUsesAdminServer ? `http://localhost:${adminApiPort}` : devProxyConfig.target,
+            changeOrigin: apiProxyUsesAdminServer ? true : devProxyConfig.changeOrigin,
+            secure: apiProxyUsesAdminServer ? false : devProxyConfig.secure,
+            rewrite: apiProxyUsesAdminServer
+              ? undefined
+              : (path: string) =>
+                  path.replace(
+                    new RegExp(`^${devProxyConfig.prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+                    '',
+                  ),
           },
         }
       : {}),
@@ -48,6 +57,7 @@ export default defineConfig(({ command }) => {
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),
       __DEV_PROXY_CONFIG__: JSON.stringify(devProxyConfig),
+      __API_PROXY_CONFIG__: JSON.stringify(clientApiProxyConfig),
     },
     server: {
       host: true,

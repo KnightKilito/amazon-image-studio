@@ -18,6 +18,14 @@ const DEFAULT_CONFIG = {
     password: '',
     database: 'amazon_image_studio',
   },
+  apiProxy: {
+    enabled: false,
+    locked: false,
+    prefix: '/api-proxy',
+    target: '',
+    changeOrigin: true,
+    secure: true,
+  },
 }
 
 function readConfigFile() {
@@ -44,6 +52,25 @@ function envNumber(name) {
   return value === undefined ? undefined : Number(value)
 }
 
+function booleanValue(value, fallback) {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (['true', '1', 'yes', 'on'].includes(normalized)) return true
+    if (['false', '0', 'no', 'off'].includes(normalized)) return false
+  }
+  return fallback
+}
+
+function envBoolean(name) {
+  return envString(name)
+}
+
+function normalizeProxyPrefix(value) {
+  const raw = stringValue(value, DEFAULT_CONFIG.apiProxy.prefix).trim().replace(/^\/+/, '').replace(/\/+$/, '')
+  return raw ? `/${raw}` : DEFAULT_CONFIG.apiProxy.prefix
+}
+
 export function loadAdminConfig() {
   const fileConfig = readConfigFile()
   const adminServer = fileConfig.adminServer && typeof fileConfig.adminServer === 'object'
@@ -51,6 +78,9 @@ export function loadAdminConfig() {
     : {}
   const mysql = fileConfig.mysql && typeof fileConfig.mysql === 'object'
     ? fileConfig.mysql
+    : {}
+  const apiProxy = fileConfig.apiProxy && typeof fileConfig.apiProxy === 'object'
+    ? fileConfig.apiProxy
     : {}
 
   return {
@@ -66,6 +96,14 @@ export function loadAdminConfig() {
       user: stringValue(envString('AIS_DB_USER') ?? mysql.user, DEFAULT_CONFIG.mysql.user),
       password: stringValue(envString('AIS_DB_PASSWORD') ?? mysql.password, DEFAULT_CONFIG.mysql.password),
       database: stringValue(envString('AIS_DB_NAME') ?? mysql.database, DEFAULT_CONFIG.mysql.database),
+    },
+    apiProxy: {
+      enabled: booleanValue(envBoolean('AIS_API_PROXY_ENABLED') ?? apiProxy.enabled, DEFAULT_CONFIG.apiProxy.enabled),
+      locked: booleanValue(envBoolean('AIS_API_PROXY_LOCKED') ?? apiProxy.locked, DEFAULT_CONFIG.apiProxy.locked),
+      prefix: normalizeProxyPrefix(envString('AIS_API_PROXY_PREFIX') ?? apiProxy.prefix),
+      target: stringValue(envString('AIS_API_PROXY_TARGET') ?? apiProxy.target, DEFAULT_CONFIG.apiProxy.target),
+      changeOrigin: booleanValue(envBoolean('AIS_API_PROXY_CHANGE_ORIGIN') ?? apiProxy.changeOrigin, DEFAULT_CONFIG.apiProxy.changeOrigin),
+      secure: booleanValue(envBoolean('AIS_API_PROXY_SECURE') ?? apiProxy.secure, DEFAULT_CONFIG.apiProxy.secure),
     },
   }
 }

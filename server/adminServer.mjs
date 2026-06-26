@@ -6,6 +6,7 @@ import { loadAdminConfig } from './config.mjs'
 const appConfig = loadAdminConfig()
 const DB_NAME = appConfig.mysql.database
 const PORT = appConfig.adminServer.port
+const API_PROXY = appConfig.apiProxy
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000
 
 const DEFAULT_ADMIN_USERNAME = appConfig.adminServer.username
@@ -164,8 +165,87 @@ function isAuthenticated(req) {
   return true
 }
 
+function buildProxyUrl(reqUrl) {
+  const targetBase = API_PROXY.target.trim()
+  if (!API_PROXY.enabled || !targetBase) return null
+
+  const source = new URL(reqUrl || '/', 'http://localhost')
+  if (!source.pathname.startsWith(API_PROXY.prefix)) return null
+
+  const target = new URL(targetBase)
+  const basePath = target.pathname.replace(/\/+$/, '')
+  const proxyPath = source.pathname.slice(API_PROXY.prefix.length).replace(/^\/+/, '')
+  target.pathname = `${basePath}${proxyPath ? `/${proxyPath}` : ''}` || '/'
+  target.search = source.search
+  return target
+}
+
+function getProxyHeaders(req, target) {
+  const headers = new Headers()
+  const allowedHeaders = new Set([
+    'accept',
+    'authorization',
+    'content-type',
+    'openai-beta',
+    'openai-organization',
+    'openai-project',
+  ])
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (value === undefined) continue
+    const lowerKey = key.toLowerCase()
+    if (!allowedHeaders.has(lowerKey)) continue
+    headers.set(key, Array.isArray(value) ? value.join(', ') : value)
+  }
+  return headers
+}
+
+async function readRequestBody(req) {
+  if (req.method === 'GET' || req.method === 'HEAD') return undefined
+  const chunks = []
+  for await (const chunk of req) chunks.push(chunk)
+  return Buffer.concat(chunks)
+}
+
+async function handleApiProxy(req, res, target) {
+  try {
+    console.log(`API proxy ${req.method} ${target.href}`)
+    const upstream = await fetch(target, {
+      method: req.method,
+      headers: getProxyHeaders(req, target),
+      body: await readRequestBody(req),
+      redirect: 'manual',
+    })
+
+    const headers = {}
+    upstream.headers.forEach((value, key) => {
+      if (['content-encoding', 'content-length', 'transfer-encoding', 'connection'].includes(key.toLowerCase())) return
+      headers[key] = value
+    })
+    headers['cache-control'] = 'no-store'
+
+    const body = Buffer.from(await upstream.arrayBuffer())
+    headers['content-length'] = String(body.byteLength)
+    if (!upstream.ok) {
+      const preview = body.toString('utf8', 0, Math.min(body.byteLength, 500)).replace(/\s+/g, ' ').trim()
+      console.warn(`API proxy upstream ${upstream.status} ${target.href}${preview ? `: ${preview}` : ''}`)
+    }
+    res.writeHead(upstream.status, headers)
+    res.end(body)
+  } catch (error) {
+    const cause = error instanceof Error && error.cause instanceof Error ? `: ${error.cause.message}` : ''
+    console.error(`API proxy failed ${req.method} ${target.href}`, error)
+    sendJson(res, 502, { error: `${error instanceof Error ? error.message : String(error)}${cause}` })
+  }
+}
+
 async function handleRequest(req, res) {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
+  const proxyUrl = buildProxyUrl(req.url)
+  if (proxyUrl) {
+    await handleApiProxy(req, res, proxyUrl)
+    return
+  }
+
   if (!url.pathname.startsWith('/admin-api')) {
     sendJson(res, 404, { error: 'Not found' })
     return
@@ -229,4 +309,7 @@ await ensureSchema()
 http.createServer(handleRequest).listen(PORT, () => {
   console.log(`Admin API listening on http://localhost:${PORT}/admin-api`)
   console.log(`MySQL database: ${DB_NAME}`)
+  if (API_PROXY.enabled && API_PROXY.target) {
+    console.log(`API proxy listening on ${API_PROXY.prefix} -> ${API_PROXY.target}`)
+  }
 })

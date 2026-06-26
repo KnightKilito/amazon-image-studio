@@ -1,0 +1,16 @@
+adminServer:
+  # Node 管理 API 监听端口。开发时 Vite 会自动把 /admin-api 代理到这个端口。
+  port: 8787
+  # 首次启动时写入数据库 admin_users 的管理员账号。
+  username: admin
+  # 首次启动时写入数据库的管理员密码。生产环境请改成强密码。
+  password: "change-me"
+  # 如果你已经准备好 SHA-256 密码哈希，可以填这里；填了以后会优先于 password。
+  passwordSha256: ""
+
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  password: "change-me"
+  database: amazon_image_studio

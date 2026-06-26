@@ -18,23 +18,44 @@
 npm run admin:server
 ```
 
-首次启动会自动创建 `amazon_image_studio` 数据库，以及 `admin_users`、`admin_settings` 表。默认管理员账号为 `admin`，密码沿用旧前端内置管理员密码；可在首次启动前通过 `AIS_ADMIN_USERNAME`、`AIS_ADMIN_PASSWORD` 或 `AIS_ADMIN_PASSWORD_SHA256` 修改。
+首次启动会自动创建 `amazon_image_studio` 数据库，以及 `admin_users`、`admin_settings` 表。默认管理员账号为 `admin`，密码沿用旧前端内置管理员密码；部署时建议先复制 `config.example.yaml` 为 `config.yaml`，再在 `config.yaml` 中修改管理员账号、密码、MySQL 连接和管理 API 端口。
 
-常用环境变量：`AIS_DB_HOST`、`AIS_DB_PORT`、`AIS_DB_USER`、`AIS_DB_PASSWORD`、`AIS_DB_NAME`、`AIS_ADMIN_PORT`。开发环境下 Vite 会把 `/admin-api` 代理到 Node 管理 API；生产部署时也需要把 `/admin-api` 转发到该 Node 服务。
+`config.yaml` 是本机/服务器实际配置文件，已经加入 `.gitignore`，不会被提交到 Git；`config.example.yaml` 是可提交的模板。环境变量仍然可用，并且优先级高于 `config.yaml`，适合 systemd、Docker 或临时覆盖。开发环境下 Vite 会把 `/admin-api` 代理到 Node 管理 API；生产部署时也需要把 `/admin-api` 转发到该 Node 服务。
 
 ### 需要修改的配置项
 
-如果你把项目部署到自己的服务器，通常需要改这些配置：
+如果你把项目部署到自己的服务器，通常需要复制并修改根目录下的 `config.yaml`：
 
-- `AIS_DB_HOST`：MySQL 主机地址，默认 `127.0.0.1`
-- `AIS_DB_PORT`：MySQL 端口，默认 `3306`
-- `AIS_DB_USER`：MySQL 用户名
-- `AIS_DB_PASSWORD`：MySQL 密码
-- `AIS_DB_NAME`：数据库名，默认 `amazon_image_studio`
-- `AIS_ADMIN_PORT`：Node 管理 API 监听端口，默认 `8787`
-- `AIS_ADMIN_USERNAME`：管理员账号，默认 `admin`
-- `AIS_ADMIN_PASSWORD`：管理员明文密码，首次启动时会被转成 SHA-256 后写入数据库
-- `AIS_ADMIN_PASSWORD_SHA256`：如果你已经自己准备好了 SHA-256 密码哈希，可以直接传这个值
+```bash
+cp config.example.yaml config.yaml
+```
+
+```yaml
+adminServer:
+  port: 8787
+  username: admin
+  password: "你的管理员密码"
+  passwordSha256: ""
+
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  password: "你的MySQL密码"
+  database: amazon_image_studio
+```
+
+这些 YAML 配置项也可以用环境变量覆盖：
+
+- `mysql.host` / `AIS_DB_HOST`：MySQL 主机地址，默认 `127.0.0.1`
+- `mysql.port` / `AIS_DB_PORT`：MySQL 端口，默认 `3306`
+- `mysql.user` / `AIS_DB_USER`：MySQL 用户名
+- `mysql.password` / `AIS_DB_PASSWORD`：MySQL 密码
+- `mysql.database` / `AIS_DB_NAME`：数据库名，默认 `amazon_image_studio`
+- `adminServer.port` / `AIS_ADMIN_PORT`：Node 管理 API 监听端口，默认 `8787`
+- `adminServer.username` / `AIS_ADMIN_USERNAME`：管理员账号，默认 `admin`
+- `adminServer.password` / `AIS_ADMIN_PASSWORD`：管理员明文密码，首次启动时会被转成 SHA-256 后写入数据库
+- `adminServer.passwordSha256` / `AIS_ADMIN_PASSWORD_SHA256`：如果你已经自己准备好了 SHA-256 密码哈希，可以直接填这个值
 
 管理员在后台里保存的内容会落到数据库表 `admin_settings`，包括：
 
@@ -74,17 +95,11 @@ npm run admin:server
 1. 在服务器上安装 Node.js 20+ 和 MySQL。
 2. 在 MySQL 里准备一个可连接账号，建议单独创建一个只给这个项目用的用户。
 3. 把项目代码部署到服务器，执行 `npm ci` 安装依赖。
-4. 配置环境变量：
+4. 复制配置模板并修改真实配置：
 
 ```bash
-AIS_DB_HOST=127.0.0.1
-AIS_DB_PORT=3306
-AIS_DB_USER=root
-AIS_DB_PASSWORD=你的MySQL密码
-AIS_DB_NAME=amazon_image_studio
-AIS_ADMIN_PORT=8787
-AIS_ADMIN_USERNAME=admin
-AIS_ADMIN_PASSWORD=你的管理员密码
+cp config.example.yaml config.yaml
+vi config.yaml
 ```
 
 5. 启动 Node 管理 API：
@@ -105,6 +120,35 @@ npm run build
 10. 打开前端页面，登录管理员，检查统一 URL、游客权限和参考图上限是否已经从数据库读取成功。
 
 如果你使用 Docker、PM2、systemd 或云平台部署，也遵循同样的顺序：先保证 MySQL 可用，再启动 Node 管理 API，最后发布前端静态文件并转发 `/admin-api`。
+
+### 配置项位置
+
+这些配置项不是在前端页面里改，而是在服务器项目根目录的 `config.yaml` 里改。仓库只提交 `config.example.yaml` 模板，真实的 `config.yaml` 已经加入 `.gitignore`，避免把 MySQL 密码和管理员密码提交出去。
+
+主要配置项：
+
+- `mysql.host`、`mysql.port`、`mysql.user`、`mysql.password`、`mysql.database`：MySQL 连接信息
+- `adminServer.port`：Node 管理 API 监听端口
+- `adminServer.username`、`adminServer.password`、`adminServer.passwordSha256`：首次初始化管理员账号使用
+
+如果你用 `systemd`、Docker 或临时命令行部署，也可以继续用 `AIS_DB_HOST`、`AIS_DB_PORT`、`AIS_DB_USER`、`AIS_DB_PASSWORD`、`AIS_DB_NAME`、`AIS_ADMIN_PORT`、`AIS_ADMIN_USERNAME`、`AIS_ADMIN_PASSWORD`、`AIS_ADMIN_PASSWORD_SHA256` 覆盖 YAML。环境变量优先级高于 `config.yaml`。
+
+注意：管理员账号会在首次启动时写入数据库 `admin_users`。如果数据库里已经有同名管理员，后续只改 `config.yaml` 里的 `adminServer.password` 不会自动覆盖数据库密码，需要手动更新数据库或删除旧管理员记录后重新初始化。
+
+### CentOS 8 示例
+
+CentOS 8 上可以按下面的顺序部署：
+
+1. 安装基础组件、Node.js 和 MySQL。
+2. 把项目代码放到服务器，例如 `/opt/amazon-image-studio`。
+3. 在项目目录执行 `npm ci`。
+4. 复制 `config.example.yaml` 为 `config.yaml`，填写 MySQL 和管理员信息。
+5. 启动 Node 管理 API，让它读 MySQL 并自动建库建表。
+6. 执行 `npm run build`，把 `dist/` 作为静态前端目录。
+7. 用 Nginx 把站点根目录指向 `dist/`，同时把 `/admin-api` 代理到 `127.0.0.1:8787`。
+8. 浏览器打开站点，登录管理员，检查统一 URL、权限开关和模型 ID 列表是否都能读到。
+
+如果你用 `systemd`，可以把 Node 管理 API 做成一个独立服务，前端静态文件继续交给 Nginx 托管。这样重启更稳，也方便开机自启。
 
 ### Nginx 示例
 

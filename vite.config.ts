@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { readFileSync } from 'fs'
+import { loadAdminConfig } from './server/config.mjs'
 import { normalizeDevProxyConfig } from './src/lib/devProxy'
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
@@ -19,7 +20,7 @@ function loadDevProxyConfig() {
 
 export default defineConfig(({ command }) => {
   const devProxyConfig = command === 'serve' ? loadDevProxyConfig() : null
-  const adminApiPort = process.env.AIS_ADMIN_PORT || '8787'
+  const adminApiPort = String(loadAdminConfig().adminServer.port)
   const proxy = {
     '/admin-api': {
       target: `http://localhost:${adminApiPort}`,

@@ -2,6 +2,7 @@ node_modules
 dist
 .git
 .gitignore
+config.yaml
 *.md
 Dockerfile
 .dockerignore

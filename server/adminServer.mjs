@@ -1,15 +1,17 @@
 import crypto from 'node:crypto'
 import http from 'node:http'
 import mysql from 'mysql2/promise'
+import { loadAdminConfig } from './config.mjs'
 
-const DB_NAME = process.env.AIS_DB_NAME || 'amazon_image_studio'
-const PORT = Number(process.env.AIS_ADMIN_PORT || 8787)
+const appConfig = loadAdminConfig()
+const DB_NAME = appConfig.mysql.database
+const PORT = appConfig.adminServer.port
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000
 
-const DEFAULT_ADMIN_USERNAME = process.env.AIS_ADMIN_USERNAME || 'admin'
+const DEFAULT_ADMIN_USERNAME = appConfig.adminServer.username
 const LEGACY_ADMIN_PASSWORD_SHA256 = '757c484a1e18c9f3724235680fba5790cbe59530f65a0d1360bc054c28da682c'
-const DEFAULT_ADMIN_PASSWORD_SHA256 = process.env.AIS_ADMIN_PASSWORD_SHA256 ||
-  (process.env.AIS_ADMIN_PASSWORD ? sha256Hex(process.env.AIS_ADMIN_PASSWORD) : LEGACY_ADMIN_PASSWORD_SHA256)
+const DEFAULT_ADMIN_PASSWORD_SHA256 = appConfig.adminServer.passwordSha256 ||
+  (appConfig.adminServer.password ? sha256Hex(appConfig.adminServer.password) : LEGACY_ADMIN_PASSWORD_SHA256)
 
 const DEFAULT_ADMIN_ACCESS = {
   allowGuestEditApiUrl: true,
@@ -33,10 +35,10 @@ function sha256Hex(text) {
 
 function getMysqlConfig(database) {
   return {
-    host: process.env.AIS_DB_HOST || '127.0.0.1',
-    port: Number(process.env.AIS_DB_PORT || 3306),
-    user: process.env.AIS_DB_USER || 'root',
-    password: process.env.AIS_DB_PASSWORD || '',
+    host: appConfig.mysql.host,
+    port: appConfig.mysql.port,
+    user: appConfig.mysql.user,
+    password: appConfig.mysql.password,
     database,
     waitForConnections: true,
     connectionLimit: 10,

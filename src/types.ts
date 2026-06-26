@@ -18,6 +18,8 @@ export interface AdminAccessSettings {
   allowGuestEditApiUrl: boolean
   allowGuestViewApiUrl: boolean
   allowGuestCreateApiProfile: boolean
+  allowGuestEditApiProvider: boolean
+  allowGuestCreateCustomProvider: boolean
   unifiedGuestPlannerApiUrlEnabled: boolean
   unifiedGuestPlannerApiUrl: string
   unifiedGuestImageApiUrlEnabled: boolean

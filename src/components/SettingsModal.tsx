@@ -365,6 +365,8 @@ export default function SettingsModal() {
   const canViewApiUrl = isAdminAuthenticated || adminAccess.allowGuestViewApiUrl
   const canEditApiUrl = isAdminAuthenticated || adminAccess.allowGuestEditApiUrl
   const canCreateApiProfile = isAdminAuthenticated || adminAccess.allowGuestCreateApiProfile
+  const canEditApiProvider = isAdminAuthenticated || adminAccess.allowGuestEditApiProvider
+  const canCreateCustomProvider = isAdminAuthenticated || adminAccess.allowGuestCreateCustomProvider
   const guestUnifiedImageApiUrl = !isAdminAuthenticated && adminAccess.unifiedGuestImageApiUrlEnabled
     ? adminAccess.unifiedGuestImageApiUrl.trim()
     : ''
@@ -380,19 +382,21 @@ export default function SettingsModal() {
       label: provider.name,
       value: provider.id,
       draggable: true,
-      actions: [
-        { label: '编辑', onClick: () => openEditCustomProvider(provider) },
-        {
-          label: '删除',
-          variant: 'danger' as const,
-          onClick: () => confirmDeleteCustomProvider(provider),
-        },
-      ],
+      actions: canCreateCustomProvider
+        ? [
+            { label: '编辑', onClick: () => openEditCustomProvider(provider) },
+            {
+              label: '删除',
+              variant: 'danger' as const,
+              onClick: () => confirmDeleteCustomProvider(provider),
+            },
+          ]
+        : undefined,
     })),
   ]
 
   const providerOptions = [
-    ...(canCreateApiProfile
+    ...(canCreateCustomProvider
       ? [{ label: '创建自定义服务商', value: ADD_CUSTOM_PROVIDER_VALUE, variant: 'action' as const }]
       : []),
     ...unorderedProviderOptions.sort((a, b) => {
@@ -945,14 +949,19 @@ export default function SettingsModal() {
 
   const handleProviderTypeChange = (value: string | number) => {
     if (value === ADD_CUSTOM_PROVIDER_VALUE) {
-      if (!canCreateApiProfile) {
-        showToast('游客暂不能创建新 API 配置', 'error')
+      if (!canCreateCustomProvider) {
+        showToast('游客暂不能创建自定义服务商', 'error')
         return
       }
       setEditingCustomProviderId(null)
       setCustomProviderForm(createDefaultCustomProviderForm())
       setShowCustomProviderImport(true)
       setCustomProviderImportError(null)
+      return
+    }
+
+    if (!canEditApiProvider) {
+      showToast('游客暂不能修改服务商类型', 'error')
       return
     }
 
@@ -1519,6 +1528,7 @@ export default function SettingsModal() {
                   onChange={handleProviderTypeChange}
                   onReorder={handleProviderReorder}
                   options={providerOptions}
+                  disabled={!canEditApiProvider}
                   className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                 />
               </div>

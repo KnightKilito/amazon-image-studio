@@ -41,6 +41,8 @@ npm run admin:server
 - 游客是否允许修改 API URL
 - 游客是否允许查看 API URL
 - 游客是否允许创建新 API 配置
+- 游客是否允许修改服务商类型
+- 游客是否允许创建自定义服务商
 - 统一游客策划 API URL
 - 统一游客生图 API URL
 - 模型 ID 可选项列表

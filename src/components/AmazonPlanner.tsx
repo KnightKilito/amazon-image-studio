@@ -1144,6 +1144,10 @@ export default function AmazonPlanner() {
       })
       if (controller.signal.aborted) return
       applyPlannerResult(result, plannerMode === 'aplus' ? 'A+ AI 策划' : 'AI 策划')
+      if (plannerAbortControllerRef.current === controller) {
+        plannerAbortControllerRef.current = null
+        setIsPlanning(false)
+      }
     } catch (err) {
       if (controller.signal.aborted || isAbortError(err)) return
       setPlannerError(getPlannerFailureDetail(err))

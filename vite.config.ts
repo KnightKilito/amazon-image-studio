@@ -28,6 +28,14 @@ export default defineConfig(({ command }) => {
   const clientApiProxyConfig = configApiProxy?.enabled ? configApiProxy : devProxyConfig
   const adminApiPort = String(adminConfig.adminServer.port)
   const apiProxyUsesAdminServer = Boolean(configApiProxy?.enabled)
+  const rewriteDevProxyPath = (path: string) => {
+    const [pathname, search = ''] = path.split('?')
+    const rewrittenPath = pathname.replace(
+      new RegExp(`^${devProxyConfig!.prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+      '',
+    )
+    return `${rewrittenPath}${search ? `?${search}` : ''}`
+  }
   const proxy = {
     '/admin-api': {
       target: `http://localhost:${adminApiPort}`,
@@ -41,11 +49,7 @@ export default defineConfig(({ command }) => {
             secure: apiProxyUsesAdminServer ? false : devProxyConfig.secure,
             rewrite: apiProxyUsesAdminServer
               ? undefined
-              : (path: string) =>
-                  path.replace(
-                    new RegExp(`^${devProxyConfig.prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
-                    '',
-                  ),
+              : rewriteDevProxyPath,
           },
         }
       : {}),

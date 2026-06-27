@@ -165,18 +165,60 @@ function isAuthenticated(req) {
   return true
 }
 
+function normalizeProxyBaseUrl(value) {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  if (!trimmed) return ''
+  try {
+    const url = new URL(trimmed)
+    if (!['http:', 'https:'].includes(url.protocol)) return ''
+    url.hash = ''
+    url.search = ''
+    url.pathname = url.pathname.replace(/\/+$/, '')
+    return url.toString().replace(/\/+$/, '')
+  } catch {
+    return ''
+  }
+}
+
+function isProxyTargetAllowed(targetBase) {
+  if (API_PROXY.allowAllTargets) return true
+  const normalizedTarget = normalizeProxyBaseUrl(targetBase)
+  if (!normalizedTarget) return false
+
+  const fixedTarget = normalizeProxyBaseUrl(API_PROXY.target)
+  if (fixedTarget && normalizedTarget === fixedTarget) return true
+
+  return API_PROXY.allowedTargets
+    .map(normalizeProxyBaseUrl)
+    .filter(Boolean)
+    .includes(normalizedTarget)
+}
+
+function resolveProxyTargetBase(source) {
+  const requestedTarget = source.searchParams.get('target')
+  if (requestedTarget) return normalizeProxyBaseUrl(requestedTarget)
+  return normalizeProxyBaseUrl(API_PROXY.target)
+}
+
 function buildProxyUrl(reqUrl) {
-  const targetBase = API_PROXY.target.trim()
-  if (!API_PROXY.enabled || !targetBase) return null
+  if (!API_PROXY.enabled) return null
 
   const source = new URL(reqUrl || '/', 'http://localhost')
   if (!source.pathname.startsWith(API_PROXY.prefix)) return null
+
+  const targetBase = resolveProxyTargetBase(source)
+  if (!targetBase || !isProxyTargetAllowed(targetBase)) {
+    const err = new Error('API proxy target is not allowed')
+    err.statusCode = 403
+    throw err
+  }
 
   const target = new URL(targetBase)
   const basePath = target.pathname.replace(/\/+$/, '')
   const proxyPath = source.pathname.slice(API_PROXY.prefix.length).replace(/^\/+/, '')
   target.pathname = `${basePath}${proxyPath ? `/${proxyPath}` : ''}` || '/'
-  target.search = source.search
+  source.searchParams.delete('target')
+  target.search = source.searchParams.toString()
   return target
 }
 
@@ -240,9 +282,18 @@ async function handleApiProxy(req, res, target) {
 
 async function handleRequest(req, res) {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
-  const proxyUrl = buildProxyUrl(req.url)
-  if (proxyUrl) {
-    await handleApiProxy(req, res, proxyUrl)
+  let proxyUrl = null
+  try {
+    proxyUrl = buildProxyUrl(req.url)
+    if (proxyUrl) {
+      await handleApiProxy(req, res, proxyUrl)
+      return
+    }
+  } catch (error) {
+    const status = typeof error === 'object' && error !== null && 'statusCode' in error
+      ? Number(error.statusCode)
+      : 500
+    sendJson(res, Number.isFinite(status) ? status : 500, { error: error instanceof Error ? error.message : String(error) })
     return
   }
 
@@ -309,7 +360,12 @@ await ensureSchema()
 http.createServer(handleRequest).listen(PORT, () => {
   console.log(`Admin API listening on http://localhost:${PORT}/admin-api`)
   console.log(`MySQL database: ${DB_NAME}`)
-  if (API_PROXY.enabled && API_PROXY.target) {
-    console.log(`API proxy listening on ${API_PROXY.prefix} -> ${API_PROXY.target}`)
+  if (API_PROXY.enabled) {
+    const mode = API_PROXY.allowAllTargets
+      ? 'allow all targets'
+      : API_PROXY.target
+        ? `target ${API_PROXY.target}`
+        : `${API_PROXY.allowedTargets.length} allowed targets`
+    console.log(`API proxy listening on ${API_PROXY.prefix} (${mode})`)
   }
 })

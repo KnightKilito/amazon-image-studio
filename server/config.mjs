@@ -23,6 +23,8 @@ const DEFAULT_CONFIG = {
     locked: false,
     prefix: '/api-proxy',
     target: '',
+    allowAllTargets: false,
+    allowedTargets: [],
     changeOrigin: true,
     secure: true,
   },
@@ -71,6 +73,16 @@ function normalizeProxyPrefix(value) {
   return raw ? `/${raw}` : DEFAULT_CONFIG.apiProxy.prefix
 }
 
+function normalizeStringList(value) {
+  if (!Array.isArray(value)) return []
+  return Array.from(new Set(
+    value
+      .filter((item) => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter(Boolean),
+  ))
+}
+
 export function loadAdminConfig() {
   const fileConfig = readConfigFile()
   const adminServer = fileConfig.adminServer && typeof fileConfig.adminServer === 'object'
@@ -102,6 +114,8 @@ export function loadAdminConfig() {
       locked: booleanValue(envBoolean('AIS_API_PROXY_LOCKED') ?? apiProxy.locked, DEFAULT_CONFIG.apiProxy.locked),
       prefix: normalizeProxyPrefix(envString('AIS_API_PROXY_PREFIX') ?? apiProxy.prefix),
       target: stringValue(envString('AIS_API_PROXY_TARGET') ?? apiProxy.target, DEFAULT_CONFIG.apiProxy.target),
+      allowAllTargets: booleanValue(envBoolean('AIS_API_PROXY_ALLOW_ALL_TARGETS') ?? apiProxy.allowAllTargets, DEFAULT_CONFIG.apiProxy.allowAllTargets),
+      allowedTargets: normalizeStringList(apiProxy.allowedTargets),
       changeOrigin: booleanValue(envBoolean('AIS_API_PROXY_CHANGE_ORIGIN') ?? apiProxy.changeOrigin, DEFAULT_CONFIG.apiProxy.changeOrigin),
       secure: booleanValue(envBoolean('AIS_API_PROXY_SECURE') ?? apiProxy.secure, DEFAULT_CONFIG.apiProxy.secure),
     },

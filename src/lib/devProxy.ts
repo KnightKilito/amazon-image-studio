@@ -4,7 +4,9 @@ export interface DevProxyConfig {
   enabled: boolean
   locked?: boolean
   prefix: string
-  target: string
+  target?: string
+  allowAllTargets?: boolean
+  allowedTargets?: string[]
   changeOrigin: boolean
   secure: boolean
 }
@@ -60,7 +62,14 @@ export function normalizeDevProxyConfig(input: unknown): DevProxyConfig | null {
 
   const record = input as Record<string, unknown>
   const target = normalizeBaseUrl(typeof record.target === 'string' ? record.target : '')
-  if (!target) return null
+  const allowAllTargets = Boolean(record.allowAllTargets)
+  const allowedTargets = Array.isArray(record.allowedTargets)
+    ? record.allowedTargets
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => normalizeBaseUrl(item))
+        .filter(Boolean)
+    : []
+  if (!target && !allowAllTargets && allowedTargets.length === 0) return null
 
   const rawPrefix = typeof record.prefix === 'string' ? record.prefix : DEFAULT_PROXY_PREFIX
   const trimmedPrefix = rawPrefix.trim().replace(/^\/+/, '').replace(/\/+$/, '')
@@ -71,6 +80,8 @@ export function normalizeDevProxyConfig(input: unknown): DevProxyConfig | null {
     locked: Boolean(record.locked),
     prefix,
     target,
+    allowAllTargets,
+    allowedTargets,
     changeOrigin: record.changeOrigin !== false,
     secure: Boolean(record.secure),
   }
@@ -93,7 +104,13 @@ export function buildApiUrl(
       : endpointPath
 
   if (useApiProxy) {
-    return `${proxyConfig?.prefix ?? DEFAULT_PROXY_PREFIX}/${apiPath}`
+    const prefix = proxyConfig?.prefix ?? DEFAULT_PROXY_PREFIX
+    const proxyUrl = `${prefix}/${apiPath}`
+    if (normalizedBaseUrl && (proxyConfig?.allowAllTargets || proxyConfig?.allowedTargets?.length)) {
+      const params = new URLSearchParams({ target: normalizedBaseUrl })
+      return `${proxyUrl}?${params.toString()}`
+    }
+    return proxyUrl
   }
 
   return normalizedBaseUrl ? `${normalizedBaseUrl}/${apiPath}` : `/${apiPath}`
@@ -135,5 +152,14 @@ export function shouldUseApiProxy(
   if (!isApiProxyAvailable(proxyConfig)) return false
   if (apiProxy || isApiProxyLocked(proxyConfig)) return true
 
-  return Boolean(proxyConfig?.enabled && baseUrl && normalizeBaseUrl(baseUrl) === proxyConfig.target)
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
+  return Boolean(
+    proxyConfig?.enabled &&
+    normalizedBaseUrl &&
+    (
+      proxyConfig.allowAllTargets ||
+      proxyConfig.allowedTargets?.includes(normalizedBaseUrl) ||
+      normalizedBaseUrl === proxyConfig.target
+    ),
+  )
 }

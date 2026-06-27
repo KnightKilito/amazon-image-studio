@@ -35,6 +35,24 @@ describe('buildApiUrl', () => {
     ).toBe('/openai-proxy/responses')
   })
 
+  it('passes the original base URL to dynamic proxies', () => {
+    expect(
+      buildApiUrl(
+        'https://api.example.com/v1',
+        'responses',
+        {
+          enabled: true,
+          prefix: '/api-proxy',
+          target: '',
+          allowAllTargets: true,
+          changeOrigin: true,
+          secure: true,
+        },
+        true,
+      ),
+    ).toBe('/api-proxy/responses?target=https%3A%2F%2Fapi.example.com%2Fv1')
+  })
+
   it('uses the configured API URL directly when API proxy is disabled', () => {
     expect(buildApiUrl('http://api.example.com/v1', 'responses', null, false)).toBe(
       'http://api.example.com/v1/responses',
@@ -59,6 +77,10 @@ describe('shouldUseApiProxy', () => {
 
   it('automatically uses the dev proxy when the configured API URL matches the proxy target', () => {
     expect(shouldUseApiProxy(false, proxyConfig, 'http://127.0.0.1:8087/v1')).toBe(true)
+  })
+
+  it('automatically uses dynamic proxies for any API URL when allowed', () => {
+    expect(shouldUseApiProxy(false, { ...proxyConfig, target: '', allowAllTargets: true }, 'https://api.example.com/v1')).toBe(true)
   })
 
   it('does not automatically proxy unrelated API URLs', () => {

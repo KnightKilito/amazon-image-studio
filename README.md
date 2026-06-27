@@ -48,7 +48,9 @@ apiProxy:
   enabled: true
   locked: false
   prefix: /api-proxy
-  target: https://你的接口域名/v1
+  allowAllTargets: true
+  allowedTargets: []
+  target: ""
   changeOrigin: true
   secure: true
 ```
@@ -67,7 +69,9 @@ apiProxy:
 - `apiProxy.enabled` / `AIS_API_PROXY_ENABLED`：是否启用 Node 同源 API 代理，用于解决浏览器跨域
 - `apiProxy.locked` / `AIS_API_PROXY_LOCKED`：是否强制前端使用代理，开启后用户不能关闭设置里的 API 代理
 - `apiProxy.prefix` / `AIS_API_PROXY_PREFIX`：前端访问代理的同源路径，默认 `/api-proxy`
-- `apiProxy.target` / `AIS_API_PROXY_TARGET`：代理转发目标，通常填写管理员统一 API URL，例如 `https://api.example.com/v1`
+- `apiProxy.allowAllTargets` / `AIS_API_PROXY_ALLOW_ALL_TARGETS`：是否允许代理任意 `http/https` API URL，公网部署要谨慎
+- `apiProxy.allowedTargets`：允许代理的 API base URL 白名单，适合后续收紧代理范围
+- `apiProxy.target` / `AIS_API_PROXY_TARGET`：兼容旧固定目标模式；如果请求没有携带目标地址，会回退到这个地址
 - `apiProxy.changeOrigin` / `AIS_API_PROXY_CHANGE_ORIGIN`：转发时是否改写 Host，默认 `true`
 - `apiProxy.secure` / `AIS_API_PROXY_SECURE`：预留的 HTTPS 校验配置，默认 `true`
 
@@ -144,9 +148,11 @@ npm run build
 - `mysql.host`、`mysql.port`、`mysql.user`、`mysql.password`、`mysql.database`：MySQL 连接信息
 - `adminServer.port`：Node 管理 API 监听端口
 - `adminServer.username`、`adminServer.password`、`adminServer.passwordSha256`：首次初始化管理员账号使用
-- `apiProxy.enabled`、`apiProxy.locked`、`apiProxy.prefix`、`apiProxy.target`：同源 API 代理配置，AI 策划或生图接口跨域时建议开启
+- `apiProxy.enabled`、`apiProxy.locked`、`apiProxy.prefix`、`apiProxy.allowAllTargets`、`apiProxy.allowedTargets`、`apiProxy.target`：同源 API 代理配置，AI 策划或生图接口跨域时建议开启
 
-如果你用 `systemd`、Docker 或临时命令行部署，也可以继续用 `AIS_DB_HOST`、`AIS_DB_PORT`、`AIS_DB_USER`、`AIS_DB_PASSWORD`、`AIS_DB_NAME`、`AIS_ADMIN_PORT`、`AIS_ADMIN_USERNAME`、`AIS_ADMIN_PASSWORD`、`AIS_ADMIN_PASSWORD_SHA256`、`AIS_API_PROXY_ENABLED`、`AIS_API_PROXY_TARGET` 等环境变量覆盖 YAML。环境变量优先级高于 `config.yaml`。
+如果你用 `systemd`、Docker 或临时命令行部署，也可以继续用 `AIS_DB_HOST`、`AIS_DB_PORT`、`AIS_DB_USER`、`AIS_DB_PASSWORD`、`AIS_DB_NAME`、`AIS_ADMIN_PORT`、`AIS_ADMIN_USERNAME`、`AIS_ADMIN_PASSWORD`、`AIS_ADMIN_PASSWORD_SHA256`、`AIS_API_PROXY_ENABLED`、`AIS_API_PROXY_ALLOW_ALL_TARGETS`、`AIS_API_PROXY_TARGET` 等环境变量覆盖 YAML。环境变量优先级高于 `config.yaml`。
+
+`apiProxy.allowAllTargets: true` 会让 Node 按前端请求携带的目标 API URL 转发，适合先快速给不同接口使用。这个模式在公网服务器上有开放转发器风险，后续建议改成 `allowAllTargets: false` 并把常用 API base URL 写入 `allowedTargets`。
 
 注意：管理员账号会在首次启动时写入数据库 `admin_users`。如果数据库里已经有同名管理员，后续只改 `config.yaml` 里的 `adminServer.password` 不会自动覆盖数据库密码，需要手动更新数据库或删除旧管理员记录后重新初始化。
 

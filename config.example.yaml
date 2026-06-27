@@ -16,12 +16,16 @@ mysql:
   database: amazon_image_studio
 
 apiProxy:
-  # 开启后，前端会把匹配 target 的 API 请求改为同源 /api-proxy/...，由 Node 后端转发，避免浏览器跨域。
+  # 开启后，前端会把 API 请求改为同源 /api-proxy/...，由 Node 后端转发，避免浏览器跨域。
   enabled: false
   # true 表示前端强制使用代理，用户不能在设置里关闭。
   locked: false
   prefix: /api-proxy
-  # 通常填管理员统一设置里使用的 API URL，例如 https://api.example.com/v1。
+  # true 表示允许代理任意 http/https API URL。公网部署请谨慎开启，避免变成开放转发器。
+  allowAllTargets: false
+  # allowAllTargets 为 false 时，可以在这里列出允许代理的 API base URL。
+  allowedTargets: []
+  # 兼容旧固定目标模式；如果请求没有携带 target 参数，会回退到这个地址。
   target: ""
   changeOrigin: true
   secure: true

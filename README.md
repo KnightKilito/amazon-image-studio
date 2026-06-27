@@ -430,6 +430,8 @@ stop-amazon-image-studio.bat
 
 打开页面后，点击右上角设置图标，进入 API 配置。
 
+`API URL` 填写的是接口基础地址，不要填写完整 endpoint。例如填写 `https://api.example.com/v1`，应用会根据接口类型自动拼接 `/images/generations`、`/images/edits`、`/responses` 或 `/chat/completions`。如果填写 `https://api.example.com/v1/images/edits`，保存时会被规范化回 `https://api.example.com/v1`。
+
 建议准备两个配置：
 
 ### 1. 生图配置

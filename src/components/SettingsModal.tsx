@@ -1552,11 +1552,11 @@ export default function SettingsModal() {
                     {guestUnifiedImageApiUrl ? (
                       <span className="text-blue-600 dark:text-blue-300">当前使用管理员统一生图 API URL，本地配置地址不会用于游客请求。</span>
                     ) : apiProxyEnabled ? (
-                      <span className="text-yellow-600 dark:text-yellow-500">已开启代理，实际请求目标由部署端决定，此处设置被忽略。</span>
+                      <span className="text-yellow-600 dark:text-yellow-500">已开启代理，仍请填写 API 基础地址，例如 https://api.example.com/v1；代理会转发到该地址并自动拼接接口路径。</span>
                     ) : activeProfile.provider === 'fal' ? (
                       <span>默认使用 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">{DEFAULT_FAL_BASE_URL}</code>；填写自定义地址时将作为 fal.ai 代理 URL。</span>
                     ) : (
-                      <span>支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiUrl=</code></span>
+                      <span>填写 API 基础地址，不要填写完整接口路径；系统会按接口类型自动拼接 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/images/generations</code>、<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/images/edits</code>、<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/responses</code> 或 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">/chat/completions</code>。支持通过 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiUrl=</code> 覆盖。</span>
                     )}
                   </div>
                 </label>

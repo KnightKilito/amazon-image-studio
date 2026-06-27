@@ -217,11 +217,41 @@ function extractResponseText(payload: unknown): string {
       if (typeof partRecord.text === 'string') chunks.push(partRecord.text)
     }
   }
-  return chunks.join('\n').trim()
+  const outputText = chunks.join('\n').trim()
+  if (outputText) return outputText
+
+  const fallbackText = extractFallbackTextValue(record)
+  return fallbackText.trim()
 }
 
 function isRecordValue(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function extractFallbackTextValue(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.map(extractFallbackTextValue).filter(Boolean).join('\n')
+  if (!isRecordValue(value)) return ''
+
+  const candidateKeys = ['text', 'content', 'message', 'data', 'result', 'response']
+  const textChunks: string[] = []
+  for (const key of candidateKeys) {
+    const candidate = value[key]
+    if (typeof candidate === 'string') {
+      textChunks.push(candidate)
+      continue
+    }
+    if (isRecordValue(candidate)) {
+      for (const nestedKey of ['output_text', 'text', 'value', 'content']) {
+        const nestedValue = candidate[nestedKey]
+        if (typeof nestedValue === 'string') textChunks.push(nestedValue)
+      }
+    } else if (Array.isArray(candidate)) {
+      const nestedText = extractFallbackTextValue(candidate)
+      if (nestedText) textChunks.push(nestedText)
+    }
+  }
+  return textChunks.join('\n').trim()
 }
 
 function getStringValue(source: Record<string, unknown>, key: string): string | undefined {
@@ -320,10 +350,27 @@ function truncateForError(text: string): string {
   return `${trimmed.slice(0, 1200)}...`
 }
 
+function getOutputTokenCount(payload: unknown): number {
+  if (!isRecordValue(payload) || !isRecordValue(payload.usage)) return 0
+  const usage = payload.usage
+  const outputTokens = usage.output_tokens
+  if (typeof outputTokens === 'number' && Number.isFinite(outputTokens)) return outputTokens
+  const completionTokens = usage.completion_tokens
+  if (typeof completionTokens === 'number' && Number.isFinite(completionTokens)) return completionTokens
+  return 0
+}
+
+class PlannerEmptyTextError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PlannerEmptyTextError'
+  }
+}
+
 async function readPlannerResponseText(response: Response): Promise<string> {
   if (isEventStreamResponse(response)) {
     const text = await readPlannerTextFromSseResponse(response)
-    if (!text) throw new Error('AI 策划流式接口未返回文本内容')
+    if (!text) throw new PlannerEmptyTextError('AI 策划流式接口未返回文本内容')
     return text
   }
 
@@ -332,7 +379,7 @@ async function readPlannerResponseText(response: Response): Promise<string> {
 
   if (looksLikeServerSentEvents(rawText)) {
     const text = await readPlannerTextFromSseText(rawText)
-    if (!text) throw new Error('AI 策划流式接口未返回文本内容')
+    if (!text) throw new PlannerEmptyTextError('AI 策划流式接口未返回文本内容')
     return text
   }
 
@@ -350,7 +397,14 @@ async function readPlannerResponseText(response: Response): Promise<string> {
   }
 
   const text = extractResponseText(payload)
-  if (!text) throw new Error('AI 策划接口未返回文本内容')
+  if (!text) {
+    const outputTokens = getOutputTokenCount(payload)
+    throw new PlannerEmptyTextError(
+      outputTokens > 0
+        ? `AI 策划接口消耗了 ${outputTokens} 个输出 token，但响应里没有 output_text/output/choices 文本字段；该中转的 Responses API 返回格式不兼容，已尝试切换到 Chat Completions。`
+        : 'AI 策划接口未返回文本内容',
+    )
+  }
   return text
 }
 
@@ -723,6 +777,7 @@ class PlannerHttpError extends Error {
 }
 
 function shouldRetryPlannerWithoutReferenceImages(err: unknown): boolean {
+  if (err instanceof PlannerEmptyTextError) return true
   if (!(err instanceof PlannerHttpError)) return false
   if ([408, 500, 502, 503, 504, 520, 522, 524].includes(err.status)) return true
 

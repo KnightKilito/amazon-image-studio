@@ -231,7 +231,7 @@ function getPlannerFailureDetail(err: unknown): string {
     hints.push('该接口可能不支持当前 JSON 输出参数；Chat Completions 需要支持 response_format=json_object。')
   }
   if (/failed to fetch|network|cors|load failed|连接|网络|跨域/.test(lower)) {
-    hints.push('浏览器未能连接到策划接口；请检查网络、跨域设置，或开启应用里的 API 代理。')
+    hints.push('浏览器未能连接到策划接口；请检查网络、跨域设置。')
   }
 
   return [message, ...hints].join('\n\n')

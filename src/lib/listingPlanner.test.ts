@@ -488,6 +488,200 @@ describe('callAmazonPlannerApi', () => {
     expect(result.plans).toHaveLength(7)
   })
 
+  it('falls back to Chat Completions when a Responses-compatible relay returns usage but no text fields', async () => {
+    const apiPayload = createApiPayload('Chat fallback after empty Responses output')
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => {
+      if (fetchMock.mock.calls.length === 1) {
+        return new Response(JSON.stringify({
+          id: 'resp-empty',
+          object: 'response',
+          status: 'completed',
+          output: [],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 300,
+            total_tokens: 400,
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: JSON.stringify(apiPayload),
+            },
+            finish_reason: 'stop',
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: DEFAULT_AMAZON_PROMPT_DRAFT,
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://relay.example.com/v1',
+        apiKey: 'relay-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://relay.example.com/v1/responses')
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('https://relay.example.com/v1/chat/completions')
+    const retryBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))
+    expect(retryBody.messages[0].content).toContain('Return a valid JSON object only')
+    expect(result.parsed.title).toBe('Chat fallback after empty Responses output')
+  })
+
+  it('reads planner JSON from Responses output message content text', async () => {
+    const apiPayload = createApiPayload('Nested Responses output planned tumbler')
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
+      id: 'resp-nested-output',
+      object: 'response',
+      status: 'completed',
+      output: [
+        {
+          type: 'message',
+          role: 'assistant',
+          content: [
+            {
+              type: 'output_text',
+              text: JSON.stringify(apiPayload),
+            },
+          ],
+        },
+      ],
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'amazon_listing_image_plan',
+        },
+      },
+      usage: {
+        output_tokens: 300,
+      },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: DEFAULT_AMAZON_PROMPT_DRAFT,
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://relay.example.com/v1',
+        apiKey: 'relay-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(result.parsed.title).toBe('Nested Responses output planned tumbler')
+  })
+
+  it('reads planner JSON from a relay-specific top-level text string before retrying', async () => {
+    const apiPayload = createApiPayload('Top-level text planned tumbler')
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
+      id: 'resp-text',
+      object: 'response',
+      status: 'completed',
+      output: [],
+      text: JSON.stringify(apiPayload),
+      usage: {
+        output_tokens: 300,
+      },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: DEFAULT_AMAZON_PROMPT_DRAFT,
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://relay.example.com/v1',
+        apiKey: 'relay-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(result.parsed.title).toBe('Top-level text planned tumbler')
+  })
+
+  it('does not treat a Responses text.format schema object as planner output', async () => {
+    const apiPayload = createApiPayload('Chat fallback after schema-only text object')
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => {
+      if (fetchMock.mock.calls.length === 1) {
+        return new Response(JSON.stringify({
+          id: 'resp-schema-only',
+          object: 'response',
+          status: 'completed',
+          output: [],
+          text: {
+            format: {
+              type: 'json_schema',
+              name: 'amazon_listing_image_plan',
+            },
+          },
+          usage: {
+            output_tokens: 300,
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      return new Response(JSON.stringify({
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: JSON.stringify(apiPayload),
+            },
+            finish_reason: 'stop',
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: DEFAULT_AMAZON_PROMPT_DRAFT,
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://relay.example.com/v1',
+        apiKey: 'relay-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(result.parsed.title).toBe('Chat fallback after schema-only text object')
+  })
+
   it('retries Chat Completions planning without reference images after relay timeout errors', async () => {
     const apiPayload = createApiPayload('Text fallback planned tumbler')
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => {

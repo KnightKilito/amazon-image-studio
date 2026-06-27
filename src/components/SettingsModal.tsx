@@ -370,7 +370,18 @@ export default function SettingsModal() {
   const guestUnifiedImageApiUrl = !isAdminAuthenticated && adminAccess.unifiedGuestImageApiUrlEnabled
     ? adminAccess.unifiedGuestImageApiUrl.trim()
     : ''
-  const visibleActiveProfileBaseUrl = guestUnifiedImageApiUrl || activeProfile.baseUrl
+  const guestUnifiedPlannerApiUrl = !isAdminAuthenticated && adminAccess.unifiedGuestPlannerApiUrlEnabled
+    ? adminAccess.unifiedGuestPlannerApiUrl.trim()
+    : ''
+  const activeProfileUsesUnifiedPlannerApiUrl = Boolean(guestUnifiedPlannerApiUrl) && isAmazonPlannerProfile(activeProfile)
+  const activeProfileUsesUnifiedImageApiUrl = Boolean(guestUnifiedImageApiUrl) && !activeProfileUsesUnifiedPlannerApiUrl
+  const activeProfileUnifiedApiUrl = activeProfileUsesUnifiedPlannerApiUrl
+    ? guestUnifiedPlannerApiUrl
+    : activeProfileUsesUnifiedImageApiUrl
+      ? guestUnifiedImageApiUrl
+      : ''
+  const visibleActiveProfileBaseUrl = activeProfileUnifiedApiUrl || activeProfile.baseUrl
+  const activeProfileApiUrlLockedByAdmin = Boolean(activeProfileUnifiedApiUrl)
   const activeCustomProvider = draft.customProviders.find((provider) => provider.id === activeProfile.provider)
   const defaultProviderOrder = ['openai', 'fal', ...draft.customProviders.map(p => p.id)]
   const providerOrder = draft.providerOrder || defaultProviderOrder
@@ -1544,13 +1555,15 @@ export default function SettingsModal() {
                     onChange={(e) => updateActiveProfile({ baseUrl: e.target.value })}
                     onBlur={(e) => commitActiveProfilePatch({ baseUrl: e.target.value })}
                     type="text"
-                    disabled={apiProxyEnabled || Boolean(guestUnifiedImageApiUrl) || !canEditApiUrl}
+                    disabled={apiProxyEnabled || activeProfileApiUrlLockedByAdmin || !canEditApiUrl}
                     placeholder={activeProfile.provider === 'fal' ? DEFAULT_FAL_BASE_URL : DEFAULT_SETTINGS.baseUrl}
-                    className={`w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50 ${apiProxyEnabled || guestUnifiedImageApiUrl || !canEditApiUrl ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    className={`w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50 ${apiProxyEnabled || activeProfileApiUrlLockedByAdmin || !canEditApiUrl ? 'opacity-50 cursor-not-allowed' : ''}`}
                   />
                   <div data-selectable-text className="mt-1.5 min-h-[22px] flex items-center text-xs text-gray-500 dark:text-gray-500">
-                    {guestUnifiedImageApiUrl ? (
-                      <span className="text-blue-600 dark:text-blue-300">当前使用管理员统一生图 API URL，本地配置地址不会用于游客请求。</span>
+                    {activeProfileApiUrlLockedByAdmin ? (
+                      <span className="text-blue-600 dark:text-blue-300">
+                        当前 API URL 已被管理员统一管理，游客不能修改；实际使用 {activeProfileUsesUnifiedPlannerApiUrl ? '统一 AI 策划 API URL' : '统一 AI 生图 API URL'}。
+                      </span>
                     ) : apiProxyEnabled ? (
                       <span className="text-yellow-600 dark:text-yellow-500">已手动开启代理；仍请填写 API 基础地址，例如 https://api.example.com/v1。直连更快，代理仅用于接口不允许浏览器跨域时兜底。</span>
                     ) : activeProfile.provider === 'fal' ? (

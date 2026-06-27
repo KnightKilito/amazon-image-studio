@@ -1552,7 +1552,7 @@ export default function SettingsModal() {
                     {guestUnifiedImageApiUrl ? (
                       <span className="text-blue-600 dark:text-blue-300">当前使用管理员统一生图 API URL，本地配置地址不会用于游客请求。</span>
                     ) : apiProxyEnabled ? (
-                      <span className="text-yellow-600 dark:text-yellow-500">已开启代理，仍请填写 API 基础地址，例如 https://api.example.com/v1；代理会转发到该地址并自动拼接接口路径。</span>
+                      <span className="text-yellow-600 dark:text-yellow-500">已手动开启代理；仍请填写 API 基础地址，例如 https://api.example.com/v1。直连更快，代理仅用于接口不允许浏览器跨域时兜底。</span>
                     ) : activeProfile.provider === 'fal' ? (
                       <span>默认使用 <code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">{DEFAULT_FAL_BASE_URL}</code>；填写自定义地址时将作为 fal.ai 代理 URL。</span>
                     ) : (
@@ -1582,7 +1582,7 @@ export default function SettingsModal() {
                     </button>
                   </div>
                   <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                    {apiProxyLocked ? '当前部署已锁定 API 代理为开启，API URL 设置会被忽略。' : '当前部署提供同源代理时默认开启，可手动关闭。开启后用于解决浏览器跨域限制，API URL 设置会被忽略。'}
+                    {apiProxyLocked ? '当前部署已锁定 API 代理为开启，请求会经由服务器转发。' : '默认关闭，前端会直接请求你填写的 API URL。只有遇到浏览器跨域限制时才建议开启；开启后会占用服务器带宽。'}
                   </div>
                 </div>
               )}

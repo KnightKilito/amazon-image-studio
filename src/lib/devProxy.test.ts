@@ -75,12 +75,12 @@ describe('shouldUseApiProxy', () => {
     secure: false,
   }
 
-  it('automatically uses the dev proxy when the configured API URL matches the proxy target', () => {
-    expect(shouldUseApiProxy(false, proxyConfig, 'http://127.0.0.1:8087/v1')).toBe(true)
+  it('does not automatically use the dev proxy when the configured API URL matches the proxy target', () => {
+    expect(shouldUseApiProxy(false, proxyConfig, 'http://127.0.0.1:8087/v1')).toBe(false)
   })
 
-  it('automatically uses dynamic proxies for any API URL when allowed', () => {
-    expect(shouldUseApiProxy(false, { ...proxyConfig, target: '', allowAllTargets: true }, 'https://api.example.com/v1')).toBe(true)
+  it('does not automatically use dynamic proxies for arbitrary API URLs', () => {
+    expect(shouldUseApiProxy(false, { ...proxyConfig, target: '', allowAllTargets: true }, 'https://api.example.com/v1')).toBe(false)
   })
 
   it('does not automatically proxy unrelated API URLs', () => {

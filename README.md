@@ -45,10 +45,10 @@ mysql:
   database: amazon_image_studio
 
 apiProxy:
-  enabled: true
+  enabled: false
   locked: false
   prefix: /api-proxy
-  allowAllTargets: true
+  allowAllTargets: false
   allowedTargets: []
   target: ""
   changeOrigin: true
@@ -152,7 +152,7 @@ npm run build
 
 如果你用 `systemd`、Docker 或临时命令行部署，也可以继续用 `AIS_DB_HOST`、`AIS_DB_PORT`、`AIS_DB_USER`、`AIS_DB_PASSWORD`、`AIS_DB_NAME`、`AIS_ADMIN_PORT`、`AIS_ADMIN_USERNAME`、`AIS_ADMIN_PASSWORD`、`AIS_ADMIN_PASSWORD_SHA256`、`AIS_API_PROXY_ENABLED`、`AIS_API_PROXY_ALLOW_ALL_TARGETS`、`AIS_API_PROXY_TARGET` 等环境变量覆盖 YAML。环境变量优先级高于 `config.yaml`。
 
-`apiProxy.allowAllTargets: true` 会让 Node 按前端请求携带的目标 API URL 转发，适合先快速给不同接口使用。这个模式在公网服务器上有开放转发器风险，后续建议改成 `allowAllTargets: false` 并把常用 API base URL 写入 `allowedTargets`。
+小带宽服务器建议保持 `apiProxy.enabled: false`，这样 AI 策划和生图会由浏览器直接请求你在前端填写的 API URL，不经过 Node 后端。只有第三方接口不允许浏览器跨域时，再开启某个 API 配置里的“API 代理”开关；如果使用 `apiProxy.allowAllTargets: true`，Node 会按前端请求携带的目标 API URL 转发，有开放转发器风险，后续建议改成 `allowAllTargets: false` 并把常用 API base URL 写入 `allowedTargets`。
 
 注意：管理员账号会在首次启动时写入数据库 `admin_users`。如果数据库里已经有同名管理员，后续只改 `config.yaml` 里的 `adminServer.password` 不会自动覆盖数据库密码，需要手动更新数据库或删除旧管理员记录后重新初始化。
 

@@ -147,19 +147,9 @@ export function isApiProxyLocked(proxyConfig: DevProxyConfig | null = readClient
 export function shouldUseApiProxy(
   apiProxy: boolean,
   proxyConfig: DevProxyConfig | null = readClientDevProxyConfig(),
-  baseUrl = '',
+  _baseUrl = '',
 ): boolean {
   if (!isApiProxyAvailable(proxyConfig)) return false
   if (apiProxy || isApiProxyLocked(proxyConfig)) return true
-
-  const normalizedBaseUrl = normalizeBaseUrl(baseUrl)
-  return Boolean(
-    proxyConfig?.enabled &&
-    normalizedBaseUrl &&
-    (
-      proxyConfig.allowAllTargets ||
-      proxyConfig.allowedTargets?.includes(normalizedBaseUrl) ||
-      normalizedBaseUrl === proxyConfig.target
-    ),
-  )
+  return false
 }

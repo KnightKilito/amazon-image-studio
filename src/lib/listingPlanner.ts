@@ -142,7 +142,7 @@ export const PREMIUM_A_PLUS_MODULE_SPECS: AmazonAPlusModuleSpec[] = [
     label: `Feature Image ${index + 1}`,
     displayLabel: `高级大图模块 ${index + 1}`,
     moduleType: 'feature-image' as const,
-    uploadWidth: 970,
+    uploadWidth: 1464,
     uploadHeight: 600,
     objective: '用大图模块展示核心功能、材质或真实场景。',
   })),
@@ -341,6 +341,8 @@ function getSafeAPlusRatio(width: number, height: number): string {
 }
 
 function getAPlusGenerationSizeFromDimensions(width: number, height: number, tier: SizeTier): string {
+  if (width === 600 && height === 450) return '1200x900'
+  if (tier === '2K' && width === 1464 && height === 600) return '2928x1200'
   return calculateImageSize(tier, getSafeAPlusRatio(width, height)) ?? (tier === '4K' ? '2880x2880' : '2048x2048')
 }
 

@@ -10,6 +10,7 @@ import {
   getAPlusContentTypeLabel,
   getAPlusModuleDisplayName,
   getAPlusModuleEnglishName,
+  getAPlusModuleGenerationSize,
   getAPlusModuleSpecs,
   isAmazonListingMainSlot,
   removeAPlusModuleSpecAt,
@@ -179,6 +180,19 @@ describe('A+ module helpers', () => {
     expect(mobileSpecs.every((spec) => spec.uploadWidth === 600 && spec.uploadHeight === 450)).toBe(true)
     expect(getAPlusModuleDisplayName(mobileSpecs[0]!)).toBe('手机首屏')
     expect(getAPlusModuleEnglishName(mobileSpecs[1]!)).toBe('Mobile Feature 1')
+  })
+
+  it('uses premium wide banner sizing for Premium A+ feature image modules', () => {
+    const standardLargeFeatureSpec = getAPlusModuleSpecs('standard-large')[1]!
+    const premiumFeatureSpecs = getAPlusModuleSpecs('premium').slice(1, 4)
+
+    expect(getAPlusModuleGenerationSize(standardLargeFeatureSpec, '2K')).toBe('2592x1616')
+    expect(premiumFeatureSpecs.every((spec) => spec.uploadWidth === 1464 && spec.uploadHeight === 600)).toBe(true)
+    expect(premiumFeatureSpecs.map((spec) => getAPlusModuleGenerationSize(spec, '2K'))).toEqual([
+      '2928x1200',
+      '2928x1200',
+      '2928x1200',
+    ])
   })
 
   it('adds and removes A+ modules inline while reindexing slots and labels', () => {
@@ -1121,7 +1135,7 @@ describe('callAmazonPlannerApi', () => {
       moduleType: 'feature-image',
       uploadSize: '600x450',
     })
-    expect(result.aPlusPlans[0]?.generationSize).not.toBe('600x450')
+    expect(result.aPlusPlans[0]?.generationSize).toBe('1200x900')
   })
 
   it('does not include empty A+ brand output in parsed inferred fields', async () => {

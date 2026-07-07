@@ -5,6 +5,7 @@ const MAX_EDGE = 3840
 const MAX_ASPECT_RATIO = 3
 const MIN_PIXELS = 655_360
 const MAX_PIXELS = 8_294_400
+const EXACT_SIZE_ALLOWLIST = new Set(['1200x900', '2928x1200'])
 
 export type SizeTier = '1K' | '2K' | '4K'
 
@@ -61,6 +62,8 @@ export function normalizeImageSize(size: string) {
   const trimmed = size.trim()
   const match = trimmed.match(SIZE_PATTERN)
   if (!match) return trimmed
+  const canonical = `${Number(match[1])}x${Number(match[2])}`
+  if (EXACT_SIZE_ALLOWLIST.has(canonical)) return canonical
 
   const { width, height } = normalizeDimensions(Number(match[1]), Number(match[2]))
   return `${width}x${height}`

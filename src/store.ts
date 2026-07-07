@@ -4115,6 +4115,72 @@ export async function editOutputs(task: TaskRecord, selectedOutputImageId?: stri
   showToast('已准备编辑输出图', 'success')
 }
 
+export type APlusOutputConversionTarget = 'premium' | 'mobile'
+
+function getAPlusOutputConversionTargetLabel(target: APlusOutputConversionTarget) {
+  return target === 'premium' ? '高级A+' : '手机A+'
+}
+
+function getAPlusOutputConversionRatioText(target: APlusOutputConversionTarget) {
+  return target === 'premium' ? '2928x1200' : '1200x900'
+}
+
+function getAPlusOutputConversionSize(target: APlusOutputConversionTarget) {
+  return target === 'premium' ? '2928x1200' : '1200x900'
+}
+
+function buildAPlusOutputConversionPrompt(target: APlusOutputConversionTarget) {
+  const ratioText = getAPlusOutputConversionRatioText(target)
+  return `我是一名亚马逊美国站专业卖家。请将这张高级A+图片的画布比例调整为 ${ratioText}，以适配亚马逊移动端高级A+展示需求。保持产品本身完全不变，包括产品外观、颜色、材质、角度、光影、细节及清晰度，不得修改或重新设计产品。仅调整整体画面排版和元素布局，合理重新安排文字、背景及装饰元素，使画面在${ratioText}比例下依然美观、平衡且具有高级感。禁止对整张图片进行拉伸、压缩、裁切或变形，不要通过缩放或拉伸来适配比例，而是通过重新布局画面内容完成适配。`
+}
+
+function createAPlusOutputConversionTaskCategory(
+  task: TaskRecord,
+  target: APlusOutputConversionTarget,
+): NonNullable<TaskRecord['category']> {
+  const baseCategory = createNextSubmitTaskCategory(task)
+  const historyCategory = getTaskHistoryCategory(task)
+  return {
+    ...baseCategory,
+    workflow: 'amazon-aplus',
+    productTitle: baseCategory.productTitle ?? historyCategory.productTitle,
+    amazonSlot: baseCategory.amazonSlot ?? historyCategory.amazonSlot,
+    aPlusType: target,
+  }
+}
+
+/** 转换输出图为 A+ 指定比例：清空当前输入，只保留当前输出图作为参考图 */
+export async function convertOutputToAPlusFormat(
+  task: TaskRecord,
+  selectedOutputImageId: string | undefined,
+  target: APlusOutputConversionTarget,
+) {
+  const { showToast, setParams, setPendingTaskCategory } = useStore.getState()
+  const outputImageId = selectedOutputImageId && task.outputImages?.includes(selectedOutputImageId)
+    ? selectedOutputImageId
+    : task.outputImages?.[0]
+  if (!outputImageId) return
+
+  const dataUrl = await ensureImageCached(outputImageId)
+  if (!dataUrl) {
+    showToast('无法读取输出图，请稍后重试', 'error')
+    return
+  }
+
+  useStore.setState((state) => syncActiveInputDraft(state, {
+    prompt: buildAPlusOutputConversionPrompt(target),
+    inputImages: [{ id: outputImageId, dataUrl }],
+    maskDraft: null,
+    maskEditorImageId: null,
+  }))
+  setParams({ size: getAPlusOutputConversionSize(target), output_format: 'png', output_compression: null })
+  setPendingTaskCategory({
+    mode: 'next-submit',
+    category: createAPlusOutputConversionTaskCategory(task, target),
+  })
+  showToast(`已准备转为${getAPlusOutputConversionTargetLabel(target)}`, 'success')
+}
+
 /** 删除多条任务 */
 export async function removeMultipleTasks(taskIds: string[]) {
   const { tasks, setTasks, inputImages, galleryInputDraft, showToast, clearSelection, selectedTaskIds } = useStore.getState()

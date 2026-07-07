@@ -143,6 +143,21 @@ export default function HelpModal({ appMode, onClose }: HelpModalProps) {
               </section>
             </>
           )}
+          <section>
+            <h4 className="mb-4 text-sm font-medium text-gray-800 dark:text-gray-200 flex items-center gap-1.5">
+              <svg className="w-4 h-4 text-gray-400 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+              </svg>
+              注意事项
+            </h4>
+            <div className="space-y-4">
+              <ul className="list-disc pl-4 space-y-2">
+                <li>所有数据都存储在当前浏览器中，<strong className="text-red-500 dark:text-red-400 font-medium">清空浏览器数据会导致数据产生不可逆的丢失</strong>，请及时下载自己满意的图片。</li>
+                <li>网站的功能、问题反馈等，可以联系下方微信。</li>
+                {/*<li>点击卡片外任意空白处可取消所有选择。</li>*/}
+              </ul>
+            </div>
+          </section>
         </div>
 
         <div className="pt-4 border-t border-gray-200 dark:border-white/[0.08] flex justify-center">

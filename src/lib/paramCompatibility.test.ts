@@ -51,6 +51,18 @@ describe('parameter compatibility', () => {
     expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, size: 'auto' }, settings, { hasInputImages: true }).size).toBe('auto')
   })
 
+  it('preserves exact Amazon A+ conversion sizes', () => {
+    const openAIProfile = createDefaultOpenAIProfile({ apiKey: 'test-key' })
+    const settings = normalizeSettings({
+      ...DEFAULT_SETTINGS,
+      profiles: [openAIProfile],
+      activeProfileId: openAIProfile.id,
+    })
+
+    expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, size: '1200x900' }, settings, { hasInputImages: true }).size).toBe('1200x900')
+    expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, size: '2928x1200' }, settings, { hasInputImages: true }).size).toBe('2928x1200')
+  })
+
   it('defaults JPEG/WebP output compression to 70 for OpenAI requests', () => {
     const openAIProfile = createDefaultOpenAIProfile({ apiKey: 'test-key' })
     const settings = normalizeSettings({

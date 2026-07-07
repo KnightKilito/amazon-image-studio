@@ -95,7 +95,7 @@ vi.mock('./lib/agentApi', () => ({
 import { clearAmazonPlannerSessions, clearImages, getAllAmazonPlannerSessions, putAmazonPlannerSession, putImage } from './lib/db'
 import { callImageApi } from './lib/api'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
-import { cleanStaleAgentInputDrafts, clearData, editOutputs, exportData, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
+import { cleanStaleAgentInputDrafts, clearData, convertOutputToAPlusFormat, editOutputs, exportData, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -641,6 +641,77 @@ describe('mask draft lifecycle in store actions', () => {
       productTitle: 'Large Folding Umbrella',
       workflow: 'amazon-listing',
       amazonSlot: 'MAIN',
+    })
+  })
+
+  it('prepares the selected output image as a Premium A+ conversion reference', async () => {
+    const firstOutput = { id: 'premium-output-a', dataUrl: 'data:image/png;base64,premium-a' }
+    const selectedOutput = { id: 'premium-output-b', dataUrl: 'data:image/png;base64,premium-b' }
+    await clearImages()
+    await putImage(firstOutput)
+    await putImage(selectedOutput)
+    useStore.setState({
+      prompt: 'old prompt',
+      inputImages: [imageA],
+      params: { ...DEFAULT_PARAMS, output_format: 'jpeg', output_compression: 70 },
+    })
+
+    await convertOutputToAPlusFormat(task({
+      outputImages: [firstOutput.id, selectedOutput.id],
+      category: {
+        productTitle: 'Premium Tumbler',
+        workflow: 'amazon-aplus',
+        amazonSlot: 'A+P02',
+        aPlusType: 'standard-large',
+      },
+    }), selectedOutput.id, 'premium')
+
+    const state = useStore.getState()
+    expect(state.inputImages).toEqual([{ id: selectedOutput.id, dataUrl: selectedOutput.dataUrl }])
+    expect(state.prompt).toContain('2928x1200')
+    expect(state.prompt).not.toContain('1200x900')
+    expect(state.params.size).toBe('2928x1200')
+    expect(state.params.output_format).toBe('png')
+    expect(state.params.output_compression).toBeNull()
+    expect(state.pendingTaskCategory).toMatchObject({
+      mode: 'next-submit',
+      category: {
+        productTitle: 'Premium Tumbler',
+        workflow: 'amazon-aplus',
+        amazonSlot: 'A+P02',
+        aPlusType: 'premium',
+      },
+    })
+  })
+
+  it('prepares the selected output image as a Mobile A+ conversion reference', async () => {
+    const outputImage = { id: 'mobile-output-image', dataUrl: 'data:image/png;base64,mobile-output' }
+    await clearImages()
+    await putImage(outputImage)
+
+    await convertOutputToAPlusFormat(task({
+      outputImages: [outputImage.id],
+      category: {
+        productTitle: 'Mobile Tumbler',
+        workflow: 'amazon-aplus',
+        amazonSlot: 'A+M01',
+        aPlusType: 'premium',
+      },
+    }), outputImage.id, 'mobile')
+
+    const state = useStore.getState()
+    expect(state.inputImages).toEqual([{ id: outputImage.id, dataUrl: outputImage.dataUrl }])
+    expect(state.prompt).toContain('1200x900')
+    expect(state.params.size).toBe('1200x900')
+    expect(state.params.output_format).toBe('png')
+    expect(state.params.output_compression).toBeNull()
+    expect(state.pendingTaskCategory).toMatchObject({
+      category: {
+        productTitle: 'Mobile Tumbler',
+        workflow: 'amazon-aplus',
+        amazonSlot: 'A+M01',
+        aPlusType: 'mobile',
+      },
     })
   })
 

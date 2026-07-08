@@ -303,7 +303,7 @@ function getAmazonAPlusComplianceChecks(
     {
       label: '风格参考',
       status: hasStyleReference ? 'ready' : 'warning',
-      detail: hasStyleReference ? '已选择隐藏风格参考' : '正式生成前请选择风格参考',
+      detail: hasStyleReference ? '已选择风格参考' : '正式生成前请选择风格参考',
     },
   ]
 }
@@ -335,8 +335,8 @@ function getAmazonListingPlannerChecks(
       label: '风格参考',
       status: !styleReferenceRequired || hasStyleReference ? 'ready' : 'warning',
       detail: !styleReferenceRequired
-        ? 'MAIN 主图不使用隐藏风格参考'
-        : hasStyleReference ? '已选择隐藏风格参考' : '正式生成前请选择风格参考',
+        ? 'MAIN 主图不使用风格参考'
+        : hasStyleReference ? '已选择风格参考' : '正式生成前请选择风格参考',
     },
   ]
 }
@@ -355,6 +355,8 @@ export default function AmazonPlanner() {
   const removeInputImage = useStore((s) => s.removeInputImage)
   const clearInputImages = useStore((s) => s.clearInputImages)
   const setInputImages = useStore((s) => s.setInputImages)
+  const setStyleReferenceImage = useStore((s) => s.setStyleReferenceImage)
+  const clearStyleReferenceImage = useStore((s) => s.clearStyleReferenceImage)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const showToast = useStore((s) => s.showToast)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -705,11 +707,19 @@ export default function AmazonPlanner() {
       return false
     }
     if (shouldRequireStyle && styleReferenceLimitExceeded) {
-      showToast(`已选择隐藏风格参考板，实际参考图数量不能超过 ${referenceImageUploadLimit} 张；请删除一张产品参考图后再提交。`, 'error')
+      showToast(`已选择风格参考图，实际参考图数量不能超过 ${referenceImageUploadLimit} 张；请删除一张产品参考图后再提交。`, 'error')
       return false
     }
 
     setPrompt(activePrompt)
+    if (usesStyleReferenceForActivePlan && selectedStyleImage?.imageId) {
+      setStyleReferenceImage({
+        id: selectedStyleImage.imageId,
+        dataUrl: selectedStyleImage.dataUrl,
+      })
+    } else {
+      clearStyleReferenceImage()
+    }
     setPendingTaskCategory({
       mode: 'prompt-match',
       prompt: activePrompt,
@@ -1351,7 +1361,7 @@ export default function AmazonPlanner() {
           imageId: session.selectedStyleReferenceImageId,
           dataUrl,
           label: preset?.label ?? '历史风格',
-          description: preset?.description ?? '从策划历史恢复的隐藏风格参考。',
+          description: preset?.description ?? '从策划历史恢复的风格参考。',
           palette: preset?.palette ?? [],
         }
       }
@@ -1369,7 +1379,7 @@ export default function AmazonPlanner() {
             imageId: legacyStyle.imageId,
             dataUrl,
             label: legacyCandidate?.label || '历史风格板',
-            description: legacyCandidate?.description || '从旧版策划历史恢复的隐藏风格参考。',
+            description: legacyCandidate?.description || '从旧版策划历史恢复的风格参考。',
             palette: [],
           }
         } else {
@@ -1786,9 +1796,9 @@ export default function AmazonPlanner() {
                 <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">参考图</div>
                 <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
                   {inputImages.length > 0
-                    ? `${inputImages.length}/${referenceImageUploadLimit} 张产品参考图${usesStyleReferenceForActivePlan ? `；正式生成时另附 1 张隐藏风格参考图（实际 ${effectiveReferenceCount}/${referenceImageUploadLimit}）` : '，将随生成请求一起发送'}`
+                    ? `${inputImages.length}/${referenceImageUploadLimit} 张产品参考图${usesStyleReferenceForActivePlan ? `；填入右侧时会同步 1 张风格参考图（实际 ${effectiveReferenceCount}/${referenceImageUploadLimit}）` : '，将随生成请求一起发送'}`
                     : usesStyleReferenceForActivePlan
-                      ? `未上传产品参考图；正式生成时会附 1 张隐藏风格参考图`
+                      ? `未上传产品参考图；填入右侧时会同步 1 张风格参考图`
                       : '建议上传产品实拍、包装或结构参考图'}
                 </div>
               </div>
@@ -2127,7 +2137,7 @@ export default function AmazonPlanner() {
                 <div>
                   <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">视觉风格选择</div>
                   <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                    选择内置预设，或编辑后保存到“我的风格”。附图和 A+ 正式生图时会隐藏附加到请求末尾。
+                    选择内置预设，或编辑后保存到“我的风格”。填入附图和 A+ 时会同步到右侧风格参考图槽。
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -2331,13 +2341,13 @@ export default function AmazonPlanner() {
               {selectedStyleImage?.imageId && selectedStyleLabel && (
                 <div className="mt-3 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs leading-relaxed text-violet-800 dark:border-violet-300/20 dark:bg-violet-400/10 dark:text-violet-200">
                   {isMainListingPlan
-                    ? `已选择「${selectedStyleLabel}」，但当前 MAIN 主图不会附加这张风格参考图；切换到附图或 A+ 时才会作为隐藏参考。`
-                    : `已选择「${selectedStyleLabel}」。正式生成时会隐藏附加这张风格参考图作为最后一张参考图，用于统一字体感觉、色板、光影、材质和标注样式，不复制其中占位文字、固定版式或产品摆放。`}
+                    ? `已选择「${selectedStyleLabel}」，但当前 MAIN 主图不会附加这张风格参考图；切换到附图或 A+ 时会同步到右侧风格参考图槽。`
+                    : `已选择「${selectedStyleLabel}」。填入右侧时会同步这张风格参考图，并在生成时作为最后一张参考图发送，用于统一字体感觉、色板、光影、材质和标注样式，不复制其中占位文字、固定版式或产品摆放。`}
                 </div>
               )}
               {styleReferenceLimitExceeded && (
                 <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200">
-                  当前产品参考图加隐藏风格参考图共 {effectiveReferenceCount} 张，超过上限 {referenceImageUploadLimit} 张，请删除一张产品参考图后再提交。
+                  当前产品参考图加风格参考图共 {effectiveReferenceCount} 张，超过上限 {referenceImageUploadLimit} 张，请删除一张产品参考图后再提交。
                 </div>
               )}
             </div>

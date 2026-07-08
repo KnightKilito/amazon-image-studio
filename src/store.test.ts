@@ -223,6 +223,7 @@ describe('mask draft lifecycle in store actions', () => {
       settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key' },
       prompt: 'prompt',
       inputImages: [],
+      styleReferenceImage: null,
       maskDraft: null,
       maskEditorImageId: null,
       params: { ...DEFAULT_PARAMS },
@@ -432,13 +433,14 @@ describe('mask draft lifecycle in store actions', () => {
     })
   })
 
-  it('appends a hidden style reference image when the submitted Amazon non-main prompt matches', async () => {
+  it('appends an explicit style reference image when the submitted Amazon non-main prompt matches', async () => {
     const styleImage = { id: 'style-reference-image', dataUrl: 'data:image/png;base64,style' }
     await putImage(imageA)
     await putImage(styleImage)
     useStore.setState({
       prompt: 'listing prompt',
       inputImages: [imageA],
+      styleReferenceImage: styleImage,
       pendingTaskCategory: {
         mode: 'prompt-match',
         prompt: 'listing prompt',
@@ -492,7 +494,7 @@ describe('mask draft lifecycle in store actions', () => {
     expect(task?.category).not.toHaveProperty('styleReferenceImageId')
   })
 
-  it('blocks submit when visible references plus hidden style reference exceed the API image limit', async () => {
+  it('blocks submit when visible references plus the explicit style reference exceed the API image limit', async () => {
     const styleImage = { id: 'style-reference-image', dataUrl: 'data:image/png;base64,style' }
     await putImage(styleImage)
     const inputImages = Array.from({ length: 16 }, (_, index) => ({
@@ -502,6 +504,7 @@ describe('mask draft lifecycle in store actions', () => {
     useStore.setState({
       prompt: 'listing prompt',
       inputImages,
+      styleReferenceImage: styleImage,
       pendingTaskCategory: {
         mode: 'prompt-match',
         prompt: 'listing prompt',
@@ -520,7 +523,7 @@ describe('mask draft lifecycle in store actions', () => {
     expect(useStore.getState().showToast).toHaveBeenCalledWith(expect.stringContaining('实际参考图数量不能超过 16 张'), 'error')
   })
 
-  it('asks before retrying generation with the provider reference image limit and preserves the hidden style reference', async () => {
+  it('asks before retrying generation with the provider reference image limit and preserves the explicit style reference', async () => {
     const styleImage = { id: 'style-reference-image', dataUrl: 'data:image/png;base64,style' }
     const productImages = Array.from({ length: 8 }, (_, index) => ({
       id: `product-reference-${index + 1}`,
@@ -540,6 +543,7 @@ describe('mask draft lifecycle in store actions', () => {
     useStore.setState({
       prompt: 'listing prompt',
       inputImages: productImages,
+      styleReferenceImage: styleImage,
       pendingTaskCategory: {
         mode: 'prompt-match',
         prompt: 'listing prompt',
@@ -653,6 +657,7 @@ describe('mask draft lifecycle in store actions', () => {
     useStore.setState({
       prompt: 'old prompt',
       inputImages: [imageA],
+      styleReferenceImage: imageA,
       params: { ...DEFAULT_PARAMS, output_format: 'jpeg', output_compression: 70 },
     })
 
@@ -669,6 +674,7 @@ describe('mask draft lifecycle in store actions', () => {
 
     const state = useStore.getState()
     expect(state.inputImages).toEqual([{ id: selectedOutput.id, dataUrl: selectedOutput.dataUrl }])
+    expect(state.styleReferenceImage).toBeNull()
     expect(state.prompt).toContain('2928x1200')
     expect(state.prompt).not.toContain('1200x900')
     expect(state.params.size).toBe('2928x1200')
@@ -1210,6 +1216,7 @@ describe('agent draft lifecycle', () => {
   const draftState = {
     prompt: `参考 ${getSelectedImageMentionLabel(0)} 生成`,
     inputImages: [imageA],
+    styleReferenceImage: null,
     maskDraft: {
       targetImageId: imageA.id,
       maskDataUrl: 'data:image/png;base64,mask',
@@ -1287,6 +1294,7 @@ describe('agent draft lifecycle', () => {
       galleryInputDraft: {
         prompt: 'gallery draft',
         inputImages: [imageB],
+        styleReferenceImage: null,
         maskDraft: null,
         maskEditorImageId: null,
       },
@@ -1296,6 +1304,7 @@ describe('agent draft lifecycle', () => {
         'conversation-a': {
           prompt: 'agent draft',
           inputImages: [imageA],
+          styleReferenceImage: null,
           maskDraft: null,
           maskEditorImageId: null,
           updatedAt: Date.now(),
@@ -1322,6 +1331,7 @@ describe('agent draft lifecycle', () => {
         'conversation-a': {
           prompt: draftState.prompt,
           inputImages: draftState.inputImages,
+          styleReferenceImage: null,
           maskDraft: draftState.maskDraft,
           maskEditorImageId: imageA.id,
         },
@@ -1351,6 +1361,7 @@ describe('agent draft lifecycle', () => {
       galleryInputDraft: {
         prompt: galleryPrompt,
         inputImages: [imageB],
+        styleReferenceImage: null,
         maskDraft: null,
         maskEditorImageId: null,
       },
@@ -1415,9 +1426,9 @@ describe('agent draft lifecycle', () => {
     const now = 10 * 24 * 60 * 60 * 1000
     const staleUpdatedAt = now - 3 * 24 * 60 * 60 * 1000 - 1
     const recentUpdatedAt = now - 3 * 24 * 60 * 60 * 1000
-    const activeDraft = { prompt: 'active', inputImages: [], maskDraft: null, maskEditorImageId: null, updatedAt: staleUpdatedAt }
-    const staleDraft = { prompt: 'stale', inputImages: [], maskDraft: null, maskEditorImageId: null, updatedAt: staleUpdatedAt }
-    const recentDraft = { prompt: 'recent', inputImages: [], maskDraft: null, maskEditorImageId: null, updatedAt: recentUpdatedAt }
+    const activeDraft = { prompt: 'active', inputImages: [], styleReferenceImage: null, maskDraft: null, maskEditorImageId: null, updatedAt: staleUpdatedAt }
+    const staleDraft = { prompt: 'stale', inputImages: [], styleReferenceImage: null, maskDraft: null, maskEditorImageId: null, updatedAt: staleUpdatedAt }
+    const recentDraft = { prompt: 'recent', inputImages: [], styleReferenceImage: null, maskDraft: null, maskEditorImageId: null, updatedAt: recentUpdatedAt }
 
     const cleaned = cleanStaleAgentInputDrafts({
       'conversation-a': activeDraft,

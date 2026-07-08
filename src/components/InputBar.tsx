@@ -391,6 +391,9 @@ export default function InputBar() {
   const appMode = useStore((s) => s.appMode)
   const setPrompt = useStore((s) => s.setPrompt)
   const inputImages = useStore((s) => s.inputImages)
+  const styleReferenceImage = useStore((s) => s.styleReferenceImage)
+  const setStyleReferenceImage = useStore((s) => s.setStyleReferenceImage)
+  const clearStyleReferenceImage = useStore((s) => s.clearStyleReferenceImage)
   const adminAccess = useStore((s) => s.adminAccess)
   const addInputImage = useStore((s) => s.addInputImage)
   const replaceInputImage = useStore((s) => s.replaceInputImage)
@@ -502,6 +505,7 @@ export default function InputBar() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const replaceFileInputRef = useRef<HTMLInputElement>(null)
+  const styleReferenceFileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLDivElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
   const imagesRef = useRef<HTMLDivElement>(null)
@@ -633,6 +637,7 @@ export default function InputBar() {
   const compressionDisabled = params.output_format === 'png' || isFalProvider
   const outputImageLimit = getOutputImageLimitForSettings(effectiveSettings)
   const referenceImageUploadLimit = adminAccess.referenceImageUploadLimit
+  const referenceImageCount = inputImages.length + (styleReferenceImage ? 1 : 0)
   const isFalTextToImage = isFalProvider && inputImages.length === 0
   const nDraftValue = Number(nInput)
   const effectiveNValue = Number.isNaN(nDraftValue) ? params.n : nDraftValue
@@ -658,7 +663,7 @@ export default function InputBar() {
         { label: 'medium', value: 'medium' },
         { label: 'high', value: 'high' },
       ]
-  const atImageLimit = inputImages.length >= referenceImageUploadLimit
+  const atImageLimit = referenceImageCount >= referenceImageUploadLimit
   const uploadImageTooltipText = atImageLimit ? `参考图数量已达上限（${referenceImageUploadLimit} 张），无法继续添加` : '上传图片'
   const compressionHint = useHintTooltip({ enabled: () => compressionDisabled })
   const moderationHint = useHintTooltip({ enabled: () => moderationDisabled })
@@ -957,7 +962,7 @@ export default function InputBar() {
   const handleFiles = async (files: FileList | File[]) => {
     try {
       const state = useStore.getState()
-      const currentCount = state.inputImages.length
+      const currentCount = state.inputImages.length + (state.styleReferenceImage ? 1 : 0)
       const limit = state.adminAccess.referenceImageUploadLimit
       if (currentCount >= limit) {
         useStore.getState().showToast(
@@ -1084,6 +1089,36 @@ export default function InputBar() {
       showToast('参考图已替换', 'success')
     } catch (err) {
       showToast(`参考图替换失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+    }
+  }
+
+  const handleStyleReferenceFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+
+    try {
+      const state = useStore.getState()
+      const replacingExisting = Boolean(state.styleReferenceImage)
+      const currentCount = state.inputImages.length + (state.styleReferenceImage ? 1 : 0)
+      const limit = state.adminAccess.referenceImageUploadLimit
+      if (!replacingExisting && currentCount >= limit) {
+        showToast(`参考图数量已达上限（${limit} 张），无法继续添加风格参考图`, 'error')
+        return
+      }
+
+      const image = await createInputImageFromFile(file)
+      if (!image) {
+        showToast('请选择有效图片', 'error')
+        return
+      }
+
+      const previousId = state.styleReferenceImage?.id
+      setStyleReferenceImage(image)
+      if (previousId && previousId !== image.id) void deleteImageIfUnreferenced(previousId)
+      showToast('风格参考图已更新', 'success')
+    } catch (err) {
+      showToast(`风格参考图上传失败：${err instanceof Error ? err.message : String(err)}`, 'error')
     }
   }
 
@@ -1227,7 +1262,8 @@ export default function InputBar() {
 
       if (imageIds.length > 0) {
         const state = useStore.getState()
-        const remaining = Math.max(0, state.adminAccess.referenceImageUploadLimit - state.inputImages.length)
+        const currentCount = state.inputImages.length + (state.styleReferenceImage ? 1 : 0)
+        const remaining = Math.max(0, state.adminAccess.referenceImageUploadLimit - currentCount)
         if (remaining <= 0) {
           showToast(`参考图数量已达上限（${state.adminAccess.referenceImageUploadLimit} 张），无法继续添加`, 'error')
           return
@@ -1771,13 +1807,96 @@ export default function InputBar() {
     </button>
   )
 
+  const renderStyleReferenceSlot = () => {
+    const disabled = !styleReferenceImage && atImageLimit
+    const title = styleReferenceImage
+      ? '风格参考图：点击预览，悬停可移除或替换'
+      : disabled
+        ? `参考图数量已达上限（${referenceImageUploadLimit} 张），无法添加风格参考图`
+        : '上传风格参考图'
+
+    if (!styleReferenceImage) {
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            if (!disabled) styleReferenceFileInputRef.current?.click()
+          }}
+          disabled={disabled}
+          className={`w-[52px] h-[52px] rounded-xl border border-dashed flex flex-col items-center justify-center gap-0.5 transition-all flex-shrink-0 ${
+            disabled
+              ? 'cursor-not-allowed border-gray-200 bg-gray-50/60 text-gray-300 dark:border-white/[0.06] dark:bg-white/[0.02] dark:text-gray-600'
+              : 'cursor-pointer border-violet-300 bg-violet-50/70 text-violet-500 hover:border-violet-400 hover:bg-violet-50 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300 dark:hover:bg-violet-500/15'
+          }`}
+          title={title}
+          aria-label={title}
+        >
+          <ImportIcon className="w-4 h-4" />
+          <span className="text-[8px] leading-none">风格</span>
+        </button>
+      )
+    }
+
+    return (
+      <div className="relative group inline-block h-[52px] w-[52px] shrink-0 self-start">
+        <div
+          className="relative w-[52px] h-[52px] rounded-xl overflow-hidden border border-violet-300 shadow-sm cursor-pointer select-none dark:border-violet-400/40"
+          onClick={() => {
+            const lightboxIds = [...inputImages.map((img) => img.id), styleReferenceImage.id]
+            setLightboxImageId(styleReferenceImage.id, lightboxIds)
+          }}
+          title={title}
+        >
+          {styleReferenceImage.dataUrl && (
+            <div className="h-full w-full overflow-hidden rounded-xl">
+              <img
+                src={styleReferenceImage.dataUrl}
+                className="w-full h-full object-cover hover:opacity-90 transition-opacity pointer-events-none"
+                alt=""
+              />
+            </div>
+          )}
+          <span className="absolute left-1 top-1 rounded bg-violet-500/90 px-1.5 py-0.5 text-[8px] leading-none text-white font-bold tracking-wider backdrop-blur-sm z-10 pointer-events-none">
+            STYLE
+          </span>
+          <button
+            type="button"
+            className="absolute inset-0 w-full h-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-20 focus:outline-none border-none"
+            onClick={(e) => {
+              e.stopPropagation()
+              styleReferenceFileInputRef.current?.click()
+            }}
+            title="替换风格参考图"
+          >
+            <ImportIcon className="w-5 h-5 text-white" />
+          </button>
+        </div>
+        <span
+          className="absolute right-0 top-0 flex h-5 w-5 translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-red-500 text-white opacity-0 shadow-md transition-opacity hover:bg-red-600 group-hover:opacity-100 z-30"
+          onClick={(e) => {
+            e.stopPropagation()
+            const imageId = styleReferenceImage.id
+            clearStyleReferenceImage()
+            void deleteImageIfUnreferenced(imageId)
+          }}
+          title="移除风格参考图"
+        >
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </span>
+      </div>
+    )
+  }
+
   const renderImageThumbs = () => {
     return (
       <div ref={imagesRef} className="lg:max-h-44 lg:overflow-y-auto lg:overscroll-contain lg:pr-1 custom-scrollbar">
         <div className="grid grid-cols-[repeat(auto-fill,52px)] justify-between gap-x-2 gap-y-3 mb-3">
           {inputImages.map((img, idx) => renderImageThumb(img, idx))}
+          {renderStyleReferenceSlot()}
           {renderUploadReferenceButton()}
-          {renderClearAllButton()}
+          {inputImages.length > 0 && renderClearAllButton()}
         </div>
         {touchDragPreview?.src && createPortal(
           <div
@@ -2093,7 +2212,7 @@ export default function InputBar() {
           </div>
 
           {/* 输入图片行（移动端可折叠） */}
-          {inputImages.length > 0 && (
+          {(inputImages.length > 0 || styleReferenceImage) && (
             isMobile ? (
               <>
                 <div className={`collapse-section${mobileCollapsed ? ' collapsed' : ''}`}>
@@ -2103,7 +2222,7 @@ export default function InputBar() {
                 </div>
                 {mobileCollapsed && (
                   <div className="text-xs text-gray-400 dark:text-gray-500 mb-2 ml-1">
-                    {maskDraft ? `1 张遮罩主图 · ${referenceImages.length} 张参考图` : `${inputImages.length} 张参考图`}
+                    {maskDraft ? `1 张遮罩主图 · ${referenceImages.length} 张参考图` : `${inputImages.length} 张参考图`}{styleReferenceImage ? ' · 1 张风格参考图' : ''}
                   </div>
                 )}
               </>
@@ -2398,6 +2517,13 @@ export default function InputBar() {
             accept="image/*"
             className="hidden"
             onChange={handleReplaceFileUpload}
+          />
+          <input
+            ref={styleReferenceFileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleStyleReferenceFileUpload}
           />
         </div>
       </div>

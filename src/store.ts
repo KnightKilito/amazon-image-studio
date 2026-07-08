@@ -103,6 +103,7 @@ let adminAccessSaveChain: Promise<void> = Promise.resolve()
 type AgentInputDraft = {
   prompt: string
   inputImages: InputImage[]
+  styleReferenceImage: InputImage | null
   maskDraft: MaskDraft | null
   maskEditorImageId: string | null
   updatedAt?: number
@@ -647,12 +648,21 @@ export function getPersistedState(state: AppState) {
       ? {
           prompt: galleryInputDraft?.prompt ?? '',
           inputImages: galleryInputDraft?.inputImages.map((img) => ({ id: img.id, dataUrl: '' })) ?? [],
+          styleReferenceImage: galleryInputDraft?.styleReferenceImage
+            ? { id: galleryInputDraft.styleReferenceImage.id, dataUrl: '' }
+            : null,
         }
       : {}),
     dismissedCodexCliPrompts: state.dismissedCodexCliPrompts,
     appMode: state.appMode,
     galleryInputDraft: settings.persistInputOnRestart && galleryInputDraft
-      ? { ...galleryInputDraft, inputImages: galleryInputDraft.inputImages.map((img) => ({ id: img.id, dataUrl: '' })) }
+      ? {
+          ...galleryInputDraft,
+          inputImages: galleryInputDraft.inputImages.map((img) => ({ id: img.id, dataUrl: '' })),
+          styleReferenceImage: galleryInputDraft.styleReferenceImage
+            ? { id: galleryInputDraft.styleReferenceImage.id, dataUrl: '' }
+            : null,
+        }
       : null,
     agentConversations: state.agentConversations,
     activeAgentConversationId: state.activeAgentConversationId,
@@ -724,6 +734,7 @@ export function mergePersistedState(persistedState: unknown, currentState: AppSt
     ? normalizeAgentInputDraft(persisted.galleryInputDraft ?? {
         prompt: persisted.prompt,
         inputImages: persisted.inputImages,
+        styleReferenceImage: persisted.styleReferenceImage,
         maskDraft: null,
         maskEditorImageId: null,
       })
@@ -802,11 +813,14 @@ interface AppState {
   prompt: string
   setPrompt: (p: string) => void
   inputImages: InputImage[]
+  styleReferenceImage: InputImage | null
   addInputImage: (img: InputImage) => void
   replaceInputImage: (idx: number, img: InputImage) => void
   removeInputImage: (idx: number) => void
   clearInputImages: () => void
   setInputImages: (imgs: InputImage[], options?: { equivalentImageIds?: Record<string, string> }) => void
+  setStyleReferenceImage: (img: InputImage | null) => void
+  clearStyleReferenceImage: () => void
   moveInputImage: (fromIdx: number, toIdx: number) => void
   maskDraft: MaskDraft | null
   setMaskDraft: (draft: MaskDraft | null) => void
@@ -924,8 +938,11 @@ interface AppState {
 
 function isImageReferencedByState(state: AppState, imageId: string) {
   if (state.inputImages.some((img) => img.id === imageId)) return true
+  if (state.styleReferenceImage?.id === imageId) return true
   if (state.galleryInputDraft?.inputImages.some((img) => img.id === imageId)) return true
+  if (state.galleryInputDraft?.styleReferenceImage?.id === imageId) return true
   if (Object.values(state.agentInputDrafts).some((draft) => draft.inputImages.some((img) => img.id === imageId))) return true
+  if (Object.values(state.agentInputDrafts).some((draft) => draft.styleReferenceImage?.id === imageId)) return true
   if (state.tasks.some((task) =>
     task.inputImageIds.includes(imageId) ||
     task.outputImages.includes(imageId) ||
@@ -991,6 +1008,7 @@ function normalizeAgentInputDraft(value: unknown, fallbackUpdatedAt = Date.now()
   return {
     prompt: typeof draft.prompt === 'string' ? draft.prompt : '',
     inputImages: normalizeInputImages(draft.inputImages),
+    styleReferenceImage: normalizeInputImages(draft.styleReferenceImage ? [draft.styleReferenceImage] : [])[0] ?? null,
     maskDraft: normalizeMaskDraft(draft.maskDraft),
     maskEditorImageId: typeof draft.maskEditorImageId === 'string' ? draft.maskEditorImageId : null,
     updatedAt,
@@ -1020,10 +1038,11 @@ export function cleanStaleAgentInputDrafts(drafts: Record<string, AgentInputDraf
   return next
 }
 
-function clearInputDraftState(): Pick<AgentInputDraft, 'prompt' | 'inputImages' | 'maskDraft' | 'maskEditorImageId'> {
+function clearInputDraftState(): Pick<AgentInputDraft, 'prompt' | 'inputImages' | 'styleReferenceImage' | 'maskDraft' | 'maskEditorImageId'> {
   return {
     prompt: '',
     inputImages: [],
+    styleReferenceImage: null,
     maskDraft: null,
     maskEditorImageId: null,
   }
@@ -1033,16 +1052,18 @@ function copyAgentInputDraft(draft: AgentInputDraft): AgentInputDraft {
   return {
     prompt: draft.prompt,
     inputImages: draft.inputImages.map((img) => ({ ...img })),
+    styleReferenceImage: draft.styleReferenceImage ? { ...draft.styleReferenceImage } : null,
     maskDraft: draft.maskDraft ? { ...draft.maskDraft } : null,
     maskEditorImageId: draft.maskEditorImageId,
     updatedAt: draft.updatedAt ?? Date.now(),
   }
 }
 
-function getCurrentAgentInputDraft(state: Pick<AppState, 'prompt' | 'inputImages' | 'maskDraft' | 'maskEditorImageId'>): AgentInputDraft {
+function getCurrentAgentInputDraft(state: Pick<AppState, 'prompt' | 'inputImages' | 'styleReferenceImage' | 'maskDraft' | 'maskEditorImageId'>): AgentInputDraft {
   return {
     prompt: state.prompt,
     inputImages: state.inputImages,
+    styleReferenceImage: state.styleReferenceImage,
     maskDraft: state.maskDraft,
     maskEditorImageId: state.maskEditorImageId,
     updatedAt: Date.now(),
@@ -1050,7 +1071,7 @@ function getCurrentAgentInputDraft(state: Pick<AppState, 'prompt' | 'inputImages
 }
 
 function isEmptyAgentInputDraft(draft: AgentInputDraft) {
-  return draft.prompt.length === 0 && draft.inputImages.length === 0 && !draft.maskDraft && !draft.maskEditorImageId
+  return draft.prompt.length === 0 && draft.inputImages.length === 0 && !draft.styleReferenceImage && !draft.maskDraft && !draft.maskEditorImageId
 }
 
 function setAgentInputDraft(drafts: Record<string, AgentInputDraft>, conversationId: string, draft: AgentInputDraft) {
@@ -1063,12 +1084,12 @@ function setAgentInputDraft(drafts: Record<string, AgentInputDraft>, conversatio
   return next
 }
 
-function saveActiveAgentInputDrafts(state: Pick<AppState, 'appMode' | 'activeAgentConversationId' | 'agentInputDrafts' | 'prompt' | 'inputImages' | 'maskDraft' | 'maskEditorImageId'>) {
+function saveActiveAgentInputDrafts(state: Pick<AppState, 'appMode' | 'activeAgentConversationId' | 'agentInputDrafts' | 'prompt' | 'inputImages' | 'styleReferenceImage' | 'maskDraft' | 'maskEditorImageId'>) {
   if (state.appMode !== 'agent' || !state.activeAgentConversationId) return state.agentInputDrafts
   return setAgentInputDraft(state.agentInputDrafts, state.activeAgentConversationId, getCurrentAgentInputDraft(state))
 }
 
-function saveGalleryInputDraft(state: Pick<AppState, 'appMode' | 'galleryInputDraft' | 'prompt' | 'inputImages' | 'maskDraft' | 'maskEditorImageId'>) {
+function saveGalleryInputDraft(state: Pick<AppState, 'appMode' | 'galleryInputDraft' | 'prompt' | 'inputImages' | 'styleReferenceImage' | 'maskDraft' | 'maskEditorImageId'>) {
   if (state.appMode !== 'gallery') return state.galleryInputDraft
   const draft = getCurrentAgentInputDraft(state)
   return isEmptyAgentInputDraft(draft) ? null : copyAgentInputDraft(draft)
@@ -1078,17 +1099,18 @@ function getPersistableGalleryInputDraft(state: AppState) {
   return saveGalleryInputDraft(state)
 }
 
-function restoreGalleryInputDraftState(draft: AgentInputDraft | null): Pick<AgentInputDraft, 'prompt' | 'inputImages' | 'maskDraft' | 'maskEditorImageId'> {
+function restoreGalleryInputDraftState(draft: AgentInputDraft | null): Pick<AgentInputDraft, 'prompt' | 'inputImages' | 'styleReferenceImage' | 'maskDraft' | 'maskEditorImageId'> {
   if (!draft) return clearInputDraftState()
   return {
     prompt: draft.prompt,
     inputImages: draft.inputImages.map((img) => ({ ...img })),
+    styleReferenceImage: draft.styleReferenceImage ? { ...draft.styleReferenceImage } : null,
     maskDraft: draft.maskDraft ? { ...draft.maskDraft } : null,
     maskEditorImageId: draft.maskEditorImageId,
   }
 }
 
-function restoreAgentInputDraftState(drafts: Record<string, AgentInputDraft>, conversationId: string | null): Pick<AgentInputDraft, 'prompt' | 'inputImages' | 'maskDraft' | 'maskEditorImageId'> {
+function restoreAgentInputDraftState(drafts: Record<string, AgentInputDraft>, conversationId: string | null): Pick<AgentInputDraft, 'prompt' | 'inputImages' | 'styleReferenceImage' | 'maskDraft' | 'maskEditorImageId'> {
   const draft = conversationId ? drafts[conversationId] : null
   return restoreGalleryInputDraftState(draft ?? null)
 }
@@ -1100,6 +1122,7 @@ function syncActiveInputDraft<T extends Partial<AgentInputDraft>>(
   const draft: AgentInputDraft = {
     prompt: patch.prompt ?? state.prompt,
     inputImages: patch.inputImages ?? state.inputImages,
+    styleReferenceImage: patch.styleReferenceImage !== undefined ? patch.styleReferenceImage : state.styleReferenceImage,
     maskDraft: patch.maskDraft !== undefined ? patch.maskDraft : state.maskDraft,
     maskEditorImageId: patch.maskEditorImageId !== undefined ? patch.maskEditorImageId : state.maskEditorImageId,
   }
@@ -1125,6 +1148,7 @@ function getPersistableAgentInputDrafts(state: AppState) {
     persistable[conversationId] = {
       ...copyAgentInputDraft(draft),
       inputImages: draft.inputImages.map((img) => ({ id: img.id, dataUrl: '' })),
+      styleReferenceImage: draft.styleReferenceImage ? { id: draft.styleReferenceImage.id, dataUrl: '' } : null,
     }
   }
   return persistable
@@ -1241,6 +1265,7 @@ export const useStore = create<AppState>()(
       prompt: '',
       setPrompt: (prompt) => set((s) => syncActiveInputDraft(s, { prompt })),
       inputImages: [],
+      styleReferenceImage: null,
       addInputImage: (img) =>
         set((s) => {
           if (s.inputImages.find((i) => i.id === img.id)) return s
@@ -1296,6 +1321,8 @@ export const useStore = create<AppState>()(
             ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
           })
         }),
+      setStyleReferenceImage: (styleReferenceImage) => set((s) => syncActiveInputDraft(s, { styleReferenceImage })),
+      clearStyleReferenceImage: () => set((s) => syncActiveInputDraft(s, { styleReferenceImage: null })),
       moveInputImage: (fromIdx, toIdx) =>
         set((s) => {
           const images = [...s.inputImages]
@@ -1950,15 +1977,19 @@ export async function initStore() {
   const referencedIds = new Set<string>()
   const state = useStore.getState()
   const persistedInputImages = state.inputImages
+  const styleReferenceImage = state.styleReferenceImage
   const galleryInputDraft = state.galleryInputDraft
   const agentConversations = state.agentConversations
   const agentInputDrafts = state.agentInputDrafts
   for (const img of persistedInputImages) referencedIds.add(img.id)
+  if (styleReferenceImage) referencedIds.add(styleReferenceImage.id)
   if (galleryInputDraft) {
     for (const img of galleryInputDraft.inputImages) referencedIds.add(img.id)
+    if (galleryInputDraft.styleReferenceImage) referencedIds.add(galleryInputDraft.styleReferenceImage.id)
   }
   for (const draft of Object.values(agentInputDrafts)) {
     for (const img of draft.inputImages) referencedIds.add(img.id)
+    if (draft.styleReferenceImage) referencedIds.add(draft.styleReferenceImage.id)
   }
   for (const conversation of agentConversations) {
     for (const round of conversation.rounds) {
@@ -1998,6 +2029,23 @@ export async function initStore() {
     useStore.getState().setInputImages(restoredInputImages)
   }
 
+  if (styleReferenceImage) {
+    let restoredStyleReferenceImage: InputImage | null = null
+    if (styleReferenceImage.dataUrl) {
+      restoredStyleReferenceImage = styleReferenceImage
+      cacheImage(styleReferenceImage.id, styleReferenceImage.dataUrl)
+    } else {
+      const storedImage = await getImage(styleReferenceImage.id)
+      if (storedImage?.dataUrl) {
+        restoredStyleReferenceImage = { ...styleReferenceImage, dataUrl: storedImage.dataUrl }
+        cacheImage(styleReferenceImage.id, storedImage.dataUrl)
+      }
+    }
+    if (restoredStyleReferenceImage?.dataUrl !== styleReferenceImage.dataUrl) {
+      useStore.getState().setStyleReferenceImage(restoredStyleReferenceImage)
+    }
+  }
+
   if (galleryInputDraft) {
     const restoredGalleryImages: InputImage[] = []
     for (const img of galleryInputDraft.inputImages) {
@@ -2012,16 +2060,31 @@ export async function initStore() {
         cacheImage(img.id, storedImage.dataUrl)
       }
     }
+    let restoredGalleryStyleReferenceImage: InputImage | null = null
+    if (galleryInputDraft.styleReferenceImage) {
+      if (galleryInputDraft.styleReferenceImage.dataUrl) {
+        restoredGalleryStyleReferenceImage = galleryInputDraft.styleReferenceImage
+        cacheImage(galleryInputDraft.styleReferenceImage.id, galleryInputDraft.styleReferenceImage.dataUrl)
+      } else {
+        const storedImage = await getImage(galleryInputDraft.styleReferenceImage.id)
+        if (storedImage?.dataUrl) {
+          restoredGalleryStyleReferenceImage = { ...galleryInputDraft.styleReferenceImage, dataUrl: storedImage.dataUrl }
+          cacheImage(galleryInputDraft.styleReferenceImage.id, storedImage.dataUrl)
+        }
+      }
+    }
     const shouldClearMask = Boolean(galleryInputDraft.maskDraft) && !restoredGalleryImages.some((img) => img.id === galleryInputDraft.maskDraft?.targetImageId)
     const restoredGalleryDraft: AgentInputDraft = {
       ...galleryInputDraft,
       inputImages: restoredGalleryImages,
+      styleReferenceImage: restoredGalleryStyleReferenceImage,
       prompt: remapImageMentionsForOrder(galleryInputDraft.prompt, galleryInputDraft.inputImages, restoredGalleryImages),
       ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
     }
     const galleryDraftsChanged =
       restoredGalleryImages.length !== galleryInputDraft.inputImages.length ||
       restoredGalleryImages.some((img, index) => img.dataUrl !== galleryInputDraft.inputImages[index]?.dataUrl) ||
+      restoredGalleryStyleReferenceImage?.dataUrl !== galleryInputDraft.styleReferenceImage?.dataUrl ||
       shouldClearMask
     if (galleryDraftsChanged) {
       const latestState = useStore.getState()
@@ -2051,11 +2114,25 @@ export async function initStore() {
         cacheImage(img.id, storedImage.dataUrl)
       }
     }
+    let restoredDraftStyleReferenceImage: InputImage | null = null
+    if (draft.styleReferenceImage) {
+      if (draft.styleReferenceImage.dataUrl) {
+        restoredDraftStyleReferenceImage = draft.styleReferenceImage
+        cacheImage(draft.styleReferenceImage.id, draft.styleReferenceImage.dataUrl)
+      } else {
+        const storedImage = await getImage(draft.styleReferenceImage.id)
+        if (storedImage?.dataUrl) {
+          restoredDraftStyleReferenceImage = { ...draft.styleReferenceImage, dataUrl: storedImage.dataUrl }
+          cacheImage(draft.styleReferenceImage.id, storedImage.dataUrl)
+        }
+      }
+    }
 
     const shouldClearMask = Boolean(draft.maskDraft) && !restoredDraftImages.some((img) => img.id === draft.maskDraft?.targetImageId)
     const restoredDraft: AgentInputDraft = {
       ...draft,
       inputImages: restoredDraftImages,
+      styleReferenceImage: restoredDraftStyleReferenceImage,
       prompt: remapImageMentionsForOrder(draft.prompt, draft.inputImages, restoredDraftImages),
       ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
     }
@@ -2063,6 +2140,7 @@ export async function initStore() {
     if (
       restoredDraftImages.length !== draft.inputImages.length ||
       restoredDraftImages.some((img, index) => img.dataUrl !== draft.inputImages[index]?.dataUrl) ||
+      restoredDraftStyleReferenceImage?.dataUrl !== draft.styleReferenceImage?.dataUrl ||
       shouldClearMask
     ) {
       agentDraftsChanged = true
@@ -2081,7 +2159,7 @@ export async function initStore() {
 
 /** 提交新任务 */
 export async function submitTask(options: { allowFullMask?: boolean; useCurrentApiProfileWhenReusedMissing?: boolean } = {}): Promise<boolean> {
-  const { settings, prompt, inputImages, maskDraft, params, reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, pendingTaskCategory, showToast, setConfirmDialog, adminAccess, isAdminAuthenticated } =
+  const { settings, prompt, inputImages, styleReferenceImage, maskDraft, params, reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, pendingTaskCategory, showToast, setConfirmDialog, adminAccess, isAdminAuthenticated } =
     useStore.getState()
 
   const normalizedSettings = normalizeSettings(settings)
@@ -2168,19 +2246,18 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     }
   }
 
-  const styleReferenceImageId = category.styleReferenceImageId?.trim()
-  if (styleReferenceImageId && !orderedInputImages.some((img) => img.id === styleReferenceImageId)) {
+  if (styleReferenceImage && !orderedInputImages.some((img) => img.id === styleReferenceImage.id)) {
     const referenceImageUploadLimit = getReferenceImageUploadLimit(adminAccess)
     if (orderedInputImages.length + 1 > referenceImageUploadLimit) {
-      showToast(`已选择隐藏风格参考板，实际参考图数量不能超过 ${referenceImageUploadLimit} 张；请删除一张产品参考图后再提交。`, 'error')
+      showToast(`已选择风格参考图，实际参考图数量不能超过 ${referenceImageUploadLimit} 张；请删除一张产品参考图后再提交。`, 'error')
       return false
     }
-    const dataUrl = await ensureImageCached(styleReferenceImageId)
+    const dataUrl = styleReferenceImage.dataUrl || await ensureImageCached(styleReferenceImage.id)
     if (!dataUrl) {
       showToast('已选择的风格参考图不存在，请重新选择风格参考。', 'error')
       return false
     }
-    orderedInputImages = [...orderedInputImages, { id: styleReferenceImageId, dataUrl }]
+    orderedInputImages = [...orderedInputImages, { id: styleReferenceImage.id, dataUrl }]
   }
 
   // 持久化输入图片到 IndexedDB（此前只在内存缓存中）
@@ -2224,6 +2301,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
   if (settings.clearInputAfterSubmit) {
     useStore.getState().setPrompt('')
     useStore.getState().clearInputImages()
+    useStore.getState().clearStyleReferenceImage()
   }
   useStore.getState().setReusedTaskApiProfile(null)
   useStore.getState().setPendingTaskCategory(null)
@@ -2471,12 +2549,14 @@ function addAgentReferencedImageIds(target: Set<string>, conversations = useStor
   }
   for (const draft of Object.values(inputDrafts)) {
     for (const img of draft.inputImages) target.add(img.id)
+    if (draft.styleReferenceImage) target.add(draft.styleReferenceImage.id)
   }
 }
 
 function addInputDraftReferencedImageIds(target: Set<string>, draft: AgentInputDraft | null) {
   if (!draft) return
   for (const img of draft.inputImages) target.add(img.id)
+  if (draft.styleReferenceImage) target.add(draft.styleReferenceImage.id)
 }
 
 function addTaskReferencedImageIds(target: Set<string>, task: TaskRecord) {
@@ -2490,12 +2570,13 @@ async function deleteUnreferencedImageIds(imageIds: Iterable<string>) {
   const candidates = Array.from(new Set(Array.from(imageIds).filter(Boolean)))
   if (candidates.length === 0) return
 
-  const { tasks, inputImages, galleryInputDraft } = useStore.getState()
+  const { tasks, inputImages, styleReferenceImage, galleryInputDraft } = useStore.getState()
   const stillUsed = new Set<string>()
   for (const task of tasks) addTaskReferencedImageIds(stillUsed, task)
   addAgentReferencedImageIds(stillUsed)
   addInputDraftReferencedImageIds(stillUsed, galleryInputDraft)
   for (const img of inputImages) stillUsed.add(img.id)
+  if (styleReferenceImage) stillUsed.add(styleReferenceImage.id)
 
   for (const imgId of candidates) {
     if (stillUsed.has(imgId)) continue
@@ -3879,7 +3960,7 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
       useStore.getState().setDetailTaskId(taskId)
       useStore.getState().setConfirmDialog({
         title: '参考图数量受限',
-        message: `当前生图接口最多支持 ${referenceImageLimit} 张参考图，本次任务实际需要发送 ${latestTask.inputImageIds.length} 张。\n\n是否只上传前 ${referenceImageLimit} 张继续生图？如果本任务带隐藏风格参考图，会优先保留风格参考图，并使用前 ${Math.max(0, referenceImageLimit - 1)} 张产品参考图。\n\n取消后不会继续请求，你可以切换生图 API 中转站后再重试。`,
+        message: `当前生图接口最多支持 ${referenceImageLimit} 张参考图，本次任务实际需要发送 ${latestTask.inputImageIds.length} 张。\n\n是否只上传前 ${referenceImageLimit} 张继续生图？如果本任务带风格参考图，会优先保留风格参考图，并使用前 ${Math.max(0, referenceImageLimit - 1)} 张产品参考图。\n\n取消后不会继续请求，你可以切换生图 API 中转站后再重试。`,
         confirmText: `只传 ${referenceImageLimit} 张继续`,
         cancelText: '取消，不继续',
         tone: 'warning',
@@ -4019,7 +4100,7 @@ export async function retryTask(task: TaskRecord) {
 
 /** 复用配置 */
 export async function reuseConfig(task: TaskRecord) {
-  const { settings, setPrompt, setParams, setInputImages, setMaskDraft, clearMaskDraft, showToast, setConfirmDialog, setReusedTaskApiProfile, setPendingTaskCategory } = useStore.getState()
+  const { settings, setPrompt, setParams, setInputImages, setStyleReferenceImage, clearStyleReferenceImage, setMaskDraft, clearMaskDraft, showToast, setConfirmDialog, setReusedTaskApiProfile, setPendingTaskCategory } = useStore.getState()
   const normalizedSettings = normalizeSettings(settings)
   const currentProfile = getActiveApiProfile(settings)
   const matchedProfile = normalizedSettings.reuseTaskApiProfileTemporarily ? getTaskApiProfile(normalizedSettings, task) : null
@@ -4039,14 +4120,23 @@ export async function reuseConfig(task: TaskRecord) {
   // 恢复输入图片
   const imgs: InputImage[] = []
   const hiddenStyleReferenceImageId = task.category?.styleReferenceImageId?.trim()
+  let styleReferenceImage: InputImage | null = null
   for (const imgId of task.inputImageIds) {
-    if (hiddenStyleReferenceImageId && imgId === hiddenStyleReferenceImageId) continue
     const dataUrl = await ensureImageCached(imgId)
+    if (hiddenStyleReferenceImageId && imgId === hiddenStyleReferenceImageId) {
+      if (dataUrl) styleReferenceImage = { id: imgId, dataUrl }
+      continue
+    }
     if (dataUrl) {
       imgs.push({ id: imgId, dataUrl })
     }
   }
   setInputImages(imgs)
+  if (styleReferenceImage) {
+    setStyleReferenceImage(styleReferenceImage)
+  } else {
+    clearStyleReferenceImage()
+  }
   setPrompt(task.prompt)
   setPendingTaskCategory({
     mode: 'next-submit',
@@ -4108,6 +4198,7 @@ export async function editOutputs(task: TaskRecord, selectedOutputImageId?: stri
     maskDraft: null,
     maskEditorImageId: null,
   }))
+  useStore.getState().clearStyleReferenceImage()
   setPendingTaskCategory({
     mode: 'next-submit',
     category: createNextSubmitTaskCategory(task),
@@ -4174,6 +4265,7 @@ export async function convertOutputToAPlusFormat(
     maskDraft: null,
     maskEditorImageId: null,
   }))
+  useStore.getState().clearStyleReferenceImage()
   setParams({ size: getAPlusOutputConversionSize(target), output_format: 'png', output_compression: null })
   setPendingTaskCategory({
     mode: 'next-submit',
@@ -4184,7 +4276,7 @@ export async function convertOutputToAPlusFormat(
 
 /** 删除多条任务 */
 export async function removeMultipleTasks(taskIds: string[]) {
-  const { tasks, setTasks, inputImages, galleryInputDraft, showToast, clearSelection, selectedTaskIds } = useStore.getState()
+  const { tasks, setTasks, inputImages, styleReferenceImage, galleryInputDraft, showToast, clearSelection, selectedTaskIds } = useStore.getState()
   
   if (!taskIds.length) return
 
@@ -4213,6 +4305,7 @@ export async function removeMultipleTasks(taskIds: string[]) {
   addAgentReferencedImageIds(stillUsed)
   addInputDraftReferencedImageIds(stillUsed, galleryInputDraft)
   for (const img of inputImages) stillUsed.add(img.id)
+  if (styleReferenceImage) stillUsed.add(styleReferenceImage.id)
 
   // 删除孤立图片
   for (const imgId of deletedImageIds) {
@@ -4234,7 +4327,7 @@ export async function removeMultipleTasks(taskIds: string[]) {
 
 /** 删除单条任务 */
 export async function removeTask(task: TaskRecord) {
-  const { tasks, setTasks, inputImages, galleryInputDraft, showToast } = useStore.getState()
+  const { tasks, setTasks, inputImages, styleReferenceImage, galleryInputDraft, showToast } = useStore.getState()
 
   // 收集此任务关联的图片
   const taskImageIds = new Set([
@@ -4257,6 +4350,7 @@ export async function removeTask(task: TaskRecord) {
   addAgentReferencedImageIds(stillUsed)
   addInputDraftReferencedImageIds(stillUsed, galleryInputDraft)
   for (const img of inputImages) stillUsed.add(img.id)
+  if (styleReferenceImage) stillUsed.add(styleReferenceImage.id)
 
   // 删除孤立图片
   for (const imgId of taskImageIds) {

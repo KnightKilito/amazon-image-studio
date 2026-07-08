@@ -663,6 +663,7 @@ describe('mask draft lifecycle in store actions', () => {
         workflow: 'amazon-aplus',
         amazonSlot: 'A+P02',
         aPlusType: 'standard-large',
+        styleReferenceImageId: imageA.id,
       },
     }), selectedOutput.id, 'premium')
 
@@ -682,6 +683,7 @@ describe('mask draft lifecycle in store actions', () => {
         aPlusType: 'premium',
       },
     })
+    expect(state.pendingTaskCategory?.category).not.toHaveProperty('styleReferenceImageId')
   })
 
   it('prepares the selected output image as a Mobile A+ conversion reference', async () => {

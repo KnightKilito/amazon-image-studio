@@ -4139,9 +4139,10 @@ function createAPlusOutputConversionTaskCategory(
   target: APlusOutputConversionTarget,
 ): NonNullable<TaskRecord['category']> {
   const baseCategory = createNextSubmitTaskCategory(task)
+  const { styleReferenceImageId: _styleReferenceImageId, ...baseCategoryWithoutStyle } = baseCategory
   const historyCategory = getTaskHistoryCategory(task)
   return {
-    ...baseCategory,
+    ...baseCategoryWithoutStyle,
     workflow: 'amazon-aplus',
     productTitle: baseCategory.productTitle ?? historyCategory.productTitle,
     amazonSlot: baseCategory.amazonSlot ?? historyCategory.amazonSlot,

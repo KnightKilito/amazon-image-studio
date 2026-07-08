@@ -1310,7 +1310,7 @@ export default function InputBar() {
     // 用户正在输入时不重新渲染 DOM，避免光标跳动
     if (isUserInputRef.current) {
       isUserInputRef.current = false
-      return
+      if (getContentEditablePlainText(el) === stripImageMentionMarkers(prompt)) return
     }
     const parts = getPromptMentionParts(prompt, inputImages)
     const html = prompt

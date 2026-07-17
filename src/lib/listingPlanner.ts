@@ -274,10 +274,60 @@ export function normalizeOnImageCopy(copy: string): string {
     .join('\n')
 }
 
+const PALETTE_COLOR_RULES: Array<[RegExp, string]> = [
+  [/\bcognac\b/i, '#A65A3A'],
+  [/\b(?:warm\s+)?ivory\b/i, '#F5F0E4'],
+  [/\bsand(?:y)?(?:\s+beige)?\b/i, '#D6C19D'],
+  [/\bpale\s+oak\b|\boak\b/i, '#D8BC91'],
+  [/\bsage(?:\s+green)?\b/i, '#A7B29A'],
+  [/\b(?:muted|antique|soft)?\s*gold\b/i, '#B49A5A'],
+  [/\blinen(?:\s+cream)?\b|\bcream\b/i, '#EEE5D2'],
+  [/\bsun[-\s]?washed\s+brown\b|\bbrown\b/i, '#98715B'],
+  [/\btaupe\b/i, '#A99887'],
+  [/\bterracotta\b/i, '#C66F50'],
+  [/\bnavy\b/i, '#243B53'],
+  [/\bcharcoal\b/i, '#374151'],
+  [/\bforest\s+green\b/i, '#315847'],
+  [/\bolive\b/i, '#75805B'],
+  [/\bteal\b/i, '#3F7C78'],
+  [/\bblue\b/i, '#5B7FA3'],
+  [/\bgreen\b/i, '#6F8F72'],
+  [/\bred\b/i, '#B85C57'],
+  [/\borange\b/i, '#C97A45'],
+  [/\byellow\b/i, '#D2B45F'],
+  [/\bpurple\b|\bviolet\b/i, '#806A91'],
+  [/\bpink\b|\brose\b/i, '#C58A91'],
+  [/\bblack\b/i, '#111827'],
+  [/\bwhite\b/i, '#F9FAFB'],
+  [/\bgr[ae]y\b/i, '#9CA3AF'],
+]
+
+export function getPaletteSwatchColor(value: string) {
+  const color = value.trim()
+  const embeddedHex = color.match(/#(?:[\da-f]{8}|[\da-f]{6}|[\da-f]{4}|[\da-f]{3})\b/i)?.[0]
+  if (embeddedHex) return embeddedHex
+  if (/^(?:rgb|hsl)a?\([^)]*\)$/i.test(color) || /^(?:oklch|oklab|lab|lch|color)\([^)]*\)$/i.test(color)) return color
+
+  const mappedColor = PALETTE_COLOR_RULES.find(([pattern]) => pattern.test(color))?.[1]
+  if (mappedColor) return mappedColor
+
+  let hash = 2166136261
+  for (const char of color.toLowerCase()) {
+    hash ^= char.charCodeAt(0)
+    hash = Math.imul(hash, 16777619)
+  }
+  const unsignedHash = hash >>> 0
+  const hue = unsignedHash % 360
+  const saturation = 34 + ((unsignedHash >>> 8) % 18)
+  const lightness = 46 + ((unsignedHash >>> 16) % 16)
+  return `hsl(${hue}, ${saturation}%, ${lightness}%)`
+}
+
 function formatPromptBlock(options: {
   prompt: string
   negativePrompt?: string
   seriesStyleGuide?: string | null
+  visualStyleEnabled?: boolean
   styleReferenceAttached?: boolean
   styleDensityMode?: AmazonStyleDensityMode
   selectedVisualStyle?: {
@@ -286,7 +336,7 @@ function formatPromptBlock(options: {
     palette: string[]
   } | null
 }) {
-  const selectedVisualStyle = options.styleReferenceAttached ? options.selectedVisualStyle : null
+  const selectedVisualStyle = (options.visualStyleEnabled ?? options.styleReferenceAttached) ? options.selectedVisualStyle : null
   const selectedStyleBlock = selectedVisualStyle
     ? [
       'Selected visual style (highest priority):',
@@ -318,6 +368,7 @@ function formatPromptBlock(options: {
 
 export function buildAmazonPlanPrompt(plan: Pick<AmazonImagePlan, 'prompt' | 'negativePrompt'> & {
   seriesStyleGuide?: string | null
+  visualStyleEnabled?: boolean
   styleReferenceAttached?: boolean
   styleDensityMode?: AmazonStyleDensityMode
   selectedVisualStyle?: {
@@ -606,7 +657,10 @@ export function withAPlusGenerationSizes(plans: AmazonAPlusPlan[], tier: SizeTie
 }
 
 export function buildAmazonAPlusPlanPrompt(plan: Pick<AmazonAPlusPlan, 'prompt' | 'negativePrompt'> & {
+  uploadSize: string
+  generationSize: string
   seriesStyleGuide?: string | null
+  visualStyleEnabled?: boolean
   styleReferenceAttached?: boolean
   styleDensityMode?: AmazonStyleDensityMode
   selectedVisualStyle?: {
@@ -615,5 +669,35 @@ export function buildAmazonAPlusPlanPrompt(plan: Pick<AmazonAPlusPlan, 'prompt' 
     palette: string[]
   } | null
 }): string {
-  return formatPromptBlock(plan)
+  const prompt = normalizeAPlusPromptOutputSize(plan.prompt, plan.uploadSize, plan.generationSize)
+  return formatPromptBlock({
+    ...plan,
+    prompt: [prompt, formatAPlusGenerationRequirement(plan)].filter(Boolean).join('\n\n'),
+  })
+}
+
+function normalizeAPlusPromptOutputSize(prompt: string, uploadSize: string, generationSize: string) {
+  if (!uploadSize || !generationSize || uploadSize === generationSize) return prompt.trim()
+  const escapedUploadSize = uploadSize.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return prompt.trim().replace(new RegExp(escapedUploadSize, 'gi'), generationSize)
+}
+
+function formatAPlusGenerationRequirement(plan: Pick<AmazonAPlusPlan, 'uploadSize' | 'generationSize'>) {
+  return [
+    'A+ output size requirements (highest priority):',
+    `- Generate the image canvas at exactly ${plan.generationSize} px.`,
+    `- ${plan.uploadSize} px is only the final Amazon Seller Central upload/display size.`,
+    '- If any earlier sentence treats the upload size as the generation canvas, override it with the generation size above.',
+  ].join('\n')
+}
+
+export function buildAmazonAPlusPlanOnlyPrompt(plan: Pick<AmazonAPlusPlan, 'planMarkdown' | 'uploadSize' | 'generationSize'>) {
+  return [
+    plan.planMarkdown.trim(),
+    '',
+    '生图输出要求（最高优先级）：',
+    `- 生成画布尺寸：${plan.generationSize} px。`,
+    `- 亚马逊 Seller Central 最终上传/展示尺寸：${plan.uploadSize} px。`,
+    '- 如果策划案其他位置把上传尺寸写成了生成画布尺寸，以这里的生成画布尺寸为准。',
+  ].join('\n')
 }

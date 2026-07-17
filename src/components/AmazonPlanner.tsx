@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react'
-import { addImageFromFile, applyGuestUnifiedApiUrl, ensureImageCached, submitTask, useStore } from '../store'
+import { addImageFromFile, applyGuestUnifiedApiUrl, ensureImageCached, generatePlannerStyleReferenceImage, submitTask, useStore } from '../store'
 import { getAmazonPlannerProfile, isOfficialDeepSeekPlannerProfile, validateApiProfile } from '../lib/apiProfiles'
 import {
   DEFAULT_AMAZON_PROMPT_DRAFT,
@@ -7,6 +7,7 @@ import {
 } from '../lib/amazonPrompt'
 import {
   A_PLUS_CONTENT_TYPES,
+  buildAmazonAPlusPlanOnlyPrompt,
   buildAmazonAPlusPlanPrompt,
   buildAmazonPlanPrompt,
   DEFAULT_LISTING_IMAGE_COUNT,
@@ -23,6 +24,7 @@ import {
   getAPlusModuleGenerationSize,
   getAPlusModuleSpecs,
   getAPlusModuleUploadSize,
+  getPaletteSwatchColor,
   isAmazonListingMainSlot,
   isAPlusTextModule,
   normalizeAPlusModuleSpecs,
@@ -56,7 +58,7 @@ import {
   sanitizeStyleReferenceEditState,
 } from '../lib/styleReferences'
 import { DEFAULT_PARAMS } from '../types'
-import type { AmazonPlannerSession, CustomStyleReference, StyleReferenceEditState } from '../types'
+import type { AmazonAiVisualStyle, AmazonPlannerSession, AmazonVisualStyleMode, CustomStyleReference, StyleReferenceEditState } from '../types'
 import StyleReferenceEditorModal from './StyleReferenceEditorModal'
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, EditIcon, EyeIcon, HistoryIcon, PhotoIcon, PlusIcon, RefreshIcon, TrashIcon } from './icons'
 
@@ -82,6 +84,8 @@ type PlannerGuideState = {
 type GuidePanelTone = 'white' | 'muted'
 type PlannerActionProgress = 'filled' | 'submitted'
 type PlannerActionProgressMap = Record<string, PlannerActionProgress>
+type PlannerPromptMode = 'full' | 'plan-only'
+type PlannerPromptModeMap = Record<string, PlannerPromptMode>
 type MobileActionDock = 'left' | 'right' | null
 type APlusModuleSpecsByType = Partial<Record<APlusContentType, AmazonAPlusModuleSpec[]>>
 type SelectedStyleReference = {
@@ -101,6 +105,22 @@ type StylePreviewState = {
   top: number
 }
 const PLANNER_HISTORY_LIMIT = 30
+
+function buildAiStyleBoardPrompt(style: AmazonAiVisualStyle, mode: AmazonPlannerMode) {
+  return [
+    `Create one premium 2x2 visual direction board for an Amazon ${mode === 'aplus' ? 'A+ Content' : 'listing image'} campaign.`,
+    style.referencePrompt,
+    `Campaign art direction: ${style.artDirection}`,
+    `Scene strategy: ${style.sceneStrategy}`,
+    style.palette.length ? `Palette anchors: ${style.palette.join(', ')}.` : '',
+    `Lighting: ${style.lighting}`,
+    `Typography and information-design language: ${style.typography}`,
+    `Materials and surfaces: ${style.materials}`,
+    `Composition language: ${style.composition}`,
+    'Show four coherent visual examples or scene variations in one direction board. The panels may share one environment family with different times of day, or use different product-appropriate environments unified by the same campaign language.',
+    'This is a visual reference board, not a final Amazon module. Do not add readable words, product claims, prices, badges, logos, watermarks, UI chrome, dimension labels, or fixed ecommerce layouts.',
+  ].filter(Boolean).join('\n')
+}
 
 function createPlannerSessionId() {
   return `amazon-planner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -363,6 +383,7 @@ export default function AmazonPlanner() {
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const plannerAbortControllerRef = useRef<AbortController | null>(null)
   const stylePresetAbortControllerRef = useRef<AbortController | null>(null)
+  const aiStyleAbortControllerRef = useRef<AbortController | null>(null)
   const [draft, setDraft] = useState<AmazonPromptDraft>(DEFAULT_AMAZON_PROMPT_DRAFT)
   const [resolution, setResolution] = useState<'2k' | '4k'>('2k')
   const [listingImageCount, setListingImageCount] = useState(DEFAULT_LISTING_IMAGE_COUNT)
@@ -378,6 +399,10 @@ export default function AmazonPlanner() {
   })
   const [selectedStylePresetId, setSelectedStylePresetId] = useState<string | null>(DEFAULT_STYLE_PRESET_ID)
   const [selectedStyleReference, setSelectedStyleReference] = useState<SelectedStyleReference | null>(null)
+  const [visualStyleMode, setVisualStyleMode] = useState<AmazonVisualStyleMode>('builtin')
+  const [aiVisualStyle, setAiVisualStyle] = useState<AmazonAiVisualStyle | null>(null)
+  const [aiStyleReference, setAiStyleReference] = useState<SelectedStyleReference | null>(null)
+  const [isGeneratingAiStyleImage, setIsGeneratingAiStyleImage] = useState(false)
   const [styleDensityMode, setStyleDensityMode] = useState<AmazonStyleDensityMode>('rich')
   const [stylePreview, setStylePreview] = useState<StylePreviewState | null>(null)
   const [isLoadingStylePreset, setIsLoadingStylePreset] = useState(false)
@@ -401,6 +426,7 @@ export default function AmazonPlanner() {
   const [isPreparingReferencePayload, setIsPreparingReferencePayload] = useState(false)
   const [referencePayloadNotice, setReferencePayloadNotice] = useState('')
   const [actionProgress, setActionProgress] = useState<PlannerActionProgressMap>({})
+  const [actionPromptModes, setActionPromptModes] = useState<PlannerPromptModeMap>({})
   const [mobileActionDock, setMobileActionDock] = useState<MobileActionDock>(null)
   const resolutionTier = resolution === '4k' ? '4K' : '2K'
   const listingSlotRange = formatAmazonListingSlotRange(listingImageCount)
@@ -416,19 +442,30 @@ export default function AmazonPlanner() {
   const selectedAPlusText = selectedAPlusPlan ? formatAPlusModuleText(selectedAPlusPlan) : ''
   const customStyleReferences = settings.customStyleReferences ?? []
   const selectedStylePreset = getStylePresetById(selectedStylePresetId)
-  const selectedStyleImage = selectedStyleReference
-  const selectedStyleLabel = selectedStyleReference?.label ?? selectedStylePreset?.label ?? ''
-  const selectedVisualStyle = selectedStyleReference
-    ? {
-        label: selectedStyleReference.label,
-        description: selectedStyleReference.description,
-        palette: selectedStyleReference.palette,
-      }
-    : selectedStylePreset
+  const selectedStyleImage = visualStyleMode === 'ai' ? aiStyleReference : selectedStyleReference
+  const selectedStyleLabel = visualStyleMode === 'ai'
+    ? aiVisualStyle?.name ?? aiStyleReference?.label ?? ''
+    : selectedStyleReference?.label ?? selectedStylePreset?.label ?? ''
+  const selectedVisualStyle = visualStyleMode === 'ai'
+    ? aiVisualStyle
+      ? {
+          label: aiVisualStyle.name,
+          description: [aiVisualStyle.artDirection, aiVisualStyle.sceneStrategy].filter(Boolean).join('\n'),
+          palette: aiVisualStyle.palette,
+        }
+      : null
+    : selectedStyleReference
+      ? {
+          label: selectedStyleReference.label,
+          description: selectedStyleReference.description,
+          palette: selectedStyleReference.palette,
+        }
+      : selectedStylePreset
   const activeSeriesStyleGuide = plannerMode === 'aplus' ? seriesStyleGuides.aplus : seriesStyleGuides.listing
   const isMainListingPlan = plannerMode === 'listing' && isAmazonListingMainSlot(selectedPlan?.slot)
   const styleReferenceRequired = !isMainListingPlan
   const hasStyleReference = Boolean(selectedStyleImage?.imageId)
+  const usesVisualStyleForActivePlan = styleReferenceRequired && Boolean(selectedVisualStyle)
   const usesStyleReferenceForActivePlan = styleReferenceRequired && hasStyleReference
   const effectiveReferenceCount = inputImages.length + (usesStyleReferenceForActivePlan && selectedStyleImage?.imageId && !inputImages.some((image) => image.id === selectedStyleImage.imageId) ? 1 : 0)
   const referenceImageUploadLimit = adminAccess.referenceImageUploadLimit
@@ -437,18 +474,22 @@ export default function AmazonPlanner() {
     ? selectedAPlusPlan ? buildAmazonAPlusPlanPrompt({
       ...selectedAPlusPlan,
       seriesStyleGuide: activeSeriesStyleGuide,
+      visualStyleEnabled: usesVisualStyleForActivePlan,
       styleReferenceAttached: usesStyleReferenceForActivePlan,
       styleDensityMode,
-      selectedVisualStyle: usesStyleReferenceForActivePlan ? selectedVisualStyle : null,
+      selectedVisualStyle: usesVisualStyleForActivePlan ? selectedVisualStyle : null,
     }) : ''
     : selectedPlan ? buildAmazonPlanPrompt({
       ...selectedPlan,
       seriesStyleGuide: isMainListingPlan ? null : activeSeriesStyleGuide,
+      visualStyleEnabled: usesVisualStyleForActivePlan,
       styleReferenceAttached: usesStyleReferenceForActivePlan,
       styleDensityMode,
-      selectedVisualStyle: usesStyleReferenceForActivePlan ? selectedVisualStyle : null,
+      selectedVisualStyle: usesVisualStyleForActivePlan ? selectedVisualStyle : null,
     }) : ''
-  const activePlanMarkdown = plannerMode === 'aplus' ? selectedAPlusPlan?.planMarkdown ?? '' : selectedPlan?.planMarkdown ?? ''
+  const activePlanMarkdown = plannerMode === 'aplus'
+    ? selectedAPlusPlan ? buildAmazonAPlusPlanOnlyPrompt(selectedAPlusPlan) : ''
+    : selectedPlan?.planMarkdown ?? ''
   const activePlanPreview = activePlanMarkdown
     ? [
         activePlanMarkdown,
@@ -485,8 +526,11 @@ export default function AmazonPlanner() {
       : '未选择'
   const currentActionKey = getPlannerActionKey(plannerMode, visiblePlanIndex, actionSlot)
   const currentActionProgress = currentActionKey ? actionProgress[currentActionKey] ?? null : null
+  const currentActionPromptMode = currentActionKey ? actionPromptModes[currentActionKey] ?? null : null
   const currentActionFilled = currentActionProgress === 'filled' || currentActionProgress === 'submitted'
   const currentActionSubmitted = currentActionProgress === 'submitted'
+  const fullPromptFilled = currentActionFilled && currentActionPromptMode === 'full'
+  const planOnlyFilled = currentActionFilled && currentActionPromptMode === 'plan-only'
   const actionKindLabel = plannerMode === 'aplus' ? '模块' : isMainListingPlan ? '主图' : '图片'
   const actionGuidance = !hasSelectedPlan
     ? plannerMode === 'aplus' ? '先选择一个 A+ 模块' : '先选择一个图片位'
@@ -586,6 +630,8 @@ export default function AmazonPlanner() {
       plannerAbortControllerRef.current = null
       stylePresetAbortControllerRef.current?.abort()
       stylePresetAbortControllerRef.current = null
+      aiStyleAbortControllerRef.current?.abort()
+      aiStyleAbortControllerRef.current = null
     }
   }, [])
 
@@ -648,14 +694,17 @@ export default function AmazonPlanner() {
       referenceImageIds: overrides.referenceImageIds ?? inputImages.map((image) => image.id),
       draft: overrides.draft ?? toSessionDraft(draft),
       seriesStyleGuides: overrides.seriesStyleGuides ?? seriesStyleGuides,
+      visualStyleMode: overrides.visualStyleMode ?? visualStyleMode,
+      aiVisualStyle: hasOverride('aiVisualStyle') ? overrides.aiVisualStyle ?? null : aiVisualStyle,
+      aiStyleReferenceImageId: hasOverride('aiStyleReferenceImageId') ? overrides.aiStyleReferenceImageId ?? null : aiStyleReference?.imageId ?? null,
       styleCandidates: overrides.styleCandidates ?? [],
       styleImages: overrides.styleImages ?? [],
       selectedStyleIndex: overrides.selectedStyleIndex ?? null,
       selectedStylePresetId: hasOverride('selectedStylePresetId') ? overrides.selectedStylePresetId : selectedStylePresetId,
-      selectedStyleReferenceImageId: hasOverride('selectedStyleReferenceImageId') ? overrides.selectedStyleReferenceImageId : selectedStyleReference?.imageId ?? null,
-      selectedCustomStyleReferenceId: hasOverride('selectedCustomStyleReferenceId') ? overrides.selectedCustomStyleReferenceId : selectedStyleReference?.customStyleReferenceId ?? null,
+      selectedStyleReferenceImageId: hasOverride('selectedStyleReferenceImageId') ? overrides.selectedStyleReferenceImageId : selectedStyleImage?.imageId ?? null,
+      selectedCustomStyleReferenceId: hasOverride('selectedCustomStyleReferenceId') ? overrides.selectedCustomStyleReferenceId : visualStyleMode === 'builtin' ? selectedStyleReference?.customStyleReferenceId ?? null : null,
       selectedCustomStyleReferenceSnapshot: hasOverride('selectedCustomStyleReferenceSnapshot') ? overrides.selectedCustomStyleReferenceSnapshot : (
-        selectedStyleReference?.customStyleReferenceId
+        visualStyleMode === 'builtin' && selectedStyleReference?.customStyleReferenceId
           ? customStyleReferences.find((style) => style.id === selectedStyleReference.customStyleReferenceId) ?? null
           : null
       ),
@@ -692,12 +741,14 @@ export default function AmazonPlanner() {
     }))
   }
 
-  const applyPrompt = (options: { requireStyle?: boolean } = {}) => {
+  const applyPrompt = (options: { requireStyle?: boolean; promptMode?: PlannerPromptMode } = {}) => {
     if (plannerMode === 'aplus' && !selectedAPlusPlan) {
       showToast('请先 AI 策划并选择一个 A+ 模块', 'error')
       return false
     }
-    if (!activePrompt.trim()) {
+    const promptMode = options.promptMode ?? 'full'
+    const promptText = promptMode === 'plan-only' ? activePlanMarkdown.trim() : activePrompt.trim()
+    if (!promptText) {
       showToast(plannerMode === 'aplus' ? '请先 AI 策划并选择一个 A+ 模块' : '请先 AI 策划并选择一个图片位', 'error')
       return false
     }
@@ -711,7 +762,7 @@ export default function AmazonPlanner() {
       return false
     }
 
-    setPrompt(activePrompt)
+    setPrompt(promptText)
     if (usesStyleReferenceForActivePlan && selectedStyleImage?.imageId) {
       setStyleReferenceImage({
         id: selectedStyleImage.imageId,
@@ -722,7 +773,7 @@ export default function AmazonPlanner() {
     }
     setPendingTaskCategory({
       mode: 'prompt-match',
-      prompt: activePrompt,
+      prompt: promptText,
       category: {
         productTitle: draft.productTitle.trim(),
         workflow: plannerMode === 'aplus' ? 'amazon-aplus' : 'amazon-listing',
@@ -739,12 +790,23 @@ export default function AmazonPlanner() {
       n: 1,
     })
     markActionProgress(currentActionKey, 'filled')
-    showToast(plannerMode === 'aplus' ? '已填入 A+ 图片提示词' : '已填入亚马逊图片提示词', 'success')
+    if (currentActionKey) {
+      setActionPromptModes((current) => ({ ...current, [currentActionKey]: promptMode }))
+    }
+    showToast(
+      promptMode === 'plan-only'
+        ? '已仅填入当前策划案'
+        : plannerMode === 'aplus' ? '已填入 A+ 完整提示词' : '已填入亚马逊完整提示词',
+      'success',
+    )
     return true
   }
 
   const applyAndSubmit = () => {
-    if (!applyPrompt({ requireStyle: true })) return
+    if (!applyPrompt({
+      requireStyle: true,
+      promptMode: currentActionFilled ? currentActionPromptMode ?? 'full' : 'full',
+    })) return
     const submittedActionKey = currentActionKey
     queueMicrotask(() => {
       void submitTask().then((submitted) => {
@@ -799,6 +861,86 @@ export default function AmazonPlanner() {
       return payload
     } finally {
       setIsPreparingReferencePayload(false)
+    }
+  }
+
+  const generateAiStyleReference = async (
+    style: AmazonAiVisualStyle | null = aiVisualStyle,
+    baseSession?: AmazonPlannerSession,
+  ) => {
+    if (!style) {
+      showToast('当前策划没有可生成的 AI 视觉方向', 'error')
+      return null
+    }
+
+    aiStyleAbortControllerRef.current?.abort()
+    const controller = new AbortController()
+    aiStyleAbortControllerRef.current = controller
+    setIsGeneratingAiStyleImage(true)
+    setStyleError('')
+    try {
+      const referencePayload = await prepareReferencePayloadForRequest(
+        useStore.getState().inputImages.map((image) => image.dataUrl),
+        controller.signal,
+      )
+      const image = await generatePlannerStyleReferenceImage({
+        prompt: buildAiStyleBoardPrompt(style, plannerMode),
+        negativePrompt: style.referenceNegativePrompt,
+        referenceImageDataUrls: referencePayload.dataUrls,
+        signal: controller.signal,
+      })
+      if (controller.signal.aborted || aiStyleAbortControllerRef.current !== controller) return null
+
+      const reference: SelectedStyleReference = {
+        presetId: null,
+        customStyleReferenceId: null,
+        imageId: image.id,
+        dataUrl: image.dataUrl,
+        label: style.name,
+        description: [style.summary, style.artDirection, style.sceneStrategy].filter(Boolean).join('\n'),
+        palette: style.palette,
+      }
+      setAiStyleReference(reference)
+
+      if (baseSession) {
+        const nextSession: AmazonPlannerSession = {
+          ...baseSession,
+          visualStyleMode: 'ai',
+          aiVisualStyle: style,
+          aiStyleReferenceImageId: image.id,
+          selectedStylePresetId: null,
+          selectedStyleReferenceImageId: image.id,
+          selectedCustomStyleReferenceId: null,
+          selectedCustomStyleReferenceSnapshot: null,
+          updatedAt: Date.now(),
+        }
+        await putAmazonPlannerSession(nextSession)
+        setCurrentPlannerSessionId(nextSession.id)
+        upsertPlannerSessionList(nextSession)
+      } else {
+        await savePlannerSession({
+          visualStyleMode: 'ai',
+          aiVisualStyle: style,
+          aiStyleReferenceImageId: image.id,
+          selectedStylePresetId: null,
+          selectedStyleReferenceImageId: image.id,
+          selectedCustomStyleReferenceId: null,
+          selectedCustomStyleReferenceSnapshot: null,
+        })
+      }
+      showToast('AI 视觉风格参考图已生成', 'success')
+      return reference
+    } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) return null
+      const message = err instanceof Error ? err.message : String(err)
+      setStyleError(`AI 风格参考图生成失败：${message}`)
+      showToast('AI 风格参考图生成失败，可单独重试', 'error')
+      return null
+    } finally {
+      if (aiStyleAbortControllerRef.current === controller) {
+        aiStyleAbortControllerRef.current = null
+        setIsGeneratingAiStyleImage(false)
+      }
     }
   }
 
@@ -1064,12 +1206,15 @@ export default function AmazonPlanner() {
       setSelectedAPlusPlanIndex(null)
     }
     setSeriesStyleGuides(nextSeriesStyleGuides)
-    setSelectedStylePresetId(DEFAULT_STYLE_PRESET_ID)
+    setAiVisualStyle(result.aiVisualStyle)
+    setAiStyleReference(null)
+    setSelectedStylePresetId(visualStyleMode === 'ai' ? null : DEFAULT_STYLE_PRESET_ID)
     setSelectedStyleReference(null)
     setStylePreview(null)
     setStyleError('')
     setPlannerError('')
     setActionProgress({})
+    setActionPromptModes({})
     void savePlannerSession({
       id: createPlannerSessionId(),
       mode: result.mode,
@@ -1077,10 +1222,13 @@ export default function AmazonPlanner() {
       aPlusModuleSpecs: getAPlusModuleSpecsForSession(aPlusModuleSpecsByType),
       draft: toSessionDraft(nextDraft),
       seriesStyleGuides: nextSeriesStyleGuides,
+      visualStyleMode,
+      aiVisualStyle: result.aiVisualStyle,
+      aiStyleReferenceImageId: null,
       styleCandidates: [],
       styleImages: [],
       selectedStyleIndex: null,
-      selectedStylePresetId: DEFAULT_STYLE_PRESET_ID,
+      selectedStylePresetId: visualStyleMode === 'ai' ? null : DEFAULT_STYLE_PRESET_ID,
       selectedStyleReferenceImageId: null,
       selectedCustomStyleReferenceId: null,
       selectedCustomStyleReferenceSnapshot: null,
@@ -1090,23 +1238,29 @@ export default function AmazonPlanner() {
       selectedPlanIndex: nextSelectedPlanIndex,
       selectedAPlusPlanIndex: nextSelectedAPlusPlanIndex,
     })
-      .then((session) => selectStylePreset(DEFAULT_STYLE_PRESET_ID, { silent: true, persist: false })
-        .then((reference) => {
-          if (!reference) return
-          const nextSession = {
-            ...session,
-            selectedStylePresetId: reference.presetId,
-            selectedStyleReferenceImageId: reference.imageId,
-            selectedCustomStyleReferenceId: null,
-            selectedCustomStyleReferenceSnapshot: null,
-            updatedAt: Date.now(),
-          }
-          void putAmazonPlannerSession(nextSession)
-            .then(() => upsertPlannerSessionList(nextSession))
-            .catch((err) => {
-              showToast(`策划历史保存失败：${err instanceof Error ? err.message : String(err)}`, 'error')
-            })
-        }))
+      .then((session) => {
+        if (visualStyleMode === 'ai') {
+          if (result.aiVisualStyle) void generateAiStyleReference(result.aiVisualStyle, session)
+          return
+        }
+        void selectStylePreset(DEFAULT_STYLE_PRESET_ID, { silent: true, persist: false })
+          .then((reference) => {
+            if (!reference) return
+            const nextSession = {
+              ...session,
+              selectedStylePresetId: reference.presetId,
+              selectedStyleReferenceImageId: reference.imageId,
+              selectedCustomStyleReferenceId: null,
+              selectedCustomStyleReferenceSnapshot: null,
+              updatedAt: Date.now(),
+            }
+            void putAmazonPlannerSession(nextSession)
+              .then(() => upsertPlannerSessionList(nextSession))
+              .catch((err) => {
+                showToast(`策划历史保存失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+              })
+          })
+      })
       .catch((err) => {
       showToast(`策划历史保存失败：${err instanceof Error ? err.message : String(err)}`, 'error')
     })
@@ -1134,6 +1288,10 @@ export default function AmazonPlanner() {
       return
     }
 
+    aiStyleAbortControllerRef.current?.abort()
+    aiStyleAbortControllerRef.current = null
+    setIsGeneratingAiStyleImage(false)
+
     const controller = new AbortController()
     plannerAbortControllerRef.current = controller
     setIsPlanning(true)
@@ -1150,6 +1308,7 @@ export default function AmazonPlanner() {
         aPlusType,
         aPlusModuleSpecs: aPlusSpecs,
         aPlusGenerationTier: resolutionTier,
+        visualStyleMode,
         signal: controller.signal,
       })
       if (controller.signal.aborted) return
@@ -1182,6 +1341,44 @@ export default function AmazonPlanner() {
   const changeStyleDensityMode = (mode: AmazonStyleDensityMode) => {
     setStyleDensityMode(mode)
     updateCurrentPlannerSession({ styleDensityMode: mode })
+  }
+
+  const changeVisualStyleMode = (mode: AmazonVisualStyleMode) => {
+    if (mode === visualStyleMode) return
+    setVisualStyleMode(mode)
+    setStylePreview(null)
+    setStyleError('')
+    if (mode === 'ai') {
+      updateCurrentPlannerSession({
+        visualStyleMode: 'ai',
+        aiVisualStyle,
+        aiStyleReferenceImageId: aiStyleReference?.imageId ?? null,
+        selectedStylePresetId: null,
+        selectedStyleReferenceImageId: aiStyleReference?.imageId ?? null,
+        selectedCustomStyleReferenceId: null,
+        selectedCustomStyleReferenceSnapshot: null,
+      })
+      return
+    }
+
+    aiStyleAbortControllerRef.current?.abort()
+    aiStyleAbortControllerRef.current = null
+    setIsGeneratingAiStyleImage(false)
+
+    const applyBuiltinReference = (reference: SelectedStyleReference | null) => {
+      updateCurrentPlannerSession({
+        visualStyleMode: 'builtin',
+        selectedStylePresetId: reference?.presetId ?? selectedStylePresetId ?? DEFAULT_STYLE_PRESET_ID,
+        selectedStyleReferenceImageId: reference?.imageId ?? null,
+        selectedCustomStyleReferenceId: reference?.customStyleReferenceId ?? null,
+      })
+    }
+    if (selectedStyleReference) {
+      applyBuiltinReference(selectedStyleReference)
+    } else {
+      void selectStylePreset(selectedStylePresetId ?? DEFAULT_STYLE_PRESET_ID, { silent: true, persist: false })
+        .then(applyBuiltinReference)
+    }
   }
 
   const selectPlan = (index: number) => {
@@ -1221,6 +1418,7 @@ export default function AmazonPlanner() {
     setStylePreview(null)
     setStyleError('')
     setActionProgress({})
+    setActionPromptModes({})
   }
 
   const changeAPlusType = (nextType: APlusContentType) => {
@@ -1229,11 +1427,14 @@ export default function AmazonPlanner() {
       setAPlusPlans([])
       setSelectedAPlusPlanIndex(null)
       setSeriesStyleGuides((current) => ({ ...current, aplus: '' }))
-      setSelectedStylePresetId(DEFAULT_STYLE_PRESET_ID)
+      setSelectedStylePresetId(visualStyleMode === 'builtin' ? DEFAULT_STYLE_PRESET_ID : null)
       setSelectedStyleReference(null)
+      setAiVisualStyle(null)
+      setAiStyleReference(null)
       setStylePreview(null)
       setStyleError('')
       setActionProgress({})
+      setActionPromptModes({})
     }
   }
 
@@ -1287,6 +1488,9 @@ export default function AmazonPlanner() {
     setSeriesStyleGuides({ listing: '', aplus: '' })
     setSelectedStylePresetId(DEFAULT_STYLE_PRESET_ID)
     setSelectedStyleReference(null)
+    setVisualStyleMode('builtin')
+    setAiVisualStyle(null)
+    setAiStyleReference(null)
     setStyleDensityMode('rich')
     setStylePreview(null)
     setStyleError('')
@@ -1295,6 +1499,7 @@ export default function AmazonPlanner() {
     setPlannerError('')
     setCurrentPlannerSessionId(null)
     setActionProgress({})
+    setActionPromptModes({})
   }
 
   const restorePlannerSession = async (session: AmazonPlannerSession) => {
@@ -1307,14 +1512,34 @@ export default function AmazonPlanner() {
     const nextStylePresetId = getStylePresetById(session.selectedStylePresetId)
       ? session.selectedStylePresetId!
       : DEFAULT_STYLE_PRESET_ID
+    const restoredVisualStyleMode: AmazonVisualStyleMode = session.visualStyleMode ?? (session.aiVisualStyle ? 'ai' : 'builtin')
     let restoredStyleReference: SelectedStyleReference | null = null
+    let restoredAiStyleReference: SelectedStyleReference | null = null
     let restoredCustomStyleReference: CustomStyleReference | null = null
     let restoredStyleError = ''
 
     const sessionCustomStyle = session.selectedCustomStyleReferenceId
       ? customStyleReferences.find((style) => style.id === session.selectedCustomStyleReferenceId) ?? session.selectedCustomStyleReferenceSnapshot ?? null
       : session.selectedCustomStyleReferenceSnapshot ?? null
-    if (sessionCustomStyle) {
+    if (restoredVisualStyleMode === 'ai' && session.aiVisualStyle) {
+      const imageId = session.aiStyleReferenceImageId ?? session.selectedStyleReferenceImageId ?? ''
+      const dataUrl = imageId ? await ensureImageCached(imageId) : ''
+      if (imageId && dataUrl) {
+        restoredAiStyleReference = {
+          presetId: null,
+          customStyleReferenceId: null,
+          imageId,
+          dataUrl,
+          label: session.aiVisualStyle.name,
+          description: [session.aiVisualStyle.summary, session.aiVisualStyle.artDirection, session.aiVisualStyle.sceneStrategy].filter(Boolean).join('\n'),
+          palette: session.aiVisualStyle.palette,
+        }
+      } else if (imageId) {
+        restoredStyleError = '历史中的 AI 风格参考图不存在，可点击重新生成。'
+      }
+    }
+
+    if (restoredVisualStyleMode === 'builtin' && sessionCustomStyle) {
       try {
         let customStyle = sessionCustomStyle
         let dataUrl = customStyle.imageId ? await ensureImageCached(customStyle.imageId) : ''
@@ -1351,7 +1576,7 @@ export default function AmazonPlanner() {
       }
     }
 
-    if (!restoredStyleReference && session.selectedStyleReferenceImageId) {
+    if (restoredVisualStyleMode === 'builtin' && !restoredStyleReference && session.selectedStyleReferenceImageId) {
       const dataUrl = await ensureImageCached(session.selectedStyleReferenceImageId)
       if (dataUrl) {
         const preset = getStylePresetById(nextStylePresetId)
@@ -1367,7 +1592,7 @@ export default function AmazonPlanner() {
       }
     }
 
-    if (!restoredStyleReference && session.selectedStyleIndex != null) {
+    if (restoredVisualStyleMode === 'builtin' && !restoredStyleReference && session.selectedStyleIndex != null) {
       const legacyStyle = session.styleImages.find((image) => image.candidateIndex === session.selectedStyleIndex)
       if (legacyStyle?.imageId) {
         const dataUrl = await ensureImageCached(legacyStyle.imageId)
@@ -1388,7 +1613,7 @@ export default function AmazonPlanner() {
       }
     }
 
-    if (!restoredStyleReference && nextStylePresetId) {
+    if (restoredVisualStyleMode === 'builtin' && !restoredStyleReference && nextStylePresetId) {
       try {
         const result = await ensureStylePresetImageStored(nextStylePresetId)
         restoredStyleReference = {
@@ -1415,7 +1640,10 @@ export default function AmazonPlanner() {
     setInputImages(restoredReferences)
     setDraft(fromSessionDraft(session.draft))
     setSeriesStyleGuides(session.seriesStyleGuides)
-    setSelectedStylePresetId(restoredStyleReference ? restoredStyleReference.presetId : nextStylePresetId)
+    setVisualStyleMode(restoredVisualStyleMode)
+    setAiVisualStyle(session.aiVisualStyle ?? null)
+    setAiStyleReference(restoredAiStyleReference)
+    setSelectedStylePresetId(restoredVisualStyleMode === 'builtin' ? (restoredStyleReference ? restoredStyleReference.presetId : nextStylePresetId) : null)
     setSelectedStyleReference(restoredStyleReference)
     setStyleDensityMode(restoredCustomStyleReference?.editState.density ?? session.styleDensityMode ?? 'rich')
     setStylePreview(null)
@@ -1428,14 +1656,18 @@ export default function AmazonPlanner() {
     setCurrentPlannerSessionId(session.id)
     setShowPlannerHistory(false)
     setActionProgress({})
+    setActionPromptModes({})
     const restoredSession = {
       ...session,
       listingImageCount: getSessionListingImageCount(session),
       aPlusModuleSpecs: getAPlusModuleSpecsForSession(restoredAPlusModuleSpecsByType),
-      selectedStylePresetId: restoredStyleReference ? restoredStyleReference.presetId : nextStylePresetId,
-      selectedStyleReferenceImageId: restoredStyleReference?.imageId ?? null,
-      selectedCustomStyleReferenceId: restoredCustomStyleReference?.id ?? null,
-      selectedCustomStyleReferenceSnapshot: restoredCustomStyleReference,
+      visualStyleMode: restoredVisualStyleMode,
+      aiVisualStyle: session.aiVisualStyle ?? null,
+      aiStyleReferenceImageId: restoredAiStyleReference?.imageId ?? session.aiStyleReferenceImageId ?? null,
+      selectedStylePresetId: restoredVisualStyleMode === 'builtin' ? (restoredStyleReference ? restoredStyleReference.presetId : nextStylePresetId) : null,
+      selectedStyleReferenceImageId: restoredVisualStyleMode === 'ai' ? restoredAiStyleReference?.imageId ?? null : restoredStyleReference?.imageId ?? null,
+      selectedCustomStyleReferenceId: restoredVisualStyleMode === 'builtin' ? restoredCustomStyleReference?.id ?? null : null,
+      selectedCustomStyleReferenceSnapshot: restoredVisualStyleMode === 'builtin' ? restoredCustomStyleReference : null,
       styleDensityMode: restoredCustomStyleReference?.editState.density ?? session.styleDensityMode ?? 'rich',
       updatedAt: Date.now(),
     }
@@ -1720,6 +1952,30 @@ export default function AmazonPlanner() {
                   : 'Title: ...\n\nAbout this item\n- Bullet 1...\n- Bullet 2...\n- Bullet 3...\n- Bullet 4...\n- Bullet 5...'}
               />
             </label>
+            <div className="mt-3 flex flex-col gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between dark:border-white/[0.08] dark:bg-white/[0.03]">
+              <div>
+                <div className="text-xs font-semibold text-gray-700 dark:text-gray-200">策划视觉来源</div>
+                <div className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
+                  {visualStyleMode === 'ai' ? 'AI 会同时设计整套视觉方向，并在策划后生成参考图。' : 'AI 保持审美中性，策划后使用系统预设风格。'}
+                </div>
+              </div>
+              <div className="inline-flex h-9 shrink-0 rounded-lg border border-gray-200 bg-white p-0.5 text-xs font-semibold dark:border-white/[0.08] dark:bg-gray-900">
+                <button
+                  type="button"
+                  onClick={() => changeVisualStyleMode('builtin')}
+                  className={`rounded-md px-3 transition ${visualStyleMode === 'builtin' ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-950' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'}`}
+                >
+                  系统内置
+                </button>
+                <button
+                  type="button"
+                  onClick={() => changeVisualStyleMode('ai')}
+                  className={`rounded-md px-3 transition ${visualStyleMode === 'ai' ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-950' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'}`}
+                >
+                  AI 生成
+                </button>
+              </div>
+            </div>
             <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
               <div className={`rounded-xl border px-3 py-2 transition ${guideState.target === 'planner-api' ? 'border-blue-300 bg-blue-50 text-blue-800 ring-2 ring-blue-500/15 dark:border-blue-400/60 dark:bg-blue-500/10 dark:text-blue-100' : plannerProfile && !plannerProfileValidation ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-200' : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200'}`}>
                 <div className="text-xs font-semibold">AI 策划配置</div>
@@ -2087,7 +2343,7 @@ export default function AmazonPlanner() {
                     ))}
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <button
                       type="button"
                       onClick={copyPrompt}
@@ -2099,18 +2355,31 @@ export default function AmazonPlanner() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => applyPrompt()}
+                      onClick={() => applyPrompt({ promptMode: 'full' })}
                       disabled={actionDisabled}
-                      className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-semibold transition ${actionDisabled ? 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-white/[0.06] dark:text-gray-600' : currentActionFilled ? 'bg-emerald-600 text-white hover:bg-emerald-500' : 'bg-gray-900 text-white hover:bg-gray-700 dark:bg-white dark:text-gray-950 dark:hover:bg-gray-200'}`}
+                      className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-semibold transition ${actionDisabled ? 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-white/[0.06] dark:text-gray-600' : fullPromptFilled ? 'bg-emerald-600 text-white hover:bg-emerald-500' : 'bg-gray-900 text-white hover:bg-gray-700 dark:bg-white dark:text-gray-950 dark:hover:bg-gray-200'}`}
                     >
-                      {currentActionFilled ? (
+                      {fullPromptFilled ? (
                         <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
                         </svg>
                       ) : (
                         <PhotoIcon className="h-3.5 w-3.5" />
                       )}
-                      {currentActionFilled ? '已填入' : '填入'}
+                      带系统提示词
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyPrompt({ promptMode: 'plan-only' })}
+                      disabled={actionDisabled || !activePlanMarkdown.trim()}
+                      className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition ${actionDisabled || !activePlanMarkdown.trim() ? 'cursor-not-allowed border-gray-100 bg-gray-100 text-gray-300 dark:border-white/[0.04] dark:bg-white/[0.04] dark:text-gray-600' : planOnlyFilled ? 'border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-500' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-white/[0.1] dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-white/[0.06]'}`}
+                    >
+                      {planOnlyFilled && (
+                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                      仅策划案
                     </button>
                     <button
                       type="button"
@@ -2137,7 +2406,22 @@ export default function AmazonPlanner() {
                 <div>
                   <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">视觉风格选择</div>
                   <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                    选择内置预设，或编辑后保存到“我的风格”。填入附图和 A+ 时会同步到右侧风格参考图槽。
+                    使用系统预设，或让 AI 根据当前商品和整套策划生成专属视觉方向。
+                  </div>
+                  <div className="mt-2 inline-flex h-9 rounded-lg border border-gray-200 bg-white p-0.5 text-xs font-semibold dark:border-white/[0.08] dark:bg-gray-900">
+                    {([
+                      { value: 'builtin', label: '系统内置风格' },
+                      { value: 'ai', label: 'AI 生成风格' },
+                    ] as const).map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => changeVisualStyleMode(option.value)}
+                        className={`rounded-md px-3 transition ${visualStyleMode === option.value ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-950' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'}`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -2155,9 +2439,9 @@ export default function AmazonPlanner() {
                   </div>
                 </div>
               </div>
-              {isLoadingStylePreset && (
+              {(isLoadingStylePreset || isGeneratingAiStyleImage) && (
                 <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-800 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200">
-                  正在加载风格参考图...
+                  {isGeneratingAiStyleImage ? '正在生成 AI 视觉风格参考图...' : '正在加载风格参考图...'}
                 </div>
               )}
               {styleError && (
@@ -2165,6 +2449,7 @@ export default function AmazonPlanner() {
                   {styleError}
                 </div>
               )}
+              {visualStyleMode === 'builtin' ? (
               <div className={`mt-3 space-y-4 rounded-xl transition ${getGuideFocusClass(guideState.target === 'style-choice')}`}>
                 <div>
                   <div className="mb-2 flex items-center justify-between gap-2">
@@ -2326,6 +2611,90 @@ export default function AmazonPlanner() {
                   )}
                 </div>
               </div>
+              ) : (
+                <div className={`mt-3 rounded-xl border border-gray-200 bg-white p-3 transition dark:border-white/[0.08] dark:bg-gray-900 ${getGuideFocusClass(guideState.target === 'style-choice')}`}>
+                  {aiVisualStyle ? (
+                    <div>
+                      <div>
+                        <div className="max-w-[560px]">
+                          <button
+                            type="button"
+                            disabled={!aiStyleReference?.imageId}
+                            onClick={() => aiStyleReference?.imageId && setLightboxImageId(aiStyleReference.imageId, [aiStyleReference.imageId])}
+                            className="block aspect-[3/2] w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-100 text-gray-400 transition hover:opacity-90 disabled:cursor-default dark:border-white/[0.08] dark:bg-white/[0.04]"
+                          >
+                            {aiStyleReference?.dataUrl ? (
+                              <img src={aiStyleReference.dataUrl} alt={aiVisualStyle.name} className="h-full w-full object-cover" />
+                            ) : (
+                              <span className="flex h-full items-center justify-center px-4 text-center text-xs">
+                                {isGeneratingAiStyleImage ? '正在生成方向板...' : '方向板尚未生成'}
+                              </span>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isGeneratingAiStyleImage}
+                            onClick={() => void generateAiStyleReference()}
+                            className="mt-2 inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-200 dark:hover:bg-white/[0.05]"
+                          >
+                            <RefreshIcon className={`h-3.5 w-3.5 ${isGeneratingAiStyleImage ? 'animate-spin' : ''}`} />
+                            {aiStyleReference ? '重新生成风格图' : '生成风格图'}
+                          </button>
+                        </div>
+                        <div className="mt-4 min-w-0">
+                          <div className="text-[10px] font-bold uppercase text-gray-400">风格概述</div>
+                          <div className="text-base font-semibold text-gray-900 dark:text-gray-100">{aiVisualStyle.name}</div>
+                          <div className="mt-1 text-sm leading-relaxed text-gray-600 dark:text-gray-300">{aiVisualStyle.summary}</div>
+                        </div>
+                        {aiVisualStyle.palette.length > 0 && (
+                          <div className="mt-4 min-w-0">
+                            <div className="text-[10px] font-bold uppercase text-gray-400">推荐配色</div>
+                            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                              {aiVisualStyle.palette.map((color, index) => (
+                                <div
+                                  key={`${color}-${index}`}
+                                  className="flex min-w-0 items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 dark:border-white/[0.08] dark:bg-white/[0.04]"
+                                  title={color}
+                                >
+                                  <span
+                                    className="h-5 w-5 shrink-0 rounded border border-black/10 shadow-sm dark:border-white/15"
+                                    style={{ backgroundColor: getPaletteSwatchColor(color) }}
+                                    aria-label={`${color} 色块`}
+                                  />
+                                  <span className="min-w-0 truncate text-[11px] text-gray-600 dark:text-gray-300">{color}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        <div className="min-w-0 rounded-lg bg-gray-50 p-3 dark:bg-white/[0.04]">
+                          <div className="text-[10px] font-bold uppercase text-gray-400">视觉方向</div>
+                          <div className="mt-1 break-words text-xs leading-relaxed text-gray-700 dark:text-gray-300">{aiVisualStyle.artDirection}</div>
+                        </div>
+                        <div className="min-w-0 rounded-lg bg-gray-50 p-3 dark:bg-white/[0.04]">
+                          <div className="text-[10px] font-bold uppercase text-gray-400">场景策略</div>
+                          <div className="mt-1 break-words text-xs leading-relaxed text-gray-700 dark:text-gray-300">{aiVisualStyle.sceneStrategy}</div>
+                        </div>
+                        <div className="min-w-0 rounded-lg bg-gray-50 p-3 dark:bg-white/[0.04]">
+                          <div className="text-[10px] font-bold uppercase text-gray-400">光线与材质</div>
+                          <div className="mt-1 break-words text-xs leading-relaxed text-gray-700 dark:text-gray-300">{aiVisualStyle.lighting} · {aiVisualStyle.materials}</div>
+                        </div>
+                        <div className="min-w-0 rounded-lg bg-gray-50 p-3 dark:bg-white/[0.04]">
+                          <div className="text-[10px] font-bold uppercase text-gray-400">排版与构图</div>
+                          <div className="mt-1 break-words text-xs leading-relaxed text-gray-700 dark:text-gray-300">{aiVisualStyle.typography} · {aiVisualStyle.composition}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="py-6 text-center">
+                      <div className="text-sm font-semibold text-gray-700 dark:text-gray-200">当前策划没有 AI 视觉方向</div>
+                      <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">选择此 Tab 后重新执行 AI 策划，AI 会同时设计整套视觉风格和场景变化。</div>
+                    </div>
+                  )}
+                </div>
+              )}
               {stylePreview && (
                 <div
                   className="pointer-events-none fixed z-50 hidden w-[420px] max-w-[calc(100vw-24px)] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl sm:block dark:border-white/[0.08] dark:bg-gray-950"

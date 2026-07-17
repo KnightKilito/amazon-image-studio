@@ -3,6 +3,7 @@ import { DEFAULT_CHAT_MODEL, createDefaultOpenAIProfile } from './apiProfiles'
 import { DEFAULT_AMAZON_PROMPT_DRAFT } from './amazonPrompt'
 import {
   buildAmazonAPlusPlanPrompt,
+  buildAmazonAPlusPlanOnlyPrompt,
   buildAmazonPlanPrompt,
   formatAPlusModuleText,
   insertAPlusModuleSpecAfter,
@@ -12,6 +13,7 @@ import {
   getAPlusModuleEnglishName,
   getAPlusModuleGenerationSize,
   getAPlusModuleSpecs,
+  getPaletteSwatchColor,
   isAmazonListingMainSlot,
   removeAPlusModuleSpecAt,
 } from './listingPlanner'
@@ -33,6 +35,52 @@ afterEach(() => {
 })
 
 describe('Amazon prompt builders', () => {
+  it('renders AI palette descriptions as stable CSS colors', () => {
+    expect(getPaletteSwatchColor('cognac tan')).toBe('#A65A3A')
+    expect(getPaletteSwatchColor('sand beige')).toBe('#D6C19D')
+    expect(getPaletteSwatchColor('#A7B29A soft sage green')).toBe('#A7B29A')
+    expect(getPaletteSwatchColor('custom atmospheric tone')).toMatch(/^hsl\(\d+, \d+%, \d+%\)$/)
+    expect(getPaletteSwatchColor('custom atmospheric tone')).toBe(getPaletteSwatchColor('custom atmospheric tone'))
+  })
+
+  it('uses the high-resolution generation target for Premium A+ prompts while preserving the upload target', () => {
+    const plan = {
+      prompt: 'Create a 1464x600 px Premium A+ feature image.',
+      negativePrompt: 'blurry',
+      planMarkdown: '制作一张 1464x600 的高级 A+ 大图。',
+      uploadSize: '1464x600',
+      generationSize: '2928x1200',
+    }
+
+    const fullPrompt = buildAmazonAPlusPlanPrompt(plan)
+    const planOnlyPrompt = buildAmazonAPlusPlanOnlyPrompt(plan)
+
+    expect(fullPrompt).toContain('Create a 2928x1200 px Premium A+ feature image.')
+    expect(fullPrompt).toContain('Generate the image canvas at exactly 2928x1200 px.')
+    expect(fullPrompt).toContain('1464x600 px is only the final Amazon Seller Central upload/display size.')
+    expect(planOnlyPrompt).toContain('生成画布尺寸：2928x1200 px。')
+    expect(planOnlyPrompt).toContain('最终上传/展示尺寸：1464x600 px。')
+  })
+
+  it('keeps AI visual direction text even when its reference image is not ready yet', () => {
+    const prompt = buildAmazonPlanPrompt({
+      prompt: 'Create a product lifestyle image.',
+      negativePrompt: 'logos, prices',
+      seriesStyleGuide: 'Vary the coastal time of day while keeping one campaign language.',
+      visualStyleEnabled: true,
+      styleReferenceAttached: false,
+      selectedVisualStyle: {
+        label: '海岸机能叙事',
+        description: 'Coastal performance campaign with midday and sunset variations.',
+        palette: ['#EAF4F4', '#7FB3C8', '#F2C078'],
+      },
+    })
+
+    expect(prompt).toContain('Selected visual style (highest priority):')
+    expect(prompt).toContain('Coastal performance campaign')
+    expect(prompt).not.toContain('Style reference rule:')
+  })
+
   it('uses LLM prompt content, series style guide, density guidance, negative prompt, and optional style guard', () => {
     const prompt = buildAmazonPlanPrompt({
       prompt: 'Professional Amazon main image of the exact product.',
@@ -126,6 +174,8 @@ describe('Amazon prompt builders', () => {
     const prompt = buildAmazonAPlusPlanPrompt({
       prompt: 'Premium A+ banner with the product in a refined kitchen setting.',
       negativePrompt: 'pricing, reviews, clutter',
+      uploadSize: '1464x600',
+      generationSize: '2928x1200',
       seriesStyleGuide: 'Bright ceramic editorial style.',
       styleReferenceAttached: false,
     })
@@ -141,6 +191,8 @@ describe('Amazon prompt builders', () => {
     const prompt = buildAmazonAPlusPlanPrompt({
       prompt: 'A+ module with feature callouts.',
       negativePrompt: 'pricing, reviews',
+      uploadSize: '1464x600',
+      generationSize: '2928x1200',
       seriesStyleGuide: 'Use warm tan backgrounds.',
       styleReferenceAttached: true,
       selectedVisualStyle: {
@@ -272,6 +324,20 @@ function createApiPayload(title = 'AI planned tumbler', count = 7) {
   }
 }
 
+const AI_VISUAL_STYLE_PAYLOAD = {
+  name: '海岸机能叙事',
+  summary: '用不同时间段的海岸环境表现产品的轻量、耐用与全天候使用感。',
+  artDirection: 'Premium coastal performance campaign with crisp product evidence and refined editorial restraint.',
+  sceneStrategy: 'Use a coherent coastal scene family across midday beach, sunset shoreline, and a clean coastal walkway, unified by camera height and color grading.',
+  palette: ['#EAF4F4', '#7FB3C8', '#F2C078', '#23313A'],
+  lighting: 'Natural directional sunlight with controlled highlights and soft fill.',
+  typography: 'Modern condensed sans-serif with restrained technical callouts.',
+  materials: 'Salt-washed stone, pale sand, matte technical panels, and translucent glass accents.',
+  composition: 'Editorial product-led compositions with generous depth and consistent lower-third information zones.',
+  referencePrompt: 'Create a polished 2x2 coastal campaign direction board with midday, sunset, walkway, and material-detail variations.',
+  referenceNegativePrompt: 'readable text, logos, prices, badges, watermarks, fixed ecommerce layout',
+}
+
 function createAPlusPlans(prefix: 'A+S' | 'A+L' | 'A+P' | 'A+M', brand = '') {
   const slots = prefix === 'A+S'
     ? ['A+S01', 'A+S02', 'A+S03', 'A+S04', 'A+S05', 'A+S06', 'A+S07', 'A+S08']
@@ -351,6 +417,37 @@ function createAPlusPayloadFromSpecs(specs: ReturnType<typeof getAPlusModuleSpec
 }
 
 describe('callAmazonPlannerApi', () => {
+  it('plans a product-specific AI visual direction when AI style mode is selected', async () => {
+    const apiPayload = { ...createApiPayload(), aiVisualStyle: AI_VISUAL_STYLE_PAYLOAD }
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
+      output_text: JSON.stringify(apiPayload),
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: DEFAULT_AMAZON_PROMPT_DRAFT,
+      visualStyleMode: 'ai',
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+    })
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
+    expect(body.instructions).toContain('Design a distinctive campaign-level visual system')
+    expect(body.instructions).toContain('midday beach, sunset beach')
+    expect(body.instructions).not.toContain('must not lock the final palette')
+    expect(body.text.format.schema.required).toContain('aiVisualStyle')
+    expect(body.text.format.schema.properties.aiVisualStyle.required).toContain('referencePrompt')
+    expect(result.aiVisualStyle).toEqual(AI_VISUAL_STYLE_PAYLOAD)
+  })
+
   it('uses Responses API planning with JSON schema and attached reference images', async () => {
     const apiPayload = createApiPayload()
     const controller = new AbortController()
@@ -1051,7 +1148,7 @@ describe('callAmazonPlannerApi', () => {
     expect(responseBody.text.format.schema.properties.aPlusPlans.maxItems).toBe(6)
     expect(responseBody.text.format.schema.properties.aPlusPlans.items.properties.slot.enum).toEqual(['A+L01', 'A+L02', 'A+L03', 'A+L04', 'A+L05', 'A+L06'])
     expect(responseBody.instructions).toContain('Return exactly 6 modules')
-    expect(responseBody.instructions).toContain('A+L06 Single Image 5 970x600px')
+    expect(responseBody.instructions).toContain('A+L06 Single Image 5, generate 2592x1616px, final upload 970x600px')
     expect(responseBody.input[0].content[0].text).toContain('Use these A+ modules exactly: A+L01, A+L02, A+L03, A+L04, A+L05, A+L06.')
     expect(responseResult.aPlusPlans).toHaveLength(6)
     expect(responseResult.aPlusPlans[5]).toMatchObject({
@@ -1114,8 +1211,8 @@ describe('callAmazonPlannerApi', () => {
     expect(body.text.format.schema.properties.aPlusPlans.items.properties.slot.enum).toEqual(['A+M01', 'A+M02', 'A+M03', 'A+M04', 'A+M05'])
     expect(body.text.format.schema.properties.aPlusPlans.items.properties.moduleType.enum).toEqual(['hero-banner', 'feature-image'])
     expect(body.instructions).toContain('Mobile A+ Content 600x450 module set')
-    expect(body.instructions).toContain('A+M01 Mobile Hero 600x450px')
-    expect(body.instructions).toContain('A+M05 Mobile Feature 4 600x450px')
+    expect(body.instructions).toContain('A+M01 Mobile Hero, generate 1200x900px, final upload 600x450px')
+    expect(body.instructions).toContain('A+M05 Mobile Feature 4, generate 1200x900px, final upload 600x450px')
     expect(body.instructions).toContain('five compact 600x450 modules')
     expect(body.instructions).toContain('compact mobile screens')
     expect(body.input[0].content[0].text).toContain('手机A+ module plan')

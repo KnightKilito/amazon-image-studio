@@ -95,7 +95,7 @@ vi.mock('./lib/agentApi', () => ({
 import { clearAmazonPlannerSessions, clearImages, clearTasks, getAllAmazonPlannerSessions, getImage, putAmazonPlannerSession, putImage } from './lib/db'
 import { callImageApi } from './lib/api'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
-import { cleanStaleAgentInputDrafts, clearData, convertOutputToAPlusFormat, editOutputs, exportData, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
+import { cleanStaleAgentInputDrafts, clearData, convertOutputToAPlusFormat, editOutputs, exportData, generatePlannerStyleReferenceImage, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -466,6 +466,46 @@ describe('mask draft lifecycle in store actions', () => {
       imageA.dataUrl,
       styleImage.dataUrl,
     ])
+  })
+
+  it('generates and stores an AI planner style reference with the active image profile', async () => {
+    const imageProfile = createDefaultOpenAIProfile({
+      id: 'style-image-profile',
+      apiKey: 'style-image-key',
+      apiMode: 'images',
+      model: 'gpt-image-2',
+    })
+    useStore.setState({
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        profiles: [imageProfile],
+        activeProfileId: imageProfile.id,
+      }),
+    })
+    vi.mocked(callImageApi).mockResolvedValueOnce({
+      images: ['data:image/png;base64,ai-style-board'],
+      actualParams: {},
+      actualParamsList: [],
+      revisedPrompts: [],
+    })
+
+    const image = await generatePlannerStyleReferenceImage({
+      prompt: 'Create a 2x2 coastal campaign direction board.',
+      negativePrompt: 'logos, readable text',
+      referenceImageDataUrls: [imageA.dataUrl],
+    })
+
+    expect(image.dataUrl).toBe('data:image/png;base64,ai-style-board')
+    expect(vi.mocked(callImageApi)).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining('Negative prompt:\nlogos, readable text'),
+      inputImageDataUrls: [imageA.dataUrl],
+      params: expect.objectContaining({
+        size: '1536x1024',
+        quality: 'high',
+        output_format: 'png',
+        n: 1,
+      }),
+    }))
   })
 
   it('does not append a hidden style reference image for an Amazon MAIN prompt', async () => {
@@ -1235,12 +1275,14 @@ describe('planner history image retention', () => {
   it('keeps images referenced only by Amazon planner history during startup cleanup', async () => {
     const referenceImage = { id: 'planner-reference-only', dataUrl: 'data:image/png;base64,reference', createdAt: 1, source: 'upload' as const }
     const styleImage = { id: 'planner-style-only', dataUrl: 'data:image/png;base64,style', createdAt: 1, source: 'preset' as const }
+    const aiStyleImage = { id: 'planner-ai-style-only', dataUrl: 'data:image/png;base64,ai-style', createdAt: 1, source: 'generated' as const }
     const legacyStyleImage = { id: 'planner-legacy-style-only', dataUrl: 'data:image/png;base64,legacy', createdAt: 1, source: 'generated' as const }
     const orphanImage = { id: 'truly-unreferenced', dataUrl: 'data:image/png;base64,orphan', createdAt: 1, source: 'upload' as const }
-    for (const image of [referenceImage, styleImage, legacyStyleImage, orphanImage]) await putImage(image)
+    for (const image of [referenceImage, styleImage, aiStyleImage, legacyStyleImage, orphanImage]) await putImage(image)
     await putAmazonPlannerSession(amazonPlannerSession({
       referenceImageIds: [referenceImage.id],
       selectedStyleReferenceImageId: styleImage.id,
+      aiStyleReferenceImageId: aiStyleImage.id,
       styleImages: [{ candidateIndex: 0, imageId: legacyStyleImage.id }],
     }))
     vi.stubGlobal('window', {
@@ -1253,6 +1295,7 @@ describe('planner history image retention', () => {
 
       expect(await getImage(referenceImage.id)).toBeDefined()
       expect(await getImage(styleImage.id)).toBeDefined()
+      expect(await getImage(aiStyleImage.id)).toBeDefined()
       expect(await getImage(legacyStyleImage.id)).toBeDefined()
       expect(await getImage(orphanImage.id)).toBeUndefined()
     } finally {

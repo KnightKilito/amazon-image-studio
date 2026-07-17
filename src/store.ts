@@ -4507,6 +4507,7 @@ function collectAmazonPlannerSessionImageIds(session: AmazonPlannerSession): str
   return [
     ...(session.referenceImageIds || []),
     ...(session.selectedStyleReferenceImageId ? [session.selectedStyleReferenceImageId] : []),
+    ...(session.aiStyleReferenceImageId ? [session.aiStyleReferenceImageId] : []),
     ...(session.selectedCustomStyleReferenceSnapshot?.imageId ? [session.selectedCustomStyleReferenceSnapshot.imageId] : []),
     ...(session.styleImages || []).map((image) => image.imageId),
   ].filter((id): id is string => typeof id === 'string' && Boolean(id.trim()))
@@ -4759,6 +4760,51 @@ export async function createInputImageFromFile(file: File): Promise<InputImage |
   if (!file.type.startsWith('image/')) return null
   const dataUrl = await fileToDataUrl(file)
   const id = await storeImage(dataUrl, 'upload')
+  cacheImage(id, dataUrl)
+  return { id, dataUrl }
+}
+
+export async function generatePlannerStyleReferenceImage(options: {
+  prompt: string
+  negativePrompt?: string
+  referenceImageDataUrls?: string[]
+  signal?: AbortSignal
+}): Promise<InputImage> {
+  const state = useStore.getState()
+  const normalizedSettings = normalizeSettings(state.settings)
+  const activeProfile = applyGuestUnifiedApiUrl(
+    getActiveApiProfile(normalizedSettings),
+    'image',
+    state.adminAccess,
+    state.isAdminAuthenticated,
+  )
+  const validationError = validateApiProfile(activeProfile)
+  if (validationError) throw new Error(`生图配置不完整：${validationError}`)
+  if (!canApiProfileGenerateImages(activeProfile)) throw new Error('当前 API 配置不支持 Images API 生图')
+
+  const requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
+  const params = normalizeParamsForSettings({
+    ...DEFAULT_PARAMS,
+    size: '1536x1024',
+    quality: 'high',
+    output_format: 'png',
+    output_compression: null,
+    n: 1,
+  }, requestSettings, { hasInputImages: Boolean(options.referenceImageDataUrls?.length) })
+  const prompt = [
+    options.prompt.trim(),
+    options.negativePrompt?.trim() ? `Negative prompt:\n${options.negativePrompt.trim()}` : '',
+  ].filter(Boolean).join('\n\n')
+  const result = await callImageApi({
+    settings: requestSettings,
+    prompt,
+    params,
+    inputImageDataUrls: options.referenceImageDataUrls ?? [],
+    signal: options.signal,
+  })
+  const dataUrl = result.images[0]
+  if (!dataUrl) throw new Error('生图接口未返回 AI 风格参考图')
+  const id = await storeImage(dataUrl, 'generated')
   cacheImage(id, dataUrl)
   return { id, dataUrl }
 }

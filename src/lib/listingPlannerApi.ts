@@ -1,4 +1,4 @@
-import type { ApiMode, ApiProfile } from '../types'
+import type { AmazonAiVisualStyle, AmazonVisualStyleMode, ApiMode, ApiProfile } from '../types'
 import { DEFAULT_CHAT_MODEL, DEFAULT_RESPONSES_MODEL, isOfficialDeepSeekPlannerProfile } from './apiProfiles'
 import { formatAmazonAPlusReferenceMaterial, formatAmazonListingReferenceMaterial } from './amazonKnowledge'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
@@ -34,6 +34,7 @@ interface PlannerApiPayload {
   }
   sellingPoints?: string[]
   seriesStyleGuide?: string
+  aiVisualStyle?: Partial<AmazonAiVisualStyle>
   imagePlans?: Array<Partial<AmazonImagePlan>>
   aPlusPlans?: Array<Partial<AmazonAPlusPlan>>
 }
@@ -48,10 +49,26 @@ const PRODUCT_REFERENCE_FACTS_ONLY_PLANNER_GUIDE = [
   '- seriesStyleGuide should preserve cross-image product consistency, factual visual continuity, copy hierarchy, and product appearance only; it must not lock the final palette, typography, background, lighting mood, or decorative system because the user-selected preset style controls those during image generation.',
 ].join('\n')
 
+const AI_VISUAL_STYLE_PLANNER_GUIDE = [
+  'AI-generated visual style rule:',
+  '- Use product reference images for accurate product facts and to understand which environments, materials, colors, and moods genuinely suit the product.',
+  '- Design a distinctive campaign-level visual system for this exact product instead of relying on a generic ecommerce preset.',
+  '- The scene strategy may use one coherent scene family with meaningful variations, such as midday beach, sunset beach, and a coastal walkway, or multiple different product-appropriate scenes unified by color grading, camera language, lighting, typography, and material treatment.',
+  '- Keep MAIN Amazon-compliant. The generated visual direction applies to secondary listing images and A+ modules, not to the MAIN white-background image.',
+  '- Each aiVisualStyle.palette item must start with an exact #RRGGBB color value followed by a short English color name, for example "#A65A3A cognac tan".',
+  '- aiVisualStyle.referencePrompt must create one polished 2x2 visual direction board showing coherent scene variations, lighting, palette, materials, composition, and information-design language. It may contain environments but must not contain readable copy, invented logos, claims, prices, badges, or a fixed Amazon module layout.',
+  '- seriesStyleGuide must explain how the AI visual direction should remain coherent while still allowing purposeful scene variation across the set.',
+].join('\n')
+
+function getPlannerVisualStyleGuide(visualStyleMode: AmazonVisualStyleMode) {
+  return visualStyleMode === 'ai' ? AI_VISUAL_STYLE_PLANNER_GUIDE : PRODUCT_REFERENCE_FACTS_ONLY_PLANNER_GUIDE
+}
+
 export interface PlannerApiResult {
   mode: AmazonPlannerMode
   parsed: ListingParseResult
   seriesStyleGuide: string
+  aiVisualStyle: AmazonAiVisualStyle | null
   plans: AmazonImagePlan[]
   aPlusPlans: AmazonAPlusPlan[]
   aPlusType?: APlusContentType
@@ -104,7 +121,26 @@ const NEGATIVE_PROMPT_SCHEMA = {
   description: 'English negative prompt for the image model. Never include Chinese characters.',
 } as const
 
-function createListingPlannerSchema(listingImageCount: number) {
+const AI_VISUAL_STYLE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    name: { type: 'string', description: 'Short Simplified Chinese name for this campaign visual direction.' },
+    summary: { type: 'string', description: 'Concise Simplified Chinese explanation of why this direction fits the product.' },
+    artDirection: { type: 'string', description: 'Detailed English art direction shared by the whole image set.' },
+    sceneStrategy: { type: 'string', description: 'Detailed English scene-family and variation strategy across the image set.' },
+    palette: { type: 'array', minItems: 3, maxItems: 8, items: { type: 'string' } },
+    lighting: { type: 'string' },
+    typography: { type: 'string' },
+    materials: { type: 'string' },
+    composition: { type: 'string' },
+    referencePrompt: { type: 'string', description: 'Professional English prompt for one 2x2 campaign visual direction board.' },
+    referenceNegativePrompt: { type: 'string', description: 'English negative prompt for the direction board.' },
+  },
+  required: ['name', 'summary', 'artDirection', 'sceneStrategy', 'palette', 'lighting', 'typography', 'materials', 'composition', 'referencePrompt', 'referenceNegativePrompt'],
+} as const
+
+function createListingPlannerSchema(listingImageCount: number, visualStyleMode: AmazonVisualStyleMode) {
   const slots = getAmazonListingImageSlots(listingImageCount)
   return {
     type: 'object',
@@ -116,6 +152,7 @@ function createListingPlannerSchema(listingImageCount: number) {
         type: 'string',
         description: 'LLM-authored English visual style guide to keep the whole image set coherent.',
       },
+      ...(visualStyleMode === 'ai' ? { aiVisualStyle: AI_VISUAL_STYLE_SCHEMA } : {}),
       imagePlans: {
         type: 'array',
         minItems: slots.length,
@@ -134,11 +171,11 @@ function createListingPlannerSchema(listingImageCount: number) {
         },
       },
     },
-    required: ['product', 'sellingPoints', 'seriesStyleGuide', 'imagePlans'],
+    required: ['product', 'sellingPoints', 'seriesStyleGuide', ...(visualStyleMode === 'ai' ? ['aiVisualStyle'] : []), 'imagePlans'],
   } as const
 }
 
-function createAPlusPlannerSchema(specs: AmazonAPlusModuleSpec[]) {
+function createAPlusPlannerSchema(specs: AmazonAPlusModuleSpec[], visualStyleMode: AmazonVisualStyleMode) {
   return {
     type: 'object',
     additionalProperties: false,
@@ -149,6 +186,7 @@ function createAPlusPlannerSchema(specs: AmazonAPlusModuleSpec[]) {
         type: 'string',
         description: 'LLM-authored English visual style guide to keep the whole A+ module set coherent.',
       },
+      ...(visualStyleMode === 'ai' ? { aiVisualStyle: AI_VISUAL_STYLE_SCHEMA } : {}),
       aPlusPlans: {
         type: 'array',
         minItems: specs.length,
@@ -170,7 +208,7 @@ function createAPlusPlannerSchema(specs: AmazonAPlusModuleSpec[]) {
         },
       },
     },
-    required: ['product', 'sellingPoints', 'seriesStyleGuide', 'aPlusPlans'],
+    required: ['product', 'sellingPoints', 'seriesStyleGuide', ...(visualStyleMode === 'ai' ? ['aiVisualStyle'] : []), 'aPlusPlans'],
   } as const
 }
 
@@ -447,9 +485,37 @@ function normalizeSeriesStyleGuide(payload: PlannerApiPayload): string {
   return typeof payload.seriesStyleGuide === 'string' ? payload.seriesStyleGuide.trim() : ''
 }
 
-function normalizeListingPlannerApiPayload(payload: PlannerApiPayload, listingImageCount: number): PlannerApiResult {
+function normalizeAiVisualStyle(payload: PlannerApiPayload, visualStyleMode: AmazonVisualStyleMode): AmazonAiVisualStyle | null {
+  if (visualStyleMode !== 'ai') return null
+  const style = payload.aiVisualStyle
+  if (!style || typeof style !== 'object') throw new Error('AI 策划结果缺少视觉风格方案')
+  const read = (value: unknown) => typeof value === 'string' ? value.trim() : ''
+  const palette = Array.isArray(style.palette)
+    ? style.palette.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean).slice(0, 8)
+    : []
+  const normalized: AmazonAiVisualStyle = {
+    name: read(style.name),
+    summary: read(style.summary),
+    artDirection: read(style.artDirection),
+    sceneStrategy: read(style.sceneStrategy),
+    palette,
+    lighting: read(style.lighting),
+    typography: read(style.typography),
+    materials: read(style.materials),
+    composition: read(style.composition),
+    referencePrompt: read(style.referencePrompt),
+    referenceNegativePrompt: read(style.referenceNegativePrompt),
+  }
+  if (!normalized.name || !normalized.artDirection || !normalized.sceneStrategy || !normalized.referencePrompt) {
+    throw new Error('AI 策划返回的视觉风格方案不完整')
+  }
+  return normalized
+}
+
+function normalizeListingPlannerApiPayload(payload: PlannerApiPayload, listingImageCount: number, visualStyleMode: AmazonVisualStyleMode): PlannerApiResult {
   const parsed = normalizeParsedListing(payload)
   const seriesStyleGuide = normalizeSeriesStyleGuide(payload)
+  const aiVisualStyle = normalizeAiVisualStyle(payload, visualStyleMode)
   const slots = getAmazonListingImageSlots(listingImageCount)
   const count = slots.length
   const plans = Array.isArray(payload.imagePlans)
@@ -462,6 +528,7 @@ function normalizeListingPlannerApiPayload(payload: PlannerApiPayload, listingIm
     mode: 'listing',
     parsed,
     seriesStyleGuide,
+    aiVisualStyle,
     plans,
     aPlusPlans: [],
   }
@@ -495,9 +562,11 @@ function normalizeAPlusPlannerApiPayload(
   aPlusType: APlusContentType,
   tier: SizeTier,
   specs: AmazonAPlusModuleSpec[],
+  visualStyleMode: AmazonVisualStyleMode,
 ): PlannerApiResult {
   const parsed = normalizeParsedListing(payload)
   const seriesStyleGuide = normalizeSeriesStyleGuide(payload)
+  const aiVisualStyle = normalizeAiVisualStyle(payload, visualStyleMode)
   const rawPlans = Array.isArray(payload.aPlusPlans) ? payload.aPlusPlans : []
   if (rawPlans.length !== specs.length) throw new Error(`AI A+ 策划结果不是 ${specs.length} 个模块`)
 
@@ -515,13 +584,14 @@ function normalizeAPlusPlannerApiPayload(
     mode: 'aplus',
     parsed,
     seriesStyleGuide,
+    aiVisualStyle,
     plans: [],
     aPlusPlans,
     aPlusType,
   }
 }
 
-function buildListingPlannerInstructions(baseDraft: AmazonPromptDraft, listingImageCount: number) {
+function buildListingPlannerInstructions(baseDraft: AmazonPromptDraft, listingImageCount: number, visualStyleMode: AmazonVisualStyleMode) {
   const slots = getAmazonListingImageSlots(listingImageCount)
   return [
     'You are an Amazon image-planning agent. The user provides listing copy and optional product reference images.',
@@ -529,13 +599,17 @@ function buildListingPlannerInstructions(baseDraft: AmazonPromptDraft, listingIm
     'The application only fixes the slot count and order. You must decide the strategy, composition, copy approach, visual treatment, prompt content, and negative prompt content.',
     'Use the Amazon reference material below to improve compliance judgment. It is not a fixed slot-by-slot framework, and it must not replace the product facts from the listing and reference images.',
     formatAmazonListingReferenceMaterial(),
-    PRODUCT_REFERENCE_FACTS_ONLY_PLANNER_GUIDE,
+    getPlannerVisualStyleGuide(visualStyleMode),
     'For each slot, write planMarkdown in Simplified Chinese as a detailed agent-style plan similar to a ChatGPT web response, then write a professional English image prompt and English negative prompt.',
     'Each image prompt should fully plan the finished Amazon image: composition, product evidence, on-image US-English copy when useful, callouts or information areas when useful, visual hierarchy, and rendering style.',
     'For secondary information images, prefer complete information design with clear hierarchy and useful product evidence; lifestyle or beauty slots should still have purposeful composition and visible product support.',
-    'Return one seriesStyleGuide string in English for cross-image product consistency and factual visual continuity. Keep it style-neutral and do not use it to choose the final color palette, typography, background mood, lighting mood, or decorative style.',
-    'Do not create, request, or describe separate style reference board images. The application uses built-in preset style reference boards.',
-    'Field language rules: label and planMarkdown must be Simplified Chinese; seriesStyleGuide, prompt, and negativePrompt must be English.',
+    visualStyleMode === 'ai'
+      ? 'Return aiVisualStyle as the complete product-specific campaign art direction and one seriesStyleGuide string in English explaining how each image applies it with coherent variation.'
+      : 'Return one seriesStyleGuide string in English for cross-image product consistency and factual visual continuity. Keep it style-neutral and do not use it to choose the final color palette, typography, background mood, lighting mood, or decorative style.',
+    visualStyleMode === 'ai'
+      ? 'Field language rules: aiVisualStyle.name, aiVisualStyle.summary, label, and planMarkdown must be Simplified Chinese; all other aiVisualStyle fields, seriesStyleGuide, prompt, and negativePrompt must be English.'
+      : 'Do not create, request, or describe separate style reference board images. The application uses built-in preset style reference boards.',
+    visualStyleMode === 'builtin' ? 'Field language rules: label and planMarkdown must be Simplified Chinese; seriesStyleGuide, prompt, and negativePrompt must be English.' : '',
     'Do not generate images. Only return JSON matching the schema.',
     baseDraft.category ? `Known category: ${baseDraft.category}` : '',
   ].filter(Boolean).join('\n')
@@ -554,7 +628,7 @@ function getAPlusPlannerTypeName(aPlusType: APlusContentType) {
   }
 }
 
-function buildAPlusPlannerInstructions(baseDraft: AmazonPromptDraft, aPlusType: APlusContentType, specs: AmazonAPlusModuleSpec[]) {
+function buildAPlusPlannerInstructions(baseDraft: AmazonPromptDraft, aPlusType: APlusContentType, specs: AmazonAPlusModuleSpec[], visualStyleMode: AmazonVisualStyleMode, generationTier: SizeTier) {
   const typeLabel = getAPlusPlannerTypeName(aPlusType)
   const mobileGuidance = aPlusType === 'mobile'
     ? 'For Mobile A+ modules, design every 600x450 image for compact mobile screens: one clear message per module, large product evidence, short mobile-readable US-English copy, and no dense multi-column layouts.'
@@ -562,11 +636,12 @@ function buildAPlusPlannerInstructions(baseDraft: AmazonPromptDraft, aPlusType: 
   return [
     'You are an Amazon A+ Content image-planning agent. The user provides listing copy, optional brand notes, and optional product reference images.',
     `Create a ${typeLabel} image module plan. Do not generate images. Only return JSON matching the schema.`,
-    `Return exactly ${specs.length} modules in this order: ${specs.map((spec) => `${spec.slot} ${spec.label} ${getAPlusModuleUploadSize(spec)}px`).join('; ')}.`,
+    `Return exactly ${specs.length} modules in this order: ${specs.map((spec) => `${spec.slot} ${spec.label}, generate ${getAPlusModuleGenerationSize(spec, generationTier)}px, final upload ${getAPlusModuleUploadSize(spec)}px`).join('; ')}.`,
     'The application only fixes the module order, module type, upload size, and generation size. You must decide the strategy, composition, copy approach, visual treatment, prompt content, and negative prompt content.',
+    'Every English image prompt must request the listed generation size as its canvas size. Treat the smaller upload size only as the final Seller Central upload/display target, never as the image-generation canvas.',
     'Use the Amazon A+ reference material below to improve compliance judgment. It is not a fixed module creative framework, and it must not replace the product facts from the listing and reference images.',
     formatAmazonAPlusReferenceMaterial(),
-    PRODUCT_REFERENCE_FACTS_ONLY_PLANNER_GUIDE,
+    getPlannerVisualStyleGuide(visualStyleMode),
     'For each module, write planMarkdown in Simplified Chinese as a detailed agent-style plan similar to a ChatGPT web response, then write a professional English image prompt and English negative prompt.',
     'Each module prompt should fully plan the finished Amazon image: composition, product evidence, on-image US-English copy when useful, callouts or information areas when useful, visual hierarchy, and rendering style.',
     'For A+ information modules, prefer complete information design with clear hierarchy and useful product evidence; lifestyle or brand modules should still have purposeful composition and visible product support.',
@@ -575,10 +650,14 @@ function buildAPlusPlannerInstructions(baseDraft: AmazonPromptDraft, aPlusType: 
       ? `Known brand/model: ${baseDraft.brand}. For header-banner and hero-banner modules, naturally include this real brand/model as a small brand line, headline prefix, or subline when it improves the composition. For brand-story modules, use this brand/model to frame the brand tone or promise only when supported by the provided listing or brand notes.`
       : 'If no real brand/model is provided, do not invent a brand name, logo, trademark, brand history, brand promise, authorization claim, website, contact detail, or external link.',
     'Use brand names as text only unless the user provides a real logo reference image. Do not invent logo artwork, standalone trademark/copyright symbols, brand history, authorization claims, websites, contact details, or external links.',
-    'Return one seriesStyleGuide string in English for cross-module product consistency and factual visual continuity. Keep it style-neutral and do not use it to choose the final color palette, typography, background mood, lighting mood, or decorative style.',
-    'Do not create, request, or describe separate style reference board images. The application uses built-in preset style reference boards.',
+    visualStyleMode === 'ai'
+      ? 'Return aiVisualStyle as the complete product-specific campaign art direction and one seriesStyleGuide string in English explaining how each A+ module applies it with coherent variation.'
+      : 'Return one seriesStyleGuide string in English for cross-module product consistency and factual visual continuity. Keep it style-neutral and do not use it to choose the final color palette, typography, background mood, lighting mood, or decorative style.',
+    visualStyleMode === 'builtin' ? 'Do not create, request, or describe separate style reference board images. The application uses built-in preset style reference boards.' : '',
     'For modules that need external A+ text outside the image, write textTitle and textBody in natural US English. Otherwise return empty strings.',
-    'Field language rules: label and planMarkdown must be Simplified Chinese; textTitle/textBody must be English or empty; seriesStyleGuide, prompt, and negativePrompt must be English.',
+    visualStyleMode === 'ai'
+      ? 'Field language rules: aiVisualStyle.name, aiVisualStyle.summary, label, and planMarkdown must be Simplified Chinese; textTitle/textBody must be English or empty; all other aiVisualStyle fields, seriesStyleGuide, prompt, and negativePrompt must be English.'
+      : 'Field language rules: label and planMarkdown must be Simplified Chinese; textTitle/textBody must be English or empty; seriesStyleGuide, prompt, and negativePrompt must be English.',
     baseDraft.category ? `Known category: ${baseDraft.category}` : '',
   ].filter(Boolean).join('\n')
 }
@@ -587,20 +666,22 @@ function buildPlannerInstructions(
   baseDraft: AmazonPromptDraft,
   mode: AmazonPlannerMode,
   aPlusType: APlusContentType,
-  options: { textOnlyReferenceGuard?: boolean | string; listingImageCount?: number; aPlusModuleSpecs?: AmazonAPlusModuleSpec[]; compact?: boolean } = {},
+  options: { textOnlyReferenceGuard?: boolean | string; listingImageCount?: number; aPlusModuleSpecs?: AmazonAPlusModuleSpec[]; compact?: boolean; visualStyleMode?: AmazonVisualStyleMode; aPlusGenerationTier?: SizeTier } = {},
 ) {
   const listingImageCount = normalizeListingImageCount(options.listingImageCount)
   const aPlusModuleSpecs = normalizeAPlusModuleSpecs(aPlusType, options.aPlusModuleSpecs)
+  const visualStyleMode = options.visualStyleMode ?? 'builtin'
+  const aPlusGenerationTier = options.aPlusGenerationTier ?? '2K'
   const textOnlyReferenceGuard = typeof options.textOnlyReferenceGuard === 'string'
     ? options.textOnlyReferenceGuard
     : options.textOnlyReferenceGuard
       ? DEEPSEEK_TEXT_ONLY_PLANNER_GUARD
       : ''
   const baseInstructions = options.compact
-    ? buildCompactPlannerInstructions(baseDraft, mode, aPlusType, { listingImageCount, aPlusModuleSpecs })
+    ? buildCompactPlannerInstructions(baseDraft, mode, aPlusType, { listingImageCount, aPlusModuleSpecs, visualStyleMode, aPlusGenerationTier })
     : mode === 'aplus'
-      ? buildAPlusPlannerInstructions(baseDraft, aPlusType, aPlusModuleSpecs)
-      : buildListingPlannerInstructions(baseDraft, listingImageCount)
+      ? buildAPlusPlannerInstructions(baseDraft, aPlusType, aPlusModuleSpecs, visualStyleMode, aPlusGenerationTier)
+      : buildListingPlannerInstructions(baseDraft, listingImageCount, visualStyleMode)
   return [
     baseInstructions,
     textOnlyReferenceGuard,
@@ -611,17 +692,20 @@ function buildCompactPlannerInstructions(
   baseDraft: AmazonPromptDraft,
   mode: AmazonPlannerMode,
   aPlusType: APlusContentType,
-  options: { listingImageCount: number; aPlusModuleSpecs: AmazonAPlusModuleSpec[] },
+  options: { listingImageCount: number; aPlusModuleSpecs: AmazonAPlusModuleSpec[]; visualStyleMode: AmazonVisualStyleMode; aPlusGenerationTier: SizeTier },
 ) {
   if (mode === 'aplus') {
     const specs = normalizeAPlusModuleSpecs(aPlusType, options.aPlusModuleSpecs)
     return [
       'You are an Amazon A+ Content image-planning agent. Return only one valid JSON object.',
-      `Create exactly ${specs.length} A+ image module plans in this order: ${specs.map((spec) => `${spec.slot} ${spec.label} ${getAPlusModuleUploadSize(spec)}px`).join('; ')}.`,
+      `Create exactly ${specs.length} A+ image module plans in this order: ${specs.map((spec) => `${spec.slot} ${spec.label}, generate ${getAPlusModuleGenerationSize(spec, options.aPlusGenerationTier)}px, final upload ${getAPlusModuleUploadSize(spec)}px`).join('; ')}.`,
+      'Each English prompt must use the generation size as its canvas size. The upload size is only the final Seller Central target.',
       'Use only facts from the listing and user-provided product facts. Do not invent brand claims, certifications, logos, package contents, sizes, materials, colors, accessories, reviews, pricing, or guarantees.',
       'Each planMarkdown must be concise Simplified Chinese. Each prompt and negativePrompt must be professional English for image generation.',
       'For A+ modules, make the composition Amazon-ready, readable on mobile, product-focused, and compliant: no pricing, reviews, QR codes, external links, medical claims, competitor names, or unsupported superlatives.',
-      'Return seriesStyleGuide as a short English guide for product consistency only.',
+      options.visualStyleMode === 'ai'
+        ? 'Return aiVisualStyle with the full product-specific art direction and direction-board prompt, plus seriesStyleGuide for coherent module variation.'
+        : 'Return seriesStyleGuide as a short English guide for product consistency only.',
       baseDraft.brand ? `Known brand/model: ${baseDraft.brand}` : '',
       baseDraft.category ? `Known category: ${baseDraft.category}` : '',
     ].filter(Boolean).join('\n')
@@ -635,7 +719,9 @@ function buildCompactPlannerInstructions(
     'MAIN must be Amazon-compliant: exact product only, pure white background, no text, no props, no badges, no watermark.',
     'Secondary images may use concise US-English on-image copy and callouts, but must stay factual, readable, product-focused, and compliant.',
     'Each planMarkdown must be concise Simplified Chinese. Each prompt and negativePrompt must be professional English for image generation.',
-    'Return seriesStyleGuide as a short English guide for product consistency only.',
+    options.visualStyleMode === 'ai'
+      ? 'Return aiVisualStyle with the full product-specific art direction and direction-board prompt, plus seriesStyleGuide for coherent image variation.'
+      : 'Return seriesStyleGuide as a short English guide for product consistency only.',
     baseDraft.category ? `Known category: ${baseDraft.category}` : '',
   ].filter(Boolean).join('\n')
 }
@@ -729,10 +815,12 @@ function buildResponsesPlannerInput(text: string, referenceImageDataUrls: string
 function buildChatPlannerSchemaGuide(
   mode: AmazonPlannerMode,
   aPlusType: APlusContentType,
-  options: { listingImageCount?: number; aPlusModuleSpecs?: AmazonAPlusModuleSpec[] } = {},
+  options: { listingImageCount?: number; aPlusModuleSpecs?: AmazonAPlusModuleSpec[]; visualStyleMode?: AmazonVisualStyleMode } = {},
 ) {
   const productFields = 'product { title, category, color, material, audience, packageIncludes }'
-  const styleFields = 'seriesStyleGuide string'
+  const styleFields = options.visualStyleMode === 'ai'
+    ? 'seriesStyleGuide string, aiVisualStyle { name, summary, artDirection, sceneStrategy, palette string[], lighting, typography, materials, composition, referencePrompt, referenceNegativePrompt }'
+    : 'seriesStyleGuide string'
   if (mode === 'aplus') {
     const specs = normalizeAPlusModuleSpecs(aPlusType, options.aPlusModuleSpecs)
     return [
@@ -754,7 +842,7 @@ function buildChatPlannerSystemPrompt(
   baseDraft: AmazonPromptDraft,
   mode: AmazonPlannerMode,
   aPlusType: APlusContentType,
-  options: { textOnlyReferenceGuard?: boolean | string; listingImageCount?: number; aPlusModuleSpecs?: AmazonAPlusModuleSpec[]; compact?: boolean } = {},
+  options: { textOnlyReferenceGuard?: boolean | string; listingImageCount?: number; aPlusModuleSpecs?: AmazonAPlusModuleSpec[]; compact?: boolean; visualStyleMode?: AmazonVisualStyleMode; aPlusGenerationTier?: SizeTier } = {},
 ) {
   return [
     buildPlannerInstructions(baseDraft, mode, aPlusType, options),
@@ -762,6 +850,7 @@ function buildChatPlannerSystemPrompt(
     buildChatPlannerSchemaGuide(mode, aPlusType, {
       listingImageCount: normalizeListingImageCount(options.listingImageCount),
       aPlusModuleSpecs: options.aPlusModuleSpecs,
+      visualStyleMode: options.visualStyleMode,
     }),
   ].join('\n\n')
 }
@@ -806,6 +895,7 @@ export async function callAmazonPlannerApi(options: {
   aPlusType?: APlusContentType
   aPlusModuleSpecs?: Array<Partial<AmazonAPlusModuleSpec>>
   aPlusGenerationTier?: SizeTier
+  visualStyleMode?: AmazonVisualStyleMode
   signal?: AbortSignal
 }): Promise<PlannerApiResult> {
   const model = options.model?.trim() || options.profile.model.trim() || (options.profile.apiMode === 'chat' ? DEFAULT_CHAT_MODEL : DEFAULT_RESPONSES_MODEL)
@@ -814,7 +904,10 @@ export async function callAmazonPlannerApi(options: {
   const listingImageCount = normalizeListingImageCount(options.listingImageCount)
   const aPlusModuleSpecs = normalizeAPlusModuleSpecs(aPlusType, options.aPlusModuleSpecs)
   const aPlusGenerationTier = options.aPlusGenerationTier ?? '2K'
-  const schema = mode === 'aplus' ? createAPlusPlannerSchema(aPlusModuleSpecs) : createListingPlannerSchema(listingImageCount)
+  const visualStyleMode = options.visualStyleMode ?? 'builtin'
+  const schema = mode === 'aplus'
+    ? createAPlusPlannerSchema(aPlusModuleSpecs, visualStyleMode)
+    : createListingPlannerSchema(listingImageCount, visualStyleMode)
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(options.profile.apiProxy, proxyConfig, options.profile.baseUrl)
   const isDeepSeekPlannerProfile = isOfficialDeepSeekPlannerProfile(options.profile)
@@ -863,6 +956,8 @@ export async function callAmazonPlannerApi(options: {
                   listingImageCount,
                   aPlusModuleSpecs,
                   compact,
+                  visualStyleMode,
+                  aPlusGenerationTier,
                 }),
               },
               {
@@ -880,6 +975,8 @@ export async function callAmazonPlannerApi(options: {
               listingImageCount,
               aPlusModuleSpecs,
               compact,
+              visualStyleMode,
+              aPlusGenerationTier,
             }),
             input: buildResponsesPlannerInput(inputText, referenceImageDataUrls),
             text: {
@@ -903,8 +1000,8 @@ export async function callAmazonPlannerApi(options: {
     const text = await readPlannerResponseText(response)
     const payload = parsePlannerPayload(text)
     return mode === 'aplus'
-      ? normalizeAPlusPlannerApiPayload(payload, aPlusType, aPlusGenerationTier, aPlusModuleSpecs)
-      : normalizeListingPlannerApiPayload(payload, listingImageCount)
+      ? normalizeAPlusPlannerApiPayload(payload, aPlusType, aPlusGenerationTier, aPlusModuleSpecs, visualStyleMode)
+      : normalizeListingPlannerApiPayload(payload, listingImageCount, visualStyleMode)
   }
 
   const canRetryWithoutReferences = !isDeepSeekPlannerProfile && Boolean(options.referenceImageDataUrls?.length)

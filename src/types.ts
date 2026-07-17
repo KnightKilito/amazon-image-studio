@@ -245,6 +245,22 @@ export interface AmazonVisualSystem {
   overlayStyle: string
 }
 
+export type AmazonVisualStyleMode = 'builtin' | 'ai'
+
+export interface AmazonAiVisualStyle {
+  name: string
+  summary: string
+  artDirection: string
+  sceneStrategy: string
+  palette: string[]
+  lighting: string
+  typography: string
+  materials: string
+  composition: string
+  referencePrompt: string
+  referenceNegativePrompt: string
+}
+
 export interface AmazonPlannerSessionDraft {
   productTitle: string
   category: string
@@ -340,6 +356,9 @@ export interface AmazonPlannerSession {
     listing: string
     aplus: string
   }
+  visualStyleMode?: AmazonVisualStyleMode
+  aiVisualStyle?: AmazonAiVisualStyle | null
+  aiStyleReferenceImageId?: string | null
   styleCandidates: AmazonPlannerSessionStyleCandidate[]
   styleImages: AmazonPlannerSessionStyleImage[]
   selectedStyleIndex: number | null

@@ -92,10 +92,10 @@ vi.mock('./lib/agentApi', () => ({
     }
   }),
 }))
-import { clearAmazonPlannerSessions, clearImages, getAllAmazonPlannerSessions, putAmazonPlannerSession, putImage } from './lib/db'
+import { clearAmazonPlannerSessions, clearImages, clearTasks, getAllAmazonPlannerSessions, getImage, putAmazonPlannerSession, putImage } from './lib/db'
 import { callImageApi } from './lib/api'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
-import { cleanStaleAgentInputDrafts, clearData, convertOutputToAPlusFormat, editOutputs, exportData, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
+import { cleanStaleAgentInputDrafts, clearData, convertOutputToAPlusFormat, editOutputs, exportData, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -433,7 +433,7 @@ describe('mask draft lifecycle in store actions', () => {
     })
   })
 
-  it('appends an explicit style reference image when the submitted Amazon non-main prompt matches', async () => {
+  it('submits and records a manually uploaded style reference without planner metadata', async () => {
     const styleImage = { id: 'style-reference-image', dataUrl: 'data:image/png;base64,style' }
     await putImage(imageA)
     await putImage(styleImage)
@@ -448,7 +448,6 @@ describe('mask draft lifecycle in store actions', () => {
           productTitle: 'Large Folding Umbrella',
           workflow: 'amazon-listing',
           amazonSlot: 'PT01',
-          styleReferenceImageId: styleImage.id,
         },
       },
     })
@@ -462,6 +461,11 @@ describe('mask draft lifecycle in store actions', () => {
       amazonSlot: 'PT01',
       styleReferenceImageId: styleImage.id,
     })
+    await waitForCondition(() => vi.mocked(callImageApi).mock.calls.length >= 1)
+    expect(vi.mocked(callImageApi).mock.calls[0]?.[0].inputImageDataUrls).toEqual([
+      imageA.dataUrl,
+      styleImage.dataUrl,
+    ])
   })
 
   it('does not append a hidden style reference image for an Amazon MAIN prompt', async () => {
@@ -1208,6 +1212,52 @@ describe('data export and clearing', () => {
     await clearData({ clearConfig: false, clearTasks: true })
 
     expect(await getAllAmazonPlannerSessions()).toEqual([])
+  })
+})
+
+describe('planner history image retention', () => {
+  beforeEach(async () => {
+    await clearTasks()
+    await clearAmazonPlannerSessions()
+    await clearImages()
+    useStore.setState({
+      tasks: [],
+      inputImages: [],
+      styleReferenceImage: null,
+      galleryInputDraft: null,
+      agentInputDrafts: {},
+      agentConversations: [],
+      activeAgentConversationId: null,
+      settings: normalizeSettings({ ...DEFAULT_SETTINGS, customStyleReferences: [] }),
+    })
+  })
+
+  it('keeps images referenced only by Amazon planner history during startup cleanup', async () => {
+    const referenceImage = { id: 'planner-reference-only', dataUrl: 'data:image/png;base64,reference', createdAt: 1, source: 'upload' as const }
+    const styleImage = { id: 'planner-style-only', dataUrl: 'data:image/png;base64,style', createdAt: 1, source: 'preset' as const }
+    const legacyStyleImage = { id: 'planner-legacy-style-only', dataUrl: 'data:image/png;base64,legacy', createdAt: 1, source: 'generated' as const }
+    const orphanImage = { id: 'truly-unreferenced', dataUrl: 'data:image/png;base64,orphan', createdAt: 1, source: 'upload' as const }
+    for (const image of [referenceImage, styleImage, legacyStyleImage, orphanImage]) await putImage(image)
+    await putAmazonPlannerSession(amazonPlannerSession({
+      referenceImageIds: [referenceImage.id],
+      selectedStyleReferenceImageId: styleImage.id,
+      styleImages: [{ candidateIndex: 0, imageId: legacyStyleImage.id }],
+    }))
+    vi.stubGlobal('window', {
+      requestIdleCallback: vi.fn(),
+      setTimeout,
+    })
+
+    try {
+      await initStore()
+
+      expect(await getImage(referenceImage.id)).toBeDefined()
+      expect(await getImage(styleImage.id)).toBeDefined()
+      expect(await getImage(legacyStyleImage.id)).toBeDefined()
+      expect(await getImage(orphanImage.id)).toBeUndefined()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 

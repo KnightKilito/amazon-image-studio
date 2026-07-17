@@ -939,6 +939,7 @@ interface AppState {
 function isImageReferencedByState(state: AppState, imageId: string) {
   if (state.inputImages.some((img) => img.id === imageId)) return true
   if (state.styleReferenceImage?.id === imageId) return true
+  if (state.settings.customStyleReferences?.some((style) => style.imageId === imageId)) return true
   if (state.galleryInputDraft?.inputImages.some((img) => img.id === imageId)) return true
   if (state.galleryInputDraft?.styleReferenceImage?.id === imageId) return true
   if (Object.values(state.agentInputDrafts).some((draft) => draft.inputImages.some((img) => img.id === imageId))) return true
@@ -971,6 +972,8 @@ export async function deleteImageIfUnreferenced(imageId: string) {
   thumbnailBackfillRunningIds.delete(imageId)
   thumbnailSubscribers.delete(imageId)
   if (isImageReferencedByState(useStore.getState(), imageId)) return
+  const plannerSessions = await getAllAmazonPlannerSessions()
+  if (plannerSessions.some((session) => collectAmazonPlannerSessionImageIds(session).includes(imageId))) return
   try {
     await deleteImage(imageId)
   } catch {
@@ -1951,7 +1954,10 @@ async function recoverFalTask(taskId: string) {
 
 /** 初始化：从 IndexedDB 加载任务，按需恢复输入图片，并清理孤立图片 */
 export async function initStore() {
-  const storedTasks = await getAllTasks()
+  const [storedTasks, plannerSessions] = await Promise.all([
+    getAllTasks(),
+    getAllAmazonPlannerSessions(),
+  ])
   const { tasks, interruptedTasks } = markInterruptedOpenAIRunningTasks(storedTasks)
   await Promise.all(interruptedTasks.map((task) => putTask(task)))
   useStore.getState().setTasks(tasks)
@@ -1981,6 +1987,8 @@ export async function initStore() {
   const galleryInputDraft = state.galleryInputDraft
   const agentConversations = state.agentConversations
   const agentInputDrafts = state.agentInputDrafts
+  addSettingsReferencedImageIds(referencedIds, state.settings)
+  addAmazonPlannerSessionReferencedImageIds(referencedIds, plannerSessions)
   for (const img of persistedInputImages) referencedIds.add(img.id)
   if (styleReferenceImage) referencedIds.add(styleReferenceImage.id)
   if (galleryInputDraft) {
@@ -2260,6 +2268,10 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     orderedInputImages = [...orderedInputImages, { id: styleReferenceImage.id, dataUrl }]
   }
 
+  const taskCategory = styleReferenceImage && orderedInputImages.some((img) => img.id === styleReferenceImage.id)
+    ? { ...category, styleReferenceImageId: styleReferenceImage.id }
+    : category
+
   // 持久化输入图片到 IndexedDB（此前只在内存缓存中）
   for (const img of orderedInputImages) {
     await storeImage(img.dataUrl)
@@ -2290,7 +2302,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     createdAt: Date.now(),
     finishedAt: null,
     elapsed: null,
-    category,
+    category: taskCategory,
   }
 
   const latestTasks = useStore.getState().tasks
@@ -2577,6 +2589,9 @@ async function deleteUnreferencedImageIds(imageIds: Iterable<string>) {
   addInputDraftReferencedImageIds(stillUsed, galleryInputDraft)
   for (const img of inputImages) stillUsed.add(img.id)
   if (styleReferenceImage) stillUsed.add(styleReferenceImage.id)
+  addSettingsReferencedImageIds(stillUsed, useStore.getState().settings)
+  const plannerSessions = await getAllAmazonPlannerSessions()
+  addAmazonPlannerSessionReferencedImageIds(stillUsed, plannerSessions)
 
   for (const imgId of candidates) {
     if (stillUsed.has(imgId)) continue
@@ -4306,6 +4321,9 @@ export async function removeMultipleTasks(taskIds: string[]) {
   addInputDraftReferencedImageIds(stillUsed, galleryInputDraft)
   for (const img of inputImages) stillUsed.add(img.id)
   if (styleReferenceImage) stillUsed.add(styleReferenceImage.id)
+  addSettingsReferencedImageIds(stillUsed, useStore.getState().settings)
+  const plannerSessions = await getAllAmazonPlannerSessions()
+  addAmazonPlannerSessionReferencedImageIds(stillUsed, plannerSessions)
 
   // 删除孤立图片
   for (const imgId of deletedImageIds) {
@@ -4351,6 +4369,9 @@ export async function removeTask(task: TaskRecord) {
   addInputDraftReferencedImageIds(stillUsed, galleryInputDraft)
   for (const img of inputImages) stillUsed.add(img.id)
   if (styleReferenceImage) stillUsed.add(styleReferenceImage.id)
+  addSettingsReferencedImageIds(stillUsed, useStore.getState().settings)
+  const plannerSessions = await getAllAmazonPlannerSessions()
+  addAmazonPlannerSessionReferencedImageIds(stillUsed, plannerSessions)
 
   // 删除孤立图片
   for (const imgId of taskImageIds) {
@@ -4486,8 +4507,21 @@ function collectAmazonPlannerSessionImageIds(session: AmazonPlannerSession): str
   return [
     ...(session.referenceImageIds || []),
     ...(session.selectedStyleReferenceImageId ? [session.selectedStyleReferenceImageId] : []),
+    ...(session.selectedCustomStyleReferenceSnapshot?.imageId ? [session.selectedCustomStyleReferenceSnapshot.imageId] : []),
     ...(session.styleImages || []).map((image) => image.imageId),
   ].filter((id): id is string => typeof id === 'string' && Boolean(id.trim()))
+}
+
+function addAmazonPlannerSessionReferencedImageIds(target: Set<string>, sessions: AmazonPlannerSession[]) {
+  for (const session of sessions) {
+    for (const imageId of collectAmazonPlannerSessionImageIds(session)) target.add(imageId)
+  }
+}
+
+function addSettingsReferencedImageIds(target: Set<string>, settings: AppSettings) {
+  for (const customStyle of settings.customStyleReferences ?? []) {
+    if (customStyle.imageId) target.add(customStyle.imageId)
+  }
 }
 
 /** 导出选项 */

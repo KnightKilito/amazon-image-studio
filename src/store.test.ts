@@ -252,6 +252,7 @@ describe('mask draft lifecycle in store actions', () => {
       inputImages: [imageA],
       maskDraft,
       maskEditorImageId: imageA.id,
+      params: { ...DEFAULT_PARAMS, quality: 'low', output_format: 'jpeg', output_compression: 70 },
     })
 
     await editOutputs(task({ outputImages: [imageB.id] }))
@@ -261,6 +262,9 @@ describe('mask draft lifecycle in store actions', () => {
     expect(state.inputImages).toEqual([imageB])
     expect(state.maskDraft).toBeNull()
     expect(state.maskEditorImageId).toBeNull()
+    expect(state.params.quality).toBe('high')
+    expect(state.params.output_format).toBe('png')
+    expect(state.params.output_compression).toBeNull()
   })
 
   it('clears an invalid mask draft when submit cannot find the mask target image', async () => {

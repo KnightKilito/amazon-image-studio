@@ -4195,7 +4195,7 @@ export async function reuseConfig(task: TaskRecord) {
 
 /** 编辑输出：清空当前输入，只保留待编辑的输出图 */
 export async function editOutputs(task: TaskRecord, selectedOutputImageId?: string) {
-  const { showToast, setPendingTaskCategory } = useStore.getState()
+  const { showToast, setParams, setPendingTaskCategory } = useStore.getState()
   const outputImageId = selectedOutputImageId && task.outputImages?.includes(selectedOutputImageId)
     ? selectedOutputImageId
     : task.outputImages?.[0]
@@ -4214,6 +4214,7 @@ export async function editOutputs(task: TaskRecord, selectedOutputImageId?: stri
     maskEditorImageId: null,
   }))
   useStore.getState().clearStyleReferenceImage()
+  setParams(AMAZON_GENERATION_DEFAULTS)
   setPendingTaskCategory({
     mode: 'next-submit',
     category: createNextSubmitTaskCategory(task),

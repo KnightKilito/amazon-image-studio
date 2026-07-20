@@ -702,7 +702,7 @@ describe('mask draft lifecycle in store actions', () => {
       prompt: 'old prompt',
       inputImages: [imageA],
       styleReferenceImage: imageA,
-      params: { ...DEFAULT_PARAMS, output_format: 'jpeg', output_compression: 70 },
+      params: { ...DEFAULT_PARAMS, quality: 'low', output_format: 'jpeg', output_compression: 70 },
     })
 
     await convertOutputToAPlusFormat(task({
@@ -722,6 +722,7 @@ describe('mask draft lifecycle in store actions', () => {
     expect(state.prompt).toContain('2928x1200')
     expect(state.prompt).not.toContain('1200x900')
     expect(state.params.size).toBe('2928x1200')
+    expect(state.params.quality).toBe('high')
     expect(state.params.output_format).toBe('png')
     expect(state.params.output_compression).toBeNull()
     expect(state.pendingTaskCategory).toMatchObject({
@@ -755,6 +756,7 @@ describe('mask draft lifecycle in store actions', () => {
     expect(state.inputImages).toEqual([{ id: outputImage.id, dataUrl: outputImage.dataUrl }])
     expect(state.prompt).toContain('1200x900')
     expect(state.params.size).toBe('1200x900')
+    expect(state.params.quality).toBe('high')
     expect(state.params.output_format).toBe('png')
     expect(state.params.output_compression).toBeNull()
     expect(state.pendingTaskCategory).toMatchObject({

@@ -142,6 +142,12 @@ export const DEFAULT_PARAMS: TaskParams = {
   n: 1,
 }
 
+export const AMAZON_GENERATION_DEFAULTS = {
+  quality: 'high',
+  output_format: 'png',
+  output_compression: null,
+} as const satisfies Pick<TaskParams, 'quality' | 'output_format' | 'output_compression'>
+
 // ===== 输入图片（UI 层面） =====
 
 export interface InputImage {

@@ -20,7 +20,7 @@ import type {
   ResponsesApiResponse,
   ResponsesOutputItem,
 } from './types'
-import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_PARAMS, DEFAULT_REFERENCE_IMAGE_UPLOAD_LIMIT } from './types'
+import { AMAZON_GENERATION_DEFAULTS, DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_PARAMS, DEFAULT_REFERENCE_IMAGE_UPLOAD_LIMIT } from './types'
 import { canApiProfileGenerateImages, DEFAULT_SETTINGS, getActiveApiProfile, getCustomProviderDefinition, mergeImportedSettings, normalizeSettings, validateApiProfile } from './lib/apiProfiles'
 import { dismissAllTooltips } from './lib/tooltipDismiss'
 import { remapImageMentionsForOrder, replaceImageMentionsForApi } from './lib/promptImageMentions'
@@ -4281,7 +4281,7 @@ export async function convertOutputToAPlusFormat(
     maskEditorImageId: null,
   }))
   useStore.getState().clearStyleReferenceImage()
-  setParams({ size: getAPlusOutputConversionSize(target), output_format: 'png', output_compression: null })
+  setParams({ size: getAPlusOutputConversionSize(target), ...AMAZON_GENERATION_DEFAULTS })
   setPendingTaskCategory({
     mode: 'next-submit',
     category: createAPlusOutputConversionTaskCategory(task, target),

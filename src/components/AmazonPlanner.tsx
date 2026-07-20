@@ -57,7 +57,7 @@ import {
   renderStyleReferenceDataUrl,
   sanitizeStyleReferenceEditState,
 } from '../lib/styleReferences'
-import { DEFAULT_PARAMS } from '../types'
+import { AMAZON_GENERATION_DEFAULTS, DEFAULT_PARAMS } from '../types'
 import type { AmazonAiVisualStyle, AmazonPlannerSession, AmazonVisualStyleMode, CustomStyleReference, StyleReferenceEditState } from '../types'
 import StyleReferenceEditorModal from './StyleReferenceEditorModal'
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, EditIcon, EyeIcon, HistoryIcon, PhotoIcon, PlusIcon, RefreshIcon, TrashIcon } from './icons'
@@ -507,7 +507,7 @@ export default function AmazonPlanner() {
   const plannerUsesOfficialDeepSeek = plannerProfile ? isOfficialDeepSeekPlannerProfile(plannerProfile) : false
   const listingTargetSize = resolution === '4k' ? '4096x4096' : '2048x2048'
   const targetSize = plannerMode === 'aplus' && selectedAPlusPlan ? selectedAPlusPlan.generationSize : listingTargetSize
-  const generationParamLabel = `${DEFAULT_PARAMS.output_format.toUpperCase()} / ${DEFAULT_PARAMS.quality} / 压缩率${DEFAULT_PARAMS.output_compression}`
+  const generationParamLabel = `${AMAZON_GENERATION_DEFAULTS.output_format.toUpperCase()} / ${AMAZON_GENERATION_DEFAULTS.quality} / 无压缩`
   const visiblePlanCount = plannerMode === 'aplus' ? aPlusPlansWithSizes.length : imagePlans.length
   const visiblePlanIndex = plannerMode === 'aplus' ? selectedAPlusPlanIndex : selectedPlanIndex
   const actionSlot = plannerMode === 'aplus' ? selectedAPlusPlan?.slot : selectedPlan?.slot
@@ -784,9 +784,7 @@ export default function AmazonPlanner() {
     })
     setParams({
       size: targetSize,
-      quality: DEFAULT_PARAMS.quality,
-      output_format: DEFAULT_PARAMS.output_format,
-      output_compression: DEFAULT_PARAMS.output_compression,
+      ...AMAZON_GENERATION_DEFAULTS,
       n: 1,
     })
     markActionProgress(currentActionKey, 'filled')

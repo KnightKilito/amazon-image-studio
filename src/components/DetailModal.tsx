@@ -750,7 +750,8 @@ export default function DetailModal() {
             <CloseIcon className="w-5 h-5" />
           </button>
 
-          <div data-selectable-text className="flex-1">
+          <div data-selectable-text className="contents">
+            <section className="order-4">
             <div className="flex items-center gap-1.5 mb-2">
               <h3 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
                 输入内容
@@ -797,10 +798,11 @@ export default function DetailModal() {
                 />
               </div>
             )}
+            </section>
 
             {/* 参考图 */}
             {showReferenceSection && (
-              <div className="mb-4">
+              <div className="order-3 mb-4">
                 <div className="flex items-center gap-1.5 mb-2">
                   <h3 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
                     参考图
@@ -868,6 +870,7 @@ export default function DetailModal() {
             )}
 
             {/* 分类 */}
+            <section className="order-5">
             <h3 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">
               分类
             </h3>
@@ -917,8 +920,10 @@ export default function DetailModal() {
                 保存分类
               </button>
             </div>
+            </section>
 
             {/* 参数 */}
+            <section className="order-2">
             <h3 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">
               参数配置
             </h3>
@@ -966,16 +971,17 @@ export default function DetailModal() {
                 </div>
               )}
             </div>
+            </section>
 
             {/* 时间 */}
-            <div className="text-xs text-gray-400 dark:text-gray-500 mb-4">
+            <div className="order-6 text-xs text-gray-400 dark:text-gray-500 mb-4">
               <span>创建于 {formatTime(task.createdAt)}</span>
               {formatDuration() && <span> · 耗时 {formatDuration()}</span>}
             </div>
           </div>
 
           {/* 操作按钮 */}
-          <div className="space-y-2 pt-4 border-t border-gray-100 dark:border-white/[0.08]">
+          <div className="order-1 mb-4 space-y-2 border-b border-gray-100 pb-4 md:pr-8 dark:border-white/[0.08]">
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => handleConvertToAPlus('premium')}

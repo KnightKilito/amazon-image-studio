@@ -1749,17 +1749,20 @@ export default function InputBar() {
           )}
         </div>
         {!isMaskTarget && (
-          <span
-            className="absolute right-0 top-0 flex h-5 w-5 translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-red-500 text-white opacity-0 shadow-md transition-opacity hover:bg-red-600 group-hover:opacity-100 z-30"
+          <button
+            type="button"
+            className="absolute right-1 top-1 z-50 flex h-5 w-5 cursor-pointer items-center justify-center rounded-full bg-red-500 text-white opacity-0 shadow-md transition-opacity hover:bg-red-600 group-hover:opacity-100 focus:opacity-100"
             onClick={(e) => {
               e.stopPropagation()
               removeInputImage(idx)
             }}
+            aria-label={`移除参考图 ${idx + 1}`}
+            title={`移除参考图 ${idx + 1}`}
           >
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
             </svg>
-          </span>
+          </button>
         )}
       </div>
     )
@@ -1871,8 +1874,9 @@ export default function InputBar() {
             <ImportIcon className="w-5 h-5 text-white" />
           </button>
         </div>
-        <span
-          className="absolute right-0 top-0 flex h-5 w-5 translate-x-1/2 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-red-500 text-white opacity-0 shadow-md transition-opacity hover:bg-red-600 group-hover:opacity-100 z-30"
+        <button
+          type="button"
+          className="absolute right-1 top-1 z-50 flex h-5 w-5 cursor-pointer items-center justify-center rounded-full bg-red-500 text-white opacity-0 shadow-md transition-opacity hover:bg-red-600 group-hover:opacity-100 focus:opacity-100"
           onClick={(e) => {
             e.stopPropagation()
             const imageId = styleReferenceImage.id
@@ -1880,11 +1884,12 @@ export default function InputBar() {
             void deleteImageIfUnreferenced(imageId)
           }}
           title="移除风格参考图"
+          aria-label="移除风格参考图"
         >
           <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
           </svg>
-        </span>
+        </button>
       </div>
     )
   }

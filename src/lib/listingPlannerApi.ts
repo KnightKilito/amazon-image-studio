@@ -8,6 +8,7 @@ import {
   DEFAULT_LISTING_IMAGE_COUNT,
   getAmazonListingImageSlots,
   getAPlusContentTypeLabel,
+  getAPlusPlanSummary,
   getAPlusModuleGenerationSize,
   getAPlusModuleUploadSize,
   normalizeListingImageCount,
@@ -198,13 +199,17 @@ function createAPlusPlannerSchema(specs: AmazonAPlusModuleSpec[], visualStyleMod
             slot: { type: 'string', enum: specs.map((spec) => spec.slot) },
             label: CHINESE_LABEL_SCHEMA,
             moduleType: { type: 'string', enum: Array.from(new Set(specs.map((spec) => spec.moduleType))) },
+            summary: {
+              type: 'string',
+              description: 'One or two concise Simplified Chinese sentences explaining this module\'s specific selling point, composition strategy, and product evidence. Do not repeat the module name or dimensions.',
+            },
             planMarkdown: PLAN_MARKDOWN_SCHEMA,
             textTitle: { type: 'string' },
             textBody: { type: 'string' },
             prompt: ENGLISH_IMAGE_PROMPT_SCHEMA,
             negativePrompt: NEGATIVE_PROMPT_SCHEMA,
           },
-          required: ['slot', 'label', 'moduleType', 'planMarkdown', 'textTitle', 'textBody', 'prompt', 'negativePrompt'],
+          required: ['slot', 'label', 'moduleType', 'summary', 'planMarkdown', 'textTitle', 'textBody', 'prompt', 'negativePrompt'],
         },
       },
     },
@@ -549,6 +554,10 @@ function normalizeAPlusPlan(
     moduleType: spec.moduleType,
     uploadSize: getAPlusModuleUploadSize(spec),
     generationSize: getAPlusModuleGenerationSize(spec, tier),
+    summary: getAPlusPlanSummary({
+      summary: plan?.summary,
+      planMarkdown: plan?.planMarkdown || '',
+    }, spec.objective),
     planMarkdown: plan?.planMarkdown || '',
     textTitle: plan?.textTitle || '',
     textBody: plan?.textBody || '',
@@ -643,6 +652,7 @@ function buildAPlusPlannerInstructions(baseDraft: AmazonPromptDraft, aPlusType: 
     formatAmazonAPlusReferenceMaterial(),
     getPlannerVisualStyleGuide(visualStyleMode),
     'For each module, write planMarkdown in Simplified Chinese as a detailed agent-style plan similar to a ChatGPT web response, then write a professional English image prompt and English negative prompt.',
+    'For each module, also return summary as one or two concise Simplified Chinese sentences describing the specific selling point, composition strategy, and product evidence for that module. Keep summaries distinct across repeated module types; do not repeat the module name, module position, or dimensions.',
     'Each module prompt should fully plan the finished Amazon image: composition, product evidence, on-image US-English copy when useful, callouts or information areas when useful, visual hierarchy, and rendering style.',
     'For A+ information modules, prefer complete information design with clear hierarchy and useful product evidence; lifestyle or brand modules should still have purposeful composition and visible product support.',
     mobileGuidance,
@@ -656,8 +666,8 @@ function buildAPlusPlannerInstructions(baseDraft: AmazonPromptDraft, aPlusType: 
     visualStyleMode === 'builtin' ? 'Do not create, request, or describe separate style reference board images. The application uses built-in preset style reference boards.' : '',
     'For modules that need external A+ text outside the image, write textTitle and textBody in natural US English. Otherwise return empty strings.',
     visualStyleMode === 'ai'
-      ? 'Field language rules: aiVisualStyle.name, aiVisualStyle.summary, label, and planMarkdown must be Simplified Chinese; textTitle/textBody must be English or empty; all other aiVisualStyle fields, seriesStyleGuide, prompt, and negativePrompt must be English.'
-      : 'Field language rules: label and planMarkdown must be Simplified Chinese; textTitle/textBody must be English or empty; seriesStyleGuide, prompt, and negativePrompt must be English.',
+      ? 'Field language rules: aiVisualStyle.name, aiVisualStyle.summary, label, summary, and planMarkdown must be Simplified Chinese; textTitle/textBody must be English or empty; all other aiVisualStyle fields, seriesStyleGuide, prompt, and negativePrompt must be English.'
+      : 'Field language rules: label, summary, and planMarkdown must be Simplified Chinese; textTitle/textBody must be English or empty; seriesStyleGuide, prompt, and negativePrompt must be English.',
     baseDraft.category ? `Known category: ${baseDraft.category}` : '',
   ].filter(Boolean).join('\n')
 }
@@ -701,7 +711,7 @@ function buildCompactPlannerInstructions(
       `Create exactly ${specs.length} A+ image module plans in this order: ${specs.map((spec) => `${spec.slot} ${spec.label}, generate ${getAPlusModuleGenerationSize(spec, options.aPlusGenerationTier)}px, final upload ${getAPlusModuleUploadSize(spec)}px`).join('; ')}.`,
       'Each English prompt must use the generation size as its canvas size. The upload size is only the final Seller Central target.',
       'Use only facts from the listing and user-provided product facts. Do not invent brand claims, certifications, logos, package contents, sizes, materials, colors, accessories, reviews, pricing, or guarantees.',
-      'Each planMarkdown must be concise Simplified Chinese. Each prompt and negativePrompt must be professional English for image generation.',
+      'Each summary must be one or two concise Simplified Chinese sentences specific to that module. Each planMarkdown must be concise Simplified Chinese. Each prompt and negativePrompt must be professional English for image generation.',
       'For A+ modules, make the composition Amazon-ready, readable on mobile, product-focused, and compliant: no pricing, reviews, QR codes, external links, medical claims, competitor names, or unsupported superlatives.',
       options.visualStyleMode === 'ai'
         ? 'Return aiVisualStyle with the full product-specific art direction and direction-board prompt, plus seriesStyleGuide for coherent module variation.'
@@ -826,7 +836,7 @@ function buildChatPlannerSchemaGuide(
     return [
       `Return JSON with: ${productFields}, sellingPoints string[], ${styleFields}, aPlusPlans array.`,
       `aPlusPlans must contain exactly ${specs.length} items in this order: ${specs.map((spec) => spec.slot).join(', ')}.`,
-      'Each aPlusPlans item must include: slot, label, moduleType, planMarkdown, textTitle, textBody, prompt, negativePrompt.',
+      'Each aPlusPlans item must include: slot, label, moduleType, summary, planMarkdown, textTitle, textBody, prompt, negativePrompt.',
     ].join('\n')
   }
 

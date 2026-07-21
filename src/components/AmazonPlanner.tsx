@@ -24,6 +24,7 @@ import {
   getAPlusModuleGenerationSize,
   getAPlusModuleSpecs,
   getAPlusModuleUploadSize,
+  getAPlusPlanSummary,
   getPaletteSwatchColor,
   isAmazonListingMainSlot,
   isAPlusTextModule,
@@ -1629,6 +1630,14 @@ export default function AmazonPlanner() {
     }
 
     const restoredAPlusModuleSpecsByType = getSessionAPlusModuleSpecsByType(session)
+    const restoredAPlusSpecs = normalizeAPlusModuleSpecs(
+      session.aPlusType,
+      restoredAPlusModuleSpecsByType[session.aPlusType],
+    )
+    const restoredAPlusPlans = session.aPlusPlans.map((plan, index) => ({
+      ...plan,
+      summary: getAPlusPlanSummary(plan, restoredAPlusSpecs[index]?.objective ?? ''),
+    })) as AmazonAPlusPlan[]
     setPlannerMode(session.mode)
     setAPlusType(session.aPlusType)
     setResolution(session.resolution)
@@ -1646,7 +1655,7 @@ export default function AmazonPlanner() {
     setStyleDensityMode(restoredCustomStyleReference?.editState.density ?? session.styleDensityMode ?? 'rich')
     setStylePreview(null)
     setImagePlans(session.imagePlans as AmazonImagePlan[])
-    setAPlusPlans(session.aPlusPlans as AmazonAPlusPlan[])
+    setAPlusPlans(restoredAPlusPlans)
     setSelectedPlanIndex(session.selectedPlanIndex != null && session.imagePlans[session.selectedPlanIndex] ? session.selectedPlanIndex : null)
     setSelectedAPlusPlanIndex(session.selectedAPlusPlanIndex != null && session.aPlusPlans[session.selectedAPlusPlanIndex] ? session.selectedAPlusPlanIndex : null)
     setPlannerError('')
@@ -2794,6 +2803,8 @@ export default function AmazonPlanner() {
                 {aPlusPlansWithSizes.map((plan, index) => {
                   const isSelected = selectedAPlusPlanIndex === index
                   const externalText = formatAPlusModuleText(plan)
+                  const moduleObjective = aPlusSpecs[index]?.objective ?? ''
+                  const moduleSummary = getAPlusPlanSummary(plan, moduleObjective)
                   const planActionProgress = actionProgress[getPlannerActionKey('aplus', index, plan.slot)]
                   return (
                     <button
@@ -2821,7 +2832,16 @@ export default function AmazonPlanner() {
                         <span className="rounded-md bg-white/70 px-2 py-0.5 dark:bg-white/[0.05]">上传 {plan.uploadSize}</span>
                         <span className="rounded-md bg-white/70 px-2 py-0.5 dark:bg-white/[0.05]">生成 {plan.generationSize}</span>
                       </div>
-                      <div className="mt-2 line-clamp-3 text-xs leading-relaxed text-gray-600 dark:text-gray-300">{getPlanSummary(plan.planMarkdown)}</div>
+                      <div className="mt-2 space-y-1.5 text-xs leading-relaxed">
+                        <div className="text-gray-500 dark:text-gray-400" title={moduleObjective}>
+                          <span className="font-semibold text-gray-600 dark:text-gray-300">模块定位：</span>
+                          <span className="mt-0.5 line-clamp-2 block">{moduleObjective || '按当前模块规格承载对应内容。'}</span>
+                        </div>
+                        <div className="text-gray-700 dark:text-gray-200" title={moduleSummary}>
+                          <span className="font-semibold">策划概述：</span>
+                          <span className="mt-0.5 line-clamp-2 block">{moduleSummary}</span>
+                        </div>
+                      </div>
                       {(isAPlusTextModule(plan) || externalText) && externalText && (
                         <div className="mt-2 rounded-lg bg-white/70 px-2 py-1 text-xs leading-relaxed text-gray-700 dark:bg-white/[0.05] dark:text-gray-200">
                           {plan.textTitle && <div className="font-semibold">{plan.textTitle}</div>}
@@ -2878,6 +2898,11 @@ export default function AmazonPlanner() {
                           上传 {getAPlusModuleUploadSize(spec)} · 生成 {getAPlusModuleGenerationSize(spec, resolutionTier)}
                           {isAPlusTextModule(spec) ? ' · 含标题/正文' : ''}
                         </div>
+                        <div className="mt-1.5 text-xs leading-relaxed text-gray-600 dark:text-gray-300">
+                          <span className="font-semibold">模块定位：</span>
+                          <span>{spec.objective}</span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-gray-400 dark:text-gray-500">策划概述：AI 策划后生成</div>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
                         <button

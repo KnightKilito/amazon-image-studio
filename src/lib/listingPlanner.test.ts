@@ -5,6 +5,7 @@ import {
   buildAmazonAPlusPlanPrompt,
   buildAmazonAPlusPlanOnlyPrompt,
   buildAmazonPlanPrompt,
+  extractAPlusPlanSummary,
   formatAPlusModuleText,
   insertAPlusModuleSpecAfter,
   MAX_A_PLUS_MODULE_COUNT,
@@ -247,6 +248,18 @@ describe('A+ module helpers', () => {
     ])
   })
 
+  it('extracts a useful summary from legacy A+ plan Markdown', () => {
+    expect(extractAPlusPlanSummary([
+      '## A+P01 模块方案',
+      '',
+      '生成尺寸：2928x1200',
+      '策划概述：用宽幅生活方式场景突出产品质感，并用近景细节支撑核心卖点。',
+      '英文生图提示词：Create a premium banner.',
+    ].join('\n'))).toBe('用宽幅生活方式场景突出产品质感，并用近景细节支撑核心卖点。')
+
+    expect(extractAPlusPlanSummary('## A+S01 模块方案\n\n中文 A+ 策划说明。')).toBe('中文 A+ 策划说明。')
+  })
+
   it('adds and removes A+ modules inline while reindexing slots and labels', () => {
     const defaultSpecs = getAPlusModuleSpecs('standard-large')
     const addedSpecs = insertAPlusModuleSpecAfter('standard-large', defaultSpecs, 4)
@@ -259,6 +272,7 @@ describe('A+ module helpers', () => {
       moduleType: 'single-image',
       uploadWidth: 970,
       uploadHeight: 600,
+      objective: defaultSpecs[4]?.objective,
     })
 
     const removedSpecs = removeAPlusModuleSpecAt('standard-large', addedSpecs, 0)
@@ -357,6 +371,7 @@ function createAPlusPlans(prefix: 'A+S' | 'A+L' | 'A+P' | 'A+M', brand = '') {
         : prefix === 'A+P'
           ? index === 0 ? 'hero-banner' : index < 4 ? 'feature-image' : 'brand-story'
           : index === 0 ? 'hero-banner' : 'feature-image',
+    summary: `${slot} 聚焦产品核心卖点，并通过对应模块构图展示可信的产品细节。`,
     planMarkdown: `## ${slot} 模块方案\n\n中文 A+ 策划说明。`,
     textTitle: prefix === 'A+S' && index >= 4 ? `Benefit ${slot}` : '',
     textBody: prefix === 'A+S' && index >= 4 ? `External A+ copy for ${slot}.` : '',
@@ -372,6 +387,7 @@ function createAPlusPlansFromSpecs(specs: ReturnType<typeof getAPlusModuleSpecs>
     slot: spec.slot,
     label: `${spec.slot} 模块`,
     moduleType: spec.moduleType,
+    summary: `${spec.slot} 聚焦产品核心卖点，并通过对应模块构图展示可信的产品细节。`,
     planMarkdown: `## ${spec.slot} 模块方案\n\n中文 A+ 策划说明。`,
     textTitle: spec.moduleType === 'highlight-tile' ? `Benefit ${spec.slot}` : '',
     textBody: spec.moduleType === 'highlight-tile' ? `External A+ copy for ${spec.slot}.` : '',
@@ -1075,7 +1091,9 @@ describe('callAmazonPlannerApi', () => {
     expect(body.text.format.schema.properties.product.properties).toHaveProperty('brand')
     expect(body.text.format.schema.properties.product.required).toContain('brand')
     expect(body.text.format.schema.properties.aPlusPlans.items.properties).toHaveProperty('planMarkdown')
+    expect(body.text.format.schema.properties.aPlusPlans.items.properties).toHaveProperty('summary')
     expect(body.text.format.schema.properties.aPlusPlans.items.properties).toHaveProperty('negativePrompt')
+    expect(body.text.format.schema.properties.aPlusPlans.items.required).toContain('summary')
     expect(body.text.format.schema.required).toContain('seriesStyleGuide')
     expect(body.text.format.schema.required).not.toContain('visualSystem')
     expect(body.instructions).toContain('The application only fixes the module order, module type, upload size, and generation size')
@@ -1091,6 +1109,7 @@ describe('callAmazonPlannerApi', () => {
     expect(body.instructions).toContain('built-in preset style reference boards')
     expect(body.instructions).not.toContain('visual style reference board generation')
     expect(body.instructions).toContain('fully plan the finished Amazon image')
+    expect(body.instructions).toContain('one or two concise Simplified Chinese sentences')
     expect(body.instructions).toContain('complete information design')
     expect(body.instructions).toContain('Known brand/model: ExampleBrand')
     expect(body.instructions).toContain('small brand line, headline prefix, or subline')
@@ -1105,6 +1124,7 @@ describe('callAmazonPlannerApi', () => {
       slot: 'A+S01',
       moduleType: 'header-banner',
       uploadSize: '970x300',
+      summary: 'A+S01 聚焦产品核心卖点，并通过对应模块构图展示可信的产品细节。',
       planMarkdown: expect.stringContaining('A+S01 模块方案'),
       prompt: expect.stringContaining('ExampleBrand'),
     })
@@ -1115,6 +1135,35 @@ describe('callAmazonPlannerApi', () => {
       textTitle: 'Benefit A+S05',
       textBody: 'External A+ copy for A+S05.',
     })
+  })
+
+  it('derives A+ summaries from legacy planner output that has no summary field', async () => {
+    const legacyPayload = createAPlusPayload('A+P', 'Legacy Premium A+ tumbler', 'ExampleBrand')
+    legacyPayload.aPlusPlans = legacyPayload.aPlusPlans.map(({ summary: _summary, ...plan }) => plan) as typeof legacyPayload.aPlusPlans
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
+      output_text: JSON.stringify(legacyPayload),
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: DEFAULT_AMAZON_PROMPT_DRAFT,
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+      mode: 'aplus',
+      aPlusType: 'premium',
+      aPlusGenerationTier: '2K',
+    })
+
+    expect(result.aPlusPlans[0]?.summary).toBe('中文 A+ 策划说明。')
+    expect(result.aPlusPlans[0]?.summary).not.toContain('A+P01 模块方案')
   })
 
   it('uses custom A+ module specs in schema, prompts, chat guide, and result validation', async () => {

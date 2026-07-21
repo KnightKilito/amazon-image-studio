@@ -303,6 +303,7 @@ export interface AmazonPlannerSessionAPlusPlan {
   moduleType: string
   uploadSize: string
   generationSize: string
+  summary?: string
   planMarkdown: string
   textTitle: string
   textBody: string

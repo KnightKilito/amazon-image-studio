@@ -62,6 +62,7 @@ export interface AmazonAPlusPlan {
   moduleType: APlusModuleKind
   uploadSize: string
   generationSize: string
+  summary: string
   planMarkdown: string
   textTitle: string
   textBody: string
@@ -272,6 +273,40 @@ export function normalizeOnImageCopy(copy: string): string {
     .map((line) => line.trim())
     .filter((line) => line && !CJK_ON_IMAGE_TEXT_RE.test(line))
     .join('\n')
+}
+
+function cleanPlanSummaryLine(line: string) {
+  return line
+    .replace(/^#+\s*/, '')
+    .replace(/^\s*[-*]\s*/, '')
+    .replace(/^\*\*(.+)\*\*$/, '$1')
+    .trim()
+}
+
+const A_PLUS_SUMMARY_METADATA_RE = /^(?:A\+[A-Z]?\d+\s*)?(?:模块方案|模块策划|策划方案|模块定位|策划概述|生图输出要求|英文生图提示词|prompt|negative(?:\s+prompt)?|上传(?:尺寸)?|生成(?:尺寸)?|画布尺寸)(?:\s*[:：].*)?$/i
+
+export function extractAPlusPlanSummary(planMarkdown: string) {
+  const lines = planMarkdown
+    .split(/\r?\n/)
+    .map(cleanPlanSummaryLine)
+    .filter(Boolean)
+
+  for (const line of lines) {
+    const labeledSummary = line.match(/^(?:策划概述|概述|核心内容|画面策略)\s*[:：]\s*(.+)$/)
+    if (labeledSummary?.[1]?.trim()) return labeledSummary[1].trim()
+    if (A_PLUS_SUMMARY_METADATA_RE.test(line)) continue
+    if (/^(?:上传|生成|最终上传|尺寸|比例)\s*[:：]?\s*\d+\s*[xX×]\s*\d+/i.test(line)) continue
+    return line
+  }
+
+  return ''
+}
+
+export function getAPlusPlanSummary(
+  plan: Pick<AmazonAPlusPlan, 'planMarkdown'> & { summary?: string | null },
+  fallback = '',
+) {
+  return plan.summary?.trim() || extractAPlusPlanSummary(plan.planMarkdown) || fallback.trim()
 }
 
 const PALETTE_COLOR_RULES: Array<[RegExp, string]> = [

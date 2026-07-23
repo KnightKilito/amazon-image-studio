@@ -2153,257 +2153,8 @@ export default function AmazonPlanner() {
             <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileUpload} />
           </div>
 
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
-            <label>
-              <span className={LABEL_CLASS}>商品标题</span>
-              <input
-                value={draft.productTitle}
-                onChange={(event) => setDraft((current) => updateDraft(current, 'productTitle', event.target.value))}
-                className={FIELD_CLASS}
-                placeholder="例：Stainless Steel Insulated Travel Mug"
-              />
-            </label>
-            <label>
-              <span className={LABEL_CLASS}>类目</span>
-              <input
-                value={draft.category}
-                onChange={(event) => setDraft((current) => updateDraft(current, 'category', event.target.value))}
-                className={FIELD_CLASS}
-                placeholder="例：Kitchen / Sports / Home"
-              />
-            </label>
-            <label>
-              <span className={LABEL_CLASS}>品牌 / 型号</span>
-              <input
-                value={draft.brand}
-                onChange={(event) => setDraft((current) => updateDraft(current, 'brand', event.target.value))}
-                className={FIELD_CLASS}
-                placeholder="只填商品真实品牌或型号"
-              />
-            </label>
-            <label>
-              <span className={LABEL_CLASS}>颜色</span>
-              <input
-                value={draft.color}
-                onChange={(event) => setDraft((current) => updateDraft(current, 'color', event.target.value))}
-                className={FIELD_CLASS}
-                placeholder="例：matte black"
-              />
-            </label>
-            <label>
-              <span className={LABEL_CLASS}>材质 / 表面工艺</span>
-              <input
-                value={draft.material}
-                onChange={(event) => setDraft((current) => updateDraft(current, 'material', event.target.value))}
-                className={FIELD_CLASS}
-                placeholder="例：304 stainless steel, silicone lid"
-              />
-            </label>
-            <label>
-              <span className={LABEL_CLASS}>目标人群</span>
-              <input
-                value={draft.audience}
-                onChange={(event) => setDraft((current) => updateDraft(current, 'audience', event.target.value))}
-                className={FIELD_CLASS}
-                placeholder="例：commuters, office workers"
-              />
-            </label>
-            <label className="md:col-span-2">
-              <span className={LABEL_CLASS}>卖点</span>
-              <textarea
-                value={draft.sellingPoints}
-                onChange={(event) => setDraft((current) => updateDraft(current, 'sellingPoints', event.target.value))}
-                className={`${FIELD_CLASS} min-h-[86px] resize-y`}
-                placeholder="一行一个卖点，或用分号分隔"
-              />
-            </label>
-            <label>
-              <span className={LABEL_CLASS}>包装清单</span>
-              <textarea
-                value={draft.packageIncludes}
-                onChange={(event) => setDraft((current) => updateDraft(current, 'packageIncludes', event.target.value))}
-                className={`${FIELD_CLASS} min-h-[76px] resize-y`}
-                placeholder="例：1 mug, 1 lid, 1 straw"
-              />
-            </label>
-            <label>
-              <span className={LABEL_CLASS}>场景 / 构图</span>
-              <textarea
-                value={draft.scene}
-                onChange={(event) => setDraft((current) => updateDraft(current, 'scene', event.target.value))}
-                className={`${FIELD_CLASS} min-h-[76px] resize-y`}
-                placeholder="例：白底产品构图 / 厨房台面场景 / 尺寸标注信息图"
-              />
-            </label>
-            <label className="md:col-span-2">
-              <span className={LABEL_CLASS}>禁用元素</span>
-              <input
-                value={draft.forbidden}
-                onChange={(event) => setDraft((current) => updateDraft(current, 'forbidden', event.target.value))}
-                className={FIELD_CLASS}
-                placeholder="例：do not show phone, laptop, gift box"
-              />
-            </label>
-          </div>
-        </div>
-
-        <div className="p-4 sm:p-5">
-          {showStickyActions && (
-            <>
-              {mobileActionDock && (
-                <button
-                  type="button"
-                  data-amazon-action-dock
-                  onClick={() => setMobileActionDock(null)}
-                  className={`fixed top-[7.25rem] z-30 flex min-h-[104px] w-12 flex-col items-center justify-center gap-1 border border-blue-200 bg-white/95 px-1.5 py-2 text-blue-700 shadow-lg shadow-gray-900/10 backdrop-blur transition hover:bg-blue-50 sm:hidden dark:border-blue-300/25 dark:bg-gray-950/95 dark:text-blue-200 dark:hover:bg-blue-400/10 ${mobileActionDock === 'left' ? 'left-0 rounded-r-xl border-l-0' : 'right-0 rounded-l-xl border-r-0'}`}
-                  aria-label="展开移动端生成操作窗"
-                  title="展开操作窗"
-                >
-                  {mobileActionDock === 'left' ? (
-                    <ChevronRightIcon className="h-4 w-4" />
-                  ) : (
-                    <ChevronLeftIcon className="h-4 w-4" />
-                  )}
-                  <span className="rounded bg-blue-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
-                    {actionSlot ?? (plannerMode === 'aplus' ? 'A+' : '当前')}
-                  </span>
-                  <span className="[writing-mode:vertical-rl] text-[11px] font-semibold tracking-wide">展开</span>
-                </button>
-              )}
-              <div data-amazon-action-bar className={`z-30 rounded-xl border p-3 shadow-lg shadow-gray-900/5 backdrop-blur transition dark:shadow-black/20 sm:sticky sm:left-auto sm:right-auto sm:top-20 sm:mb-4 ${mobileActionDock ? 'hidden sm:block' : 'fixed left-3 right-3 top-[7.25rem]'} ${getGuidePanelClass(actionBarGuideActive)}`}>
-                <button
-                  type="button"
-                  onClick={() => setMobileActionDock('left')}
-                  className="absolute -left-3 top-1/2 flex h-24 w-7 -translate-y-1/2 items-center justify-center rounded-r-xl border border-blue-200 bg-white/95 text-blue-700 shadow-sm transition hover:bg-blue-50 sm:hidden dark:border-blue-300/25 dark:bg-gray-950/95 dark:text-blue-200 dark:hover:bg-blue-400/10"
-                  aria-label="收起到左侧"
-                  title="收起到左侧"
-                >
-                  <ChevronLeftIcon className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMobileActionDock('right')}
-                  className="absolute -right-3 top-1/2 flex h-24 w-7 -translate-y-1/2 items-center justify-center rounded-l-xl border border-blue-200 bg-white/95 text-blue-700 shadow-sm transition hover:bg-blue-50 sm:hidden dark:border-blue-300/25 dark:bg-gray-950/95 dark:text-blue-200 dark:hover:bg-blue-400/10"
-                  aria-label="收起到右侧"
-                  title="收起到右侧"
-                >
-                  <ChevronRightIcon className="h-4 w-4" />
-                </button>
-                <div className="flex flex-col gap-3">
-                  {actionBarGuideActive && (
-                    <div className={GUIDE_HINT_CLASS}>
-                      {guideState.message}
-                    </div>
-                  )}
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="rounded-md bg-blue-600 px-2 py-0.5 text-[11px] font-bold text-white">
-                          {actionSlot ?? (plannerMode === 'aplus' ? 'A+' : '当前')}
-                        </span>
-                        <span className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
-                          {actionLabel ?? (plannerMode === 'aplus' ? '请选择 A+ 模块' : '当前图片方案')}
-                        </span>
-                        <span className="rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">
-                          {actionPositionLabel}
-                        </span>
-                      </div>
-                      <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
-                        {targetSize} / {generationParamLabel}{plannerMode === 'aplus' && selectedAPlusPlan ? ` · 上传建议 ${selectedAPlusPlan.uploadSize}` : ''}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => stepVisiblePlan(-1)}
-                        disabled={!canGoPrev}
-                        className={`inline-flex h-9 items-center gap-1 rounded-lg border px-2.5 text-xs font-medium transition ${canGoPrev ? 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-white/[0.06]' : 'cursor-not-allowed border-gray-100 bg-gray-100 text-gray-300 dark:border-white/[0.04] dark:bg-white/[0.04] dark:text-gray-600'}`}
-                      >
-                        <ChevronLeftIcon className="h-3.5 w-3.5" />
-                        上一张
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => stepVisiblePlan(1)}
-                        disabled={!canGoNext}
-                        className={`inline-flex h-9 items-center gap-1 rounded-lg border px-2.5 text-xs font-medium transition ${currentActionSubmitted && canGoNext ? 'border-blue-600 bg-blue-600 text-white shadow-sm hover:bg-blue-500' : canGoNext ? 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-white/[0.06]' : 'cursor-not-allowed border-gray-100 bg-gray-100 text-gray-300 dark:border-white/[0.04] dark:bg-white/[0.04] dark:text-gray-600'}`}
-                      >
-                        下一张
-                        <ChevronRightIcon className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className={`rounded-lg border px-3 py-2 text-xs font-medium ${currentActionSubmitted ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-200' : currentActionFilled ? 'border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200' : 'border-gray-200 bg-gray-50 text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200'}`}>
-                    {actionGuidance}
-                    {mainStyleGuidance && (
-                      <span className="mt-1 block text-[11px] font-normal opacity-80">{mainStyleGuidance}</span>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2">
-                    {actionProgressSteps.map((step) => (
-                      <div key={step.label} className={`rounded-lg border px-2 py-1.5 ${getActionStepClass(step.status)}`}>
-                        <div className="truncate text-[10px] font-bold">{step.label}</div>
-                        <div className="mt-0.5 truncate text-[10px] opacity-80">{step.detail}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    <button
-                      type="button"
-                      onClick={copyPrompt}
-                      disabled={actionDisabled}
-                      className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-medium transition ${actionDisabled ? 'cursor-not-allowed border-gray-100 bg-gray-100 text-gray-300 dark:border-white/[0.04] dark:bg-white/[0.04] dark:text-gray-600' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-white/[0.06]'}`}
-                    >
-                      <CopyIcon className="h-3.5 w-3.5" />
-                      复制
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => applyPrompt({ promptMode: 'full' })}
-                      disabled={actionDisabled}
-                      className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-semibold transition ${actionDisabled ? 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-white/[0.06] dark:text-gray-600' : fullPromptFilled ? 'bg-emerald-600 text-white hover:bg-emerald-500' : 'bg-gray-900 text-white hover:bg-gray-700 dark:bg-white dark:text-gray-950 dark:hover:bg-gray-200'}`}
-                    >
-                      {fullPromptFilled ? (
-                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                        </svg>
-                      ) : (
-                        <PhotoIcon className="h-3.5 w-3.5" />
-                      )}
-                      带系统提示词
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => applyPrompt({ promptMode: 'plan-only' })}
-                      disabled={actionDisabled || !activePlanMarkdown.trim()}
-                      className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition ${actionDisabled || !activePlanMarkdown.trim() ? 'cursor-not-allowed border-gray-100 bg-gray-100 text-gray-300 dark:border-white/[0.04] dark:bg-white/[0.04] dark:text-gray-600' : planOnlyFilled ? 'border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-500' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-white/[0.1] dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-white/[0.06]'}`}
-                    >
-                      {planOnlyFilled && (
-                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                        </svg>
-                      )}
-                      仅策划案
-                    </button>
-                    <button
-                      type="button"
-                      onClick={applyAndSubmit}
-                      disabled={submitDisabled || currentActionSubmitted}
-                      className={`inline-flex h-9 items-center justify-center rounded-lg px-2 text-xs font-semibold transition ${currentActionSubmitted ? 'cursor-default bg-emerald-600 text-white' : submitDisabled ? 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-white/[0.06] dark:text-gray-600' : 'bg-blue-600 text-white hover:bg-blue-500'}`}
-                    >
-                      {currentActionSubmitted ? '已提交' : '提交生成'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <div className={mobileActionDock ? 'h-16 sm:hidden' : 'h-[218px] sm:hidden'} aria-hidden="true" />
-            </>
-          )}
           {hasPlanOptions && (
-            <div className={`mb-4 rounded-xl border p-3 transition ${getGuidePanelClass(styleGuideActive, 'muted')}`}>
+            <div className={`mt-5 rounded-xl border p-3 transition ${getGuidePanelClass(styleGuideActive, 'muted')}`}>
               {styleGuideActive && (
                 <div className={GUIDE_HINT_CLASS}>
                   {guideState.message}
@@ -2727,6 +2478,255 @@ export default function AmazonPlanner() {
                 </div>
               )}
             </div>
+          )}
+          <div className="mt-5 grid gap-4 md:grid-cols-2">
+            <label>
+              <span className={LABEL_CLASS}>商品标题</span>
+              <input
+                value={draft.productTitle}
+                onChange={(event) => setDraft((current) => updateDraft(current, 'productTitle', event.target.value))}
+                className={FIELD_CLASS}
+                placeholder="例：Stainless Steel Insulated Travel Mug"
+              />
+            </label>
+            <label>
+              <span className={LABEL_CLASS}>类目</span>
+              <input
+                value={draft.category}
+                onChange={(event) => setDraft((current) => updateDraft(current, 'category', event.target.value))}
+                className={FIELD_CLASS}
+                placeholder="例：Kitchen / Sports / Home"
+              />
+            </label>
+            <label>
+              <span className={LABEL_CLASS}>品牌 / 型号</span>
+              <input
+                value={draft.brand}
+                onChange={(event) => setDraft((current) => updateDraft(current, 'brand', event.target.value))}
+                className={FIELD_CLASS}
+                placeholder="只填商品真实品牌或型号"
+              />
+            </label>
+            <label>
+              <span className={LABEL_CLASS}>颜色</span>
+              <input
+                value={draft.color}
+                onChange={(event) => setDraft((current) => updateDraft(current, 'color', event.target.value))}
+                className={FIELD_CLASS}
+                placeholder="例：matte black"
+              />
+            </label>
+            <label>
+              <span className={LABEL_CLASS}>材质 / 表面工艺</span>
+              <input
+                value={draft.material}
+                onChange={(event) => setDraft((current) => updateDraft(current, 'material', event.target.value))}
+                className={FIELD_CLASS}
+                placeholder="例：304 stainless steel, silicone lid"
+              />
+            </label>
+            <label>
+              <span className={LABEL_CLASS}>目标人群</span>
+              <input
+                value={draft.audience}
+                onChange={(event) => setDraft((current) => updateDraft(current, 'audience', event.target.value))}
+                className={FIELD_CLASS}
+                placeholder="例：commuters, office workers"
+              />
+            </label>
+            <label className="md:col-span-2">
+              <span className={LABEL_CLASS}>卖点</span>
+              <textarea
+                value={draft.sellingPoints}
+                onChange={(event) => setDraft((current) => updateDraft(current, 'sellingPoints', event.target.value))}
+                className={`${FIELD_CLASS} min-h-[86px] resize-y`}
+                placeholder="一行一个卖点，或用分号分隔"
+              />
+            </label>
+            <label>
+              <span className={LABEL_CLASS}>包装清单</span>
+              <textarea
+                value={draft.packageIncludes}
+                onChange={(event) => setDraft((current) => updateDraft(current, 'packageIncludes', event.target.value))}
+                className={`${FIELD_CLASS} min-h-[76px] resize-y`}
+                placeholder="例：1 mug, 1 lid, 1 straw"
+              />
+            </label>
+            <label>
+              <span className={LABEL_CLASS}>场景 / 构图</span>
+              <textarea
+                value={draft.scene}
+                onChange={(event) => setDraft((current) => updateDraft(current, 'scene', event.target.value))}
+                className={`${FIELD_CLASS} min-h-[76px] resize-y`}
+                placeholder="例：白底产品构图 / 厨房台面场景 / 尺寸标注信息图"
+              />
+            </label>
+            <label className="md:col-span-2">
+              <span className={LABEL_CLASS}>禁用元素</span>
+              <input
+                value={draft.forbidden}
+                onChange={(event) => setDraft((current) => updateDraft(current, 'forbidden', event.target.value))}
+                className={FIELD_CLASS}
+                placeholder="例：do not show phone, laptop, gift box"
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="p-4 sm:p-5">
+          {showStickyActions && (
+            <>
+              {mobileActionDock && (
+                <button
+                  type="button"
+                  data-amazon-action-dock
+                  onClick={() => setMobileActionDock(null)}
+                  className={`fixed top-[7.25rem] z-30 flex min-h-[104px] w-12 flex-col items-center justify-center gap-1 border border-blue-200 bg-white/95 px-1.5 py-2 text-blue-700 shadow-lg shadow-gray-900/10 backdrop-blur transition hover:bg-blue-50 sm:hidden dark:border-blue-300/25 dark:bg-gray-950/95 dark:text-blue-200 dark:hover:bg-blue-400/10 ${mobileActionDock === 'left' ? 'left-0 rounded-r-xl border-l-0' : 'right-0 rounded-l-xl border-r-0'}`}
+                  aria-label="展开移动端生成操作窗"
+                  title="展开操作窗"
+                >
+                  {mobileActionDock === 'left' ? (
+                    <ChevronRightIcon className="h-4 w-4" />
+                  ) : (
+                    <ChevronLeftIcon className="h-4 w-4" />
+                  )}
+                  <span className="rounded bg-blue-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                    {actionSlot ?? (plannerMode === 'aplus' ? 'A+' : '当前')}
+                  </span>
+                  <span className="[writing-mode:vertical-rl] text-[11px] font-semibold tracking-wide">展开</span>
+                </button>
+              )}
+              <div data-amazon-action-bar className={`z-30 rounded-xl border p-3 shadow-lg shadow-gray-900/5 backdrop-blur transition dark:shadow-black/20 sm:sticky sm:left-auto sm:right-auto sm:top-20 sm:mb-4 ${mobileActionDock ? 'hidden sm:block' : 'fixed left-3 right-3 top-[7.25rem]'} ${getGuidePanelClass(actionBarGuideActive)}`}>
+                <button
+                  type="button"
+                  onClick={() => setMobileActionDock('left')}
+                  className="absolute -left-3 top-1/2 flex h-24 w-7 -translate-y-1/2 items-center justify-center rounded-r-xl border border-blue-200 bg-white/95 text-blue-700 shadow-sm transition hover:bg-blue-50 sm:hidden dark:border-blue-300/25 dark:bg-gray-950/95 dark:text-blue-200 dark:hover:bg-blue-400/10"
+                  aria-label="收起到左侧"
+                  title="收起到左侧"
+                >
+                  <ChevronLeftIcon className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobileActionDock('right')}
+                  className="absolute -right-3 top-1/2 flex h-24 w-7 -translate-y-1/2 items-center justify-center rounded-l-xl border border-blue-200 bg-white/95 text-blue-700 shadow-sm transition hover:bg-blue-50 sm:hidden dark:border-blue-300/25 dark:bg-gray-950/95 dark:text-blue-200 dark:hover:bg-blue-400/10"
+                  aria-label="收起到右侧"
+                  title="收起到右侧"
+                >
+                  <ChevronRightIcon className="h-4 w-4" />
+                </button>
+                <div className="flex flex-col gap-3">
+                  {actionBarGuideActive && (
+                    <div className={GUIDE_HINT_CLASS}>
+                      {guideState.message}
+                    </div>
+                  )}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-md bg-blue-600 px-2 py-0.5 text-[11px] font-bold text-white">
+                          {actionSlot ?? (plannerMode === 'aplus' ? 'A+' : '当前')}
+                        </span>
+                        <span className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
+                          {actionLabel ?? (plannerMode === 'aplus' ? '请选择 A+ 模块' : '当前图片方案')}
+                        </span>
+                        <span className="rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">
+                          {actionPositionLabel}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                        {targetSize} / {generationParamLabel}{plannerMode === 'aplus' && selectedAPlusPlan ? ` · 上传建议 ${selectedAPlusPlan.uploadSize}` : ''}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => stepVisiblePlan(-1)}
+                        disabled={!canGoPrev}
+                        className={`inline-flex h-9 items-center gap-1 rounded-lg border px-2.5 text-xs font-medium transition ${canGoPrev ? 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-white/[0.06]' : 'cursor-not-allowed border-gray-100 bg-gray-100 text-gray-300 dark:border-white/[0.04] dark:bg-white/[0.04] dark:text-gray-600'}`}
+                      >
+                        <ChevronLeftIcon className="h-3.5 w-3.5" />
+                        上一张
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => stepVisiblePlan(1)}
+                        disabled={!canGoNext}
+                        className={`inline-flex h-9 items-center gap-1 rounded-lg border px-2.5 text-xs font-medium transition ${currentActionSubmitted && canGoNext ? 'border-blue-600 bg-blue-600 text-white shadow-sm hover:bg-blue-500' : canGoNext ? 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-white/[0.06]' : 'cursor-not-allowed border-gray-100 bg-gray-100 text-gray-300 dark:border-white/[0.04] dark:bg-white/[0.04] dark:text-gray-600'}`}
+                      >
+                        下一张
+                        <ChevronRightIcon className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className={`rounded-lg border px-3 py-2 text-xs font-medium ${currentActionSubmitted ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-200' : currentActionFilled ? 'border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200' : 'border-gray-200 bg-gray-50 text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200'}`}>
+                    {actionGuidance}
+                    {mainStyleGuidance && (
+                      <span className="mt-1 block text-[11px] font-normal opacity-80">{mainStyleGuidance}</span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    {actionProgressSteps.map((step) => (
+                      <div key={step.label} className={`rounded-lg border px-2 py-1.5 ${getActionStepClass(step.status)}`}>
+                        <div className="truncate text-[10px] font-bold">{step.label}</div>
+                        <div className="mt-0.5 truncate text-[10px] opacity-80">{step.detail}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <button
+                      type="button"
+                      onClick={copyPrompt}
+                      disabled={actionDisabled}
+                      className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-medium transition ${actionDisabled ? 'cursor-not-allowed border-gray-100 bg-gray-100 text-gray-300 dark:border-white/[0.04] dark:bg-white/[0.04] dark:text-gray-600' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-white/[0.06]'}`}
+                    >
+                      <CopyIcon className="h-3.5 w-3.5" />
+                      复制
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyPrompt({ promptMode: 'full' })}
+                      disabled={actionDisabled}
+                      className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-semibold transition ${actionDisabled ? 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-white/[0.06] dark:text-gray-600' : fullPromptFilled ? 'bg-emerald-600 text-white hover:bg-emerald-500' : 'bg-gray-900 text-white hover:bg-gray-700 dark:bg-white dark:text-gray-950 dark:hover:bg-gray-200'}`}
+                    >
+                      {fullPromptFilled ? (
+                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                        </svg>
+                      ) : (
+                        <PhotoIcon className="h-3.5 w-3.5" />
+                      )}
+                      带系统提示词
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyPrompt({ promptMode: 'plan-only' })}
+                      disabled={actionDisabled || !activePlanMarkdown.trim()}
+                      className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-2 text-xs font-semibold transition ${actionDisabled || !activePlanMarkdown.trim() ? 'cursor-not-allowed border-gray-100 bg-gray-100 text-gray-300 dark:border-white/[0.04] dark:bg-white/[0.04] dark:text-gray-600' : planOnlyFilled ? 'border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-500' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-white/[0.1] dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-white/[0.06]'}`}
+                    >
+                      {planOnlyFilled && (
+                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                      仅策划案
+                    </button>
+                    <button
+                      type="button"
+                      onClick={applyAndSubmit}
+                      disabled={submitDisabled || currentActionSubmitted}
+                      className={`inline-flex h-9 items-center justify-center rounded-lg px-2 text-xs font-semibold transition ${currentActionSubmitted ? 'cursor-default bg-emerald-600 text-white' : submitDisabled ? 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-white/[0.06] dark:text-gray-600' : 'bg-blue-600 text-white hover:bg-blue-500'}`}
+                    >
+                      {currentActionSubmitted ? '已提交' : '提交生成'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div className={mobileActionDock ? 'h-16 sm:hidden' : 'h-[218px] sm:hidden'} aria-hidden="true" />
+            </>
           )}
           {plannerMode === 'listing' && imagePlans.length > 0 && (
             <div className={`mb-4 rounded-xl border p-3 transition ${getGuidePanelClass(planListGuideActive)}`}>

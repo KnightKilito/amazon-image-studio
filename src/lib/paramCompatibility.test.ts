@@ -63,6 +63,36 @@ describe('parameter compatibility', () => {
     expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, size: '2928x1200' }, settings, { hasInputImages: true }).size).toBe('2928x1200')
   })
 
+  it('preserves tall Premium A+ sizes only for planned mother-image tasks', () => {
+    const openAIProfile = createDefaultOpenAIProfile({ apiKey: 'test-key' })
+    const settings = normalizeSettings({
+      ...DEFAULT_SETTINGS,
+      profiles: [openAIProfile],
+      activeProfileId: openAIProfile.id,
+    })
+
+    expect(normalizeParamsForSettings(
+      { ...DEFAULT_PARAMS, size: '2928x2400' },
+      settings,
+      { hasInputImages: true, preservePremiumMotherSize: true },
+    ).size).toBe('2928x2400')
+    expect(normalizeParamsForSettings(
+      { ...DEFAULT_PARAMS, size: '2928x8400' },
+      settings,
+      { hasInputImages: true, preservePremiumMotherSize: true },
+    ).size).toBe('2928x8400')
+    expect(normalizeParamsForSettings(
+      { ...DEFAULT_PARAMS, size: '1200x6300' },
+      settings,
+      { hasInputImages: true, preservePremiumMotherSize: true },
+    ).size).toBe('1200x6300')
+    expect(normalizeParamsForSettings(
+      { ...DEFAULT_PARAMS, size: '2928x8400' },
+      settings,
+      { hasInputImages: true },
+    ).size).not.toBe('2928x8400')
+  })
+
   it('defaults JPEG/WebP output compression to 70 for OpenAI requests', () => {
     const openAIProfile = createDefaultOpenAIProfile({ apiKey: 'test-key' })
     const settings = normalizeSettings({

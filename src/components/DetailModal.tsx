@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import type { TaskRecord } from '../types'
-import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, convertOutputToAPlusFormat, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask } from '../store'
+import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, convertOutputToAPlusFormat, createPremiumAPlusSliceTask, getSuggestedAPlusOutputConversionSliceCount, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { useTooltip } from '../hooks/useTooltip'
@@ -9,12 +9,14 @@ import { ActualValueBadge, DetailParamValue } from '../lib/paramDisplay'
 import { copyImageSourceToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
-import { downloadImageIds } from '../lib/downloadImages'
+import { downloadImageIds, downloadImageIdsAsZip } from '../lib/downloadImages'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { getAspectLabel, getTaskHistoryCategory, getWorkflowLabel } from '../lib/taskHistory'
 import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, LinkIcon, TrashIcon } from './icons'
 
 import ViewportTooltip from './ViewportTooltip'
+import ImageSliceDialog from './ImageSliceDialog'
+import MobileAPlusConversionDialog from './MobileAPlusConversionDialog'
 
 export default function DetailModal() {
   const tasks = useStore((s) => s.tasks)
@@ -38,6 +40,11 @@ export default function DetailModal() {
   const [now, setNow] = useState(Date.now())
   const [showRawUrlsModal, setShowRawUrlsModal] = useState(false)
   const [showRawResponseModal, setShowRawResponseModal] = useState(false)
+  const [showSliceDialog, setShowSliceDialog] = useState(false)
+  const [sliceBusy, setSliceBusy] = useState(false)
+  const [showMobileConversionDialog, setShowMobileConversionDialog] = useState(false)
+  const [mobileConversionPanelCount, setMobileConversionPanelCount] = useState(1)
+  const [mobileConversionBusy, setMobileConversionBusy] = useState(false)
   const [streamPreviewLoaded, setStreamPreviewLoaded] = useState(false)
   const [categoryProductInput, setCategoryProductInput] = useState('')
   const [categoryWorkflowInput, setCategoryWorkflowInput] = useState('gallery')
@@ -103,12 +110,17 @@ export default function DetailModal() {
     if (count > 0 && imageIndex >= count) setImageIndex(count - 1)
   }, [imageIndex, streamPreviewItems.length, task?.outputImages?.length, task?.status])
 
-  useCloseOnEscape(Boolean(task), () => setDetailTaskId(null))
+  useCloseOnEscape(Boolean(task) && !showSliceDialog && !showMobileConversionDialog, () => setDetailTaskId(null))
   usePreventBackgroundScroll(Boolean(task), [modalRef, rawUrlsModalRef, rawResponseModalRef])
 
   // Reset index when task changes
   useEffect(() => {
     setImageIndex(0)
+    setShowSliceDialog(false)
+    setSliceBusy(false)
+    setShowMobileConversionDialog(false)
+    setMobileConversionPanelCount(1)
+    setMobileConversionBusy(false)
   }, [detailTaskId])
 
   useEffect(() => {
@@ -269,9 +281,28 @@ export default function DetailModal() {
     setDetailTaskId(null)
   }
 
-  const handleConvertToAPlus = (target: 'premium' | 'mobile') => {
-    void convertOutputToAPlusFormat(task, currentOutputImageId || undefined, target)
-    setDetailTaskId(null)
+  const handleConvertToPremiumAPlus = async () => {
+    const converted = await convertOutputToAPlusFormat(task, currentOutputImageId || undefined, 'premium')
+    if (converted) setDetailTaskId(null)
+  }
+
+  const handleOpenMobileConversion = () => {
+    setMobileConversionPanelCount(getSuggestedAPlusOutputConversionSliceCount(task))
+    setShowMobileConversionDialog(true)
+  }
+
+  const handleConfirmMobileConversion = async (panelCount: number) => {
+    if (mobileConversionBusy) return
+    setMobileConversionBusy(true)
+    try {
+      const converted = await convertOutputToAPlusFormat(task, currentOutputImageId || undefined, 'mobile', panelCount)
+      if (converted) {
+        setShowMobileConversionDialog(false)
+        setDetailTaskId(null)
+      }
+    } finally {
+      setMobileConversionBusy(false)
+    }
   }
 
   const handleMaskEditCurrentOutput = () => {
@@ -378,6 +409,43 @@ export default function DetailModal() {
     } catch (err) {
       console.error(err)
       showToast('下载失败', 'error')
+    }
+  }
+
+  const handleDownloadSliceZip = async () => {
+    if (!task?.derivation || task.outputImages.length === 0) return
+    try {
+      const result = await downloadImageIdsAsZip(
+        task.outputImages,
+        `${task.derivation.type.startsWith('mobile-') ? 'mobile' : 'premium'}-aplus-slices-${task.derivation.sliceCount}-${task.id}`,
+      )
+      if (result.successCount === 0) {
+        showToast('打包下载失败', 'error')
+      } else if (result.failCount > 0) {
+        showToast(`部分图片打包失败：成功 ${result.successCount}，失败 ${result.failCount}`, 'error')
+      } else {
+        showToast(`已打包下载 ${result.successCount} 张切片`, 'success')
+      }
+    } catch (err) {
+      console.error(err)
+      showToast('打包下载失败', 'error')
+    }
+  }
+
+  const handleConfirmSlice = async (sliceCount: number) => {
+    if (!task || !currentOutputImageId || sliceBusy) return
+    setSliceBusy(true)
+    try {
+      const sliceFormat = task.category?.aPlusType === 'mobile' ? 'mobile' : 'premium'
+      const derivedTask = await createPremiumAPlusSliceTask(task, currentOutputImageId, sliceCount, sliceFormat)
+      showToast(`已切割并保存 ${derivedTask.outputImages.length} 张${sliceFormat === 'mobile' ? '手机' : '高级'} A+ 图片`, 'success')
+      setShowSliceDialog(false)
+      setDetailTaskId(derivedTask.id)
+    } catch (err) {
+      console.error(err)
+      showToast(err instanceof Error ? err.message : '切割失败', 'error')
+    } finally {
+      setSliceBusy(false)
     }
   }
 
@@ -982,16 +1050,36 @@ export default function DetailModal() {
 
           {/* 操作按钮 */}
           <div className="order-1 mb-4 space-y-2 border-b border-gray-100 pb-4 md:pr-8 dark:border-white/[0.08]">
+            {task.derivation ? (
+              <button
+                type="button"
+                onClick={handleDownloadSliceZip}
+                disabled={task.outputImages.length === 0}
+                className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/20"
+              >
+                <DownloadIcon className="h-4 w-4" />
+                打包下载 {task.derivation.sliceCount} 张切片
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowSliceDialog(true)}
+                disabled={!currentOutputImageId || !currentOutputPreviewSrc}
+                className="flex w-full items-center justify-center rounded-xl bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/20"
+              >
+                切割{task.category?.aPlusType === 'mobile' ? '手机' : '高级'} A+ 母图
+              </button>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <button
-                onClick={() => handleConvertToAPlus('premium')}
+                onClick={() => void handleConvertToPremiumAPlus()}
                 disabled={!outputLen}
                 className="flex items-center justify-center gap-1.5 rounded-xl bg-violet-50 px-3 py-2 text-sm font-medium text-violet-600 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-violet-500/10 dark:text-violet-300 dark:hover:bg-violet-500/20"
               >
                 转为高级A+
               </button>
               <button
-                onClick={() => handleConvertToAPlus('mobile')}
+                onClick={handleOpenMobileConversion}
                 disabled={!outputLen}
                 className="flex items-center justify-center gap-1.5 rounded-xl bg-cyan-50 px-3 py-2 text-sm font-medium text-cyan-700 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-cyan-500/10 dark:text-cyan-300 dark:hover:bg-cyan-500/20"
               >
@@ -1040,6 +1128,30 @@ export default function DetailModal() {
           </div>
         </div>
       </div>
+
+      {showSliceDialog && currentOutputPreviewSrc && (
+        <ImageSliceDialog
+          source={currentOutputPreviewSrc}
+          initialSliceCount={task.category?.aPlusPlanContext?.sliceCount ?? 2}
+          format={task.category?.aPlusType === 'mobile' ? 'mobile' : 'premium'}
+          busy={sliceBusy}
+          onClose={() => {
+            if (!sliceBusy) setShowSliceDialog(false)
+          }}
+          onConfirm={handleConfirmSlice}
+        />
+      )}
+
+      {showMobileConversionDialog && (
+        <MobileAPlusConversionDialog
+          initialPanelCount={mobileConversionPanelCount}
+          busy={mobileConversionBusy}
+          onClose={() => {
+            if (!mobileConversionBusy) setShowMobileConversionDialog(false)
+          }}
+          onConfirm={(panelCount) => void handleConfirmMobileConversion(panelCount)}
+        />
+      )}
 
       {showRawUrlsModal && rawImageUrls.length > 0 && (
         <div

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { addImageFromFile, applyGuestUnifiedApiUrl, ensureImageCached, generatePlannerStyleReferenceImage, submitTask, useStore } from '../store'
-import { getAmazonPlannerProfile, isOfficialDeepSeekPlannerProfile, validateApiProfile } from '../lib/apiProfiles'
+import { getActiveApiProfile, getAmazonPlannerProfile, isOfficialDeepSeekPlannerProfile, validateApiProfile } from '../lib/apiProfiles'
 import {
   DEFAULT_AMAZON_PROMPT_DRAFT,
   type AmazonPromptDraft,
 } from '../lib/amazonPrompt'
 import {
   A_PLUS_CONTENT_TYPES,
+  buildPremiumAPlusComposedModuleSpecs,
   buildAmazonAPlusPlanOnlyPrompt,
   buildAmazonAPlusPlanPrompt,
   buildAmazonPlanPrompt,
@@ -59,8 +60,10 @@ import {
   sanitizeStyleReferenceEditState,
 } from '../lib/styleReferences'
 import { AMAZON_GENERATION_DEFAULTS, DEFAULT_PARAMS } from '../types'
-import type { AmazonAiVisualStyle, AmazonPlannerSession, AmazonVisualStyleMode, CustomStyleReference, StyleReferenceEditState } from '../types'
+import type { AmazonAiVisualStyle, AmazonPlannerSession, AmazonVisualStyleMode, CustomStyleReference, PremiumAPlusLayoutGroup, PremiumAPlusLayoutMode, StyleReferenceEditState } from '../types'
+import { normalizePremiumAPlusGroups } from '../lib/premiumAPlusLayout'
 import StyleReferenceEditorModal from './StyleReferenceEditorModal'
+import PremiumAPlusLayoutEditor from './PremiumAPlusLayoutEditor'
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, EditIcon, EyeIcon, HistoryIcon, PhotoIcon, PlusIcon, RefreshIcon, TrashIcon } from './icons'
 
 const FIELD_CLASS = 'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-100 dark:placeholder:text-gray-500'
@@ -377,6 +380,7 @@ export default function AmazonPlanner() {
   const clearInputImages = useStore((s) => s.clearInputImages)
   const setInputImages = useStore((s) => s.setInputImages)
   const setStyleReferenceImage = useStore((s) => s.setStyleReferenceImage)
+  const setStyleReferenceImageIfEmpty = useStore((s) => s.setStyleReferenceImageIfEmpty)
   const clearStyleReferenceImage = useStore((s) => s.clearStyleReferenceImage)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const showToast = useStore((s) => s.showToast)
@@ -391,6 +395,10 @@ export default function AmazonPlanner() {
   const [plannerMode, setPlannerMode] = useState<AmazonPlannerMode>('listing')
   const [aPlusType, setAPlusType] = useState<APlusContentType>('standard-large')
   const [aPlusModuleSpecsByType, setAPlusModuleSpecsByType] = useState<APlusModuleSpecsByType>({})
+  const [premiumLayoutMode, setPremiumLayoutMode] = useState<PremiumAPlusLayoutMode>('independent')
+  const [premiumLayoutGroups, setPremiumLayoutGroups] = useState<PremiumAPlusLayoutGroup[]>(() => normalizePremiumAPlusGroups(null))
+  const [premiumBrandStoryEnabled, setPremiumBrandStoryEnabled] = useState(false)
+  const [premiumBrandStoryCardCount, setPremiumBrandStoryCardCount] = useState(3)
   const [listingText, setListingText] = useState('')
   const [imagePlans, setImagePlans] = useState<AmazonImagePlan[]>([])
   const [aPlusPlans, setAPlusPlans] = useState<AmazonAPlusPlan[]>([])
@@ -431,12 +439,21 @@ export default function AmazonPlanner() {
   const [mobileActionDock, setMobileActionDock] = useState<MobileActionDock>(null)
   const resolutionTier = resolution === '4k' ? '4K' : '2K'
   const listingSlotRange = formatAmazonListingSlotRange(listingImageCount)
-  const aPlusSpecs = useMemo(
+  const independentAPlusSpecs = useMemo(
     () => normalizeAPlusModuleSpecs(aPlusType, aPlusModuleSpecsByType[aPlusType]),
     [aPlusModuleSpecsByType, aPlusType],
   )
+  const composedAPlusSpecs = useMemo(
+    () => buildPremiumAPlusComposedModuleSpecs(premiumLayoutGroups, {
+      brandStoryEnabled: premiumBrandStoryEnabled,
+      brandStoryCardCount: premiumBrandStoryCardCount,
+    }),
+    [premiumBrandStoryCardCount, premiumBrandStoryEnabled, premiumLayoutGroups],
+  )
+  const usesPremiumComposedLayout = aPlusType === 'premium' && premiumLayoutMode === 'composed'
+  const aPlusSpecs = usesPremiumComposedLayout ? composedAPlusSpecs : independentAPlusSpecs
   const aPlusDefaultSpecs = useMemo(() => getAPlusModuleSpecs(aPlusType), [aPlusType])
-  const aPlusSpecsAreDefault = areAPlusModuleSpecsEquivalent(aPlusSpecs, aPlusDefaultSpecs)
+  const aPlusSpecsAreDefault = !usesPremiumComposedLayout && areAPlusModuleSpecsEquivalent(aPlusSpecs, aPlusDefaultSpecs)
   const aPlusPlansWithSizes = useMemo(() => withAPlusGenerationSizes(aPlusPlans, resolutionTier), [aPlusPlans, resolutionTier])
   const selectedPlan = selectedPlanIndex == null ? null : imagePlans[selectedPlanIndex] ?? null
   const selectedAPlusPlan = selectedAPlusPlanIndex == null ? null : aPlusPlansWithSizes[selectedAPlusPlanIndex] ?? null
@@ -504,10 +521,18 @@ export default function AmazonPlanner() {
     ? applyGuestUnifiedApiUrl(configuredPlannerProfile, 'planner', adminAccess, isAdminAuthenticated)
     : null
   const plannerProfileValidation = plannerProfile ? validateApiProfile(plannerProfile) : '未选择支持 Chat Completions 或 Responses API 的 AI 策划配置'
+  const imageProfile = applyGuestUnifiedApiUrl(getActiveApiProfile(settings), 'image', adminAccess, isAdminAuthenticated)
   const plannerApiLabel = plannerProfile?.apiMode === 'chat' ? 'Chat Completions' : 'Responses API'
   const plannerUsesOfficialDeepSeek = plannerProfile ? isOfficialDeepSeekPlannerProfile(plannerProfile) : false
   const listingTargetSize = resolution === '4k' ? '4096x4096' : '2048x2048'
   const targetSize = plannerMode === 'aplus' && selectedAPlusPlan ? selectedAPlusPlan.generationSize : listingTargetSize
+  const selectedMotherSliceCount = selectedAPlusPlan?.planContext?.groupKind === 'continuous-canvas'
+    ? selectedAPlusPlan.planContext.sliceCount ?? 2
+    : null
+  const imageProfileMotherSliceLimit = Math.min(7, Math.max(2, imageProfile.maxMotherSlices ?? 7))
+  const motherImageCapabilityBlocked = selectedMotherSliceCount != null && (
+    imageProfile.motherImageSupport === 'unsupported' || selectedMotherSliceCount > imageProfileMotherSliceLimit
+  )
   const generationParamLabel = `${AMAZON_GENERATION_DEFAULTS.output_format.toUpperCase()} / ${AMAZON_GENERATION_DEFAULTS.quality} / 无压缩`
   const visiblePlanCount = plannerMode === 'aplus' ? aPlusPlansWithSizes.length : imagePlans.length
   const visiblePlanIndex = plannerMode === 'aplus' ? selectedAPlusPlanIndex : selectedPlanIndex
@@ -515,7 +540,7 @@ export default function AmazonPlanner() {
   const actionLabel = plannerMode === 'aplus' ? selectedAPlusPlan?.label : selectedPlan?.label
   const showStickyActions = plannerMode === 'aplus' ? aPlusPlansWithSizes.length > 0 : imagePlans.length > 0
   const actionDisabled = plannerMode === 'aplus' ? !selectedAPlusPlan : !activePrompt.trim()
-  const submitDisabled = actionDisabled || (styleReferenceRequired && !hasStyleReference) || styleReferenceLimitExceeded
+  const submitDisabled = actionDisabled || (styleReferenceRequired && !hasStyleReference) || styleReferenceLimitExceeded || motherImageCapabilityBlocked
   const hasPlanOptions = visiblePlanCount > 0
   const hasSelectedPlan = plannerMode === 'aplus' ? Boolean(selectedAPlusPlan) : Boolean(selectedPlan)
   const canGoPrev = visiblePlanCount > 0 && visiblePlanIndex != null && visiblePlanIndex > 0
@@ -691,6 +716,10 @@ export default function AmazonPlanner() {
       aPlusModuleSpecs: hasOverride('aPlusModuleSpecs')
         ? overrides.aPlusModuleSpecs
         : getAPlusModuleSpecsForSession(aPlusModuleSpecsByType),
+      premiumLayoutMode: overrides.premiumLayoutMode ?? premiumLayoutMode,
+      premiumLayoutGroups: overrides.premiumLayoutGroups ?? premiumLayoutGroups,
+      premiumBrandStoryEnabled: overrides.premiumBrandStoryEnabled ?? premiumBrandStoryEnabled,
+      premiumBrandStoryCardCount: overrides.premiumBrandStoryCardCount ?? premiumBrandStoryCardCount,
       listingText: snapshotListingText,
       referenceImageIds: overrides.referenceImageIds ?? inputImages.map((image) => image.id),
       draft: overrides.draft ?? toSessionDraft(draft),
@@ -762,6 +791,16 @@ export default function AmazonPlanner() {
       showToast(`已选择风格参考图，实际参考图数量不能超过 ${referenceImageUploadLimit} 张；请删除一张产品参考图后再提交。`, 'error')
       return false
     }
+    if (motherImageCapabilityBlocked && selectedMotherSliceCount != null) {
+      showToast(
+        imageProfile.motherImageSupport === 'unsupported'
+          ? `当前生图配置「${imageProfile.name}」已标记为不支持连续母图。`
+          : `当前生图配置「${imageProfile.name}」最多支持 ${imageProfileMotherSliceLimit} 片，本次需要 ${selectedMotherSliceCount} 片。`,
+        'error',
+      )
+      setShowSettings(true, 'api')
+      return false
+    }
 
     setPrompt(promptText)
     if (usesStyleReferenceForActivePlan && selectedStyleImage?.imageId) {
@@ -780,6 +819,14 @@ export default function AmazonPlanner() {
         workflow: plannerMode === 'aplus' ? 'amazon-aplus' : 'amazon-listing',
         amazonSlot: plannerMode === 'aplus' ? selectedAPlusPlan?.slot : selectedPlan?.slot,
         ...(plannerMode === 'aplus' ? { aPlusType } : {}),
+        ...(plannerMode === 'aplus' && selectedAPlusPlan?.planContext
+          ? {
+              aPlusPlanContext: {
+                ...selectedAPlusPlan.planContext,
+                ...(currentPlannerSessionId ? { plannerSessionId: currentPlannerSessionId } : {}),
+              },
+            }
+          : {}),
         ...(usesStyleReferenceForActivePlan && selectedStyleImage?.imageId ? { styleReferenceImageId: selectedStyleImage.imageId } : {}),
       },
     })
@@ -900,6 +947,7 @@ export default function AmazonPlanner() {
         palette: style.palette,
       }
       setAiStyleReference(reference)
+      setStyleReferenceImageIfEmpty({ id: image.id, dataUrl: image.dataUrl })
 
       if (baseSession) {
         const nextSession: AmazonPlannerSession = {
@@ -1219,6 +1267,10 @@ export default function AmazonPlanner() {
       mode: result.mode,
       listingImageCount,
       aPlusModuleSpecs: getAPlusModuleSpecsForSession(aPlusModuleSpecsByType),
+      premiumLayoutMode,
+      premiumLayoutGroups,
+      premiumBrandStoryEnabled,
+      premiumBrandStoryCardCount,
       draft: toSessionDraft(nextDraft),
       seriesStyleGuides: nextSeriesStyleGuides,
       visualStyleMode,
@@ -1437,6 +1489,38 @@ export default function AmazonPlanner() {
     }
   }
 
+  const changePremiumLayoutMode = (mode: PremiumAPlusLayoutMode) => {
+    if (mode === premiumLayoutMode || isPlanning) return
+    setPremiumLayoutMode(mode)
+    setAPlusPlans([])
+    setSelectedAPlusPlanIndex(null)
+    setSeriesStyleGuides((current) => ({ ...current, aplus: '' }))
+    setActionProgress({})
+    setActionPromptModes({})
+    updateCurrentPlannerSession({
+      premiumLayoutMode: mode,
+      aPlusPlans: [],
+      selectedAPlusPlanIndex: null,
+    })
+  }
+
+  const changePremiumLayoutGroups = (groups: PremiumAPlusLayoutGroup[]) => {
+    const normalized = normalizePremiumAPlusGroups(groups)
+    setPremiumLayoutGroups(normalized)
+    updateCurrentPlannerSession({ premiumLayoutGroups: normalized })
+  }
+
+  const changePremiumBrandStoryEnabled = (enabled: boolean) => {
+    setPremiumBrandStoryEnabled(enabled)
+    updateCurrentPlannerSession({ premiumBrandStoryEnabled: enabled })
+  }
+
+  const changePremiumBrandStoryCardCount = (count: number) => {
+    const normalized = Math.min(5, Math.max(1, Math.trunc(count || 1)))
+    setPremiumBrandStoryCardCount(normalized)
+    updateCurrentPlannerSession({ premiumBrandStoryCardCount: normalized })
+  }
+
   const changeListingImageCount = (value: string) => {
     const nextCount = normalizeListingImageCount(value)
     setListingImageCount(nextCount)
@@ -1640,6 +1724,10 @@ export default function AmazonPlanner() {
     })) as AmazonAPlusPlan[]
     setPlannerMode(session.mode)
     setAPlusType(session.aPlusType)
+    setPremiumLayoutMode(session.premiumLayoutMode ?? 'independent')
+    setPremiumLayoutGroups(normalizePremiumAPlusGroups(session.premiumLayoutGroups))
+    setPremiumBrandStoryEnabled(session.premiumBrandStoryEnabled === true)
+    setPremiumBrandStoryCardCount(Math.min(5, Math.max(1, session.premiumBrandStoryCardCount ?? 3)))
     setResolution(session.resolution)
     setListingImageCount(getSessionListingImageCount(session))
     setAPlusModuleSpecsByType(restoredAPlusModuleSpecsByType)
@@ -1930,22 +2018,42 @@ export default function AmazonPlanner() {
               </div>
             )}
             {plannerMode === 'aplus' && (
-              <div className="mt-3 inline-flex rounded-xl border border-gray-200 bg-gray-100 p-1 dark:border-white/[0.08] dark:bg-white/[0.04]">
-                {([
-                  ['standard-large', '普通A+'],
-                  ['standard', '标准A+'],
-                  ['premium', '高级A+'],
-                  ['mobile', '手机A+'],
-                ] as const).map(([type, label]) => (
-                  <button
-                    key={type}
-                    type="button"
-                    onClick={() => changeAPlusType(type)}
-                    className={`h-8 rounded-lg px-3 text-sm font-medium transition ${aPlusType === type ? 'bg-white text-gray-900 shadow-sm dark:bg-white/10 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
-                  >
-                    {label}
-                  </button>
-                ))}
+              <div className="mt-3 space-y-2">
+                <div className="inline-flex rounded-xl border border-gray-200 bg-gray-100 p-1 dark:border-white/[0.08] dark:bg-white/[0.04]">
+                  {([
+                    ['standard-large', '普通A+'],
+                    ['standard', '标准A+'],
+                    ['premium', '高级A+'],
+                    ['mobile', '手机A+'],
+                  ] as const).map(([type, label]) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => changeAPlusType(type)}
+                      className={`h-8 rounded-lg px-3 text-sm font-medium transition ${aPlusType === type ? 'bg-white text-gray-900 shadow-sm dark:bg-white/10 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {aPlusType === 'premium' && (
+                  <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5 dark:border-white/[0.08] dark:bg-gray-950">
+                    {([
+                      ['independent', '独立模块'],
+                      ['composed', '自由编排'],
+                    ] as const).map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        disabled={isPlanning}
+                        onClick={() => changePremiumLayoutMode(mode)}
+                        className={`h-8 rounded-md px-3 text-xs font-semibold transition ${premiumLayoutMode === mode ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-950' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.05] dark:hover:text-gray-100'}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             <label className={`mt-3 block rounded-xl transition ${getGuideFocusClass(guideState.target === 'planner-input')}`}>
@@ -2637,6 +2745,17 @@ export default function AmazonPlanner() {
                       <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
                         {targetSize} / {generationParamLabel}{plannerMode === 'aplus' && selectedAPlusPlan ? ` · 上传建议 ${selectedAPlusPlan.uploadSize}` : ''}
                       </div>
+                      {selectedMotherSliceCount != null && (
+                        <div className={`mt-1.5 text-[11px] font-medium ${motherImageCapabilityBlocked ? 'text-red-600 dark:text-red-300' : imageProfile.motherImageSupport === 'supported' ? 'text-emerald-600 dark:text-emerald-300' : 'text-amber-600 dark:text-amber-300'}`}>
+                          {motherImageCapabilityBlocked
+                            ? imageProfile.motherImageSupport === 'unsupported'
+                              ? `当前生图配置已标记为不支持单母图。`
+                              : `当前配置最多支持 ${imageProfileMotherSliceLimit} 片，本次需要 ${selectedMotherSliceCount} 片。`
+                            : imageProfile.motherImageSupport === 'supported'
+                              ? `当前配置确认支持最多 ${imageProfileMotherSliceLimit} 片；本次只发送 1 个母图请求。`
+                              : `当前配置将自动尝试 ${selectedMotherSliceCount} 片单母图；失败时不会自动拆分请求。`}
+                        </div>
+                      )}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <button
@@ -2831,6 +2950,16 @@ export default function AmazonPlanner() {
                       <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-500 dark:text-gray-400">
                         <span className="rounded-md bg-white/70 px-2 py-0.5 dark:bg-white/[0.05]">上传 {plan.uploadSize}</span>
                         <span className="rounded-md bg-white/70 px-2 py-0.5 dark:bg-white/[0.05]">生成 {plan.generationSize}</span>
+                        {plan.planContext?.groupKind === 'continuous-canvas' && plan.planContext.sliceCount && (
+                          <span className="rounded-md bg-amber-50 px-2 py-0.5 font-semibold text-amber-700 dark:bg-amber-400/10 dark:text-amber-200">
+                            单母图 · 完成后切 {plan.planContext.sliceCount} 片
+                          </span>
+                        )}
+                        {plan.planContext?.groupKind === 'lifestyle-carousel' && (
+                          <span className="rounded-md bg-cyan-50 px-2 py-0.5 font-semibold text-cyan-700 dark:bg-cyan-400/10 dark:text-cyan-200">
+                            轮播第 {plan.planContext.itemIndex + 1} 张
+                          </span>
+                        )}
                       </div>
                       <div className="mt-2 space-y-1.5 text-xs leading-relaxed">
                         <div className="text-gray-500 dark:text-gray-400" title={moduleObjective}>
@@ -2859,6 +2988,18 @@ export default function AmazonPlanner() {
           )}
           {plannerMode === 'aplus' && aPlusPlansWithSizes.length === 0 && (
             <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-white/[0.08] dark:bg-gray-950">
+              {usesPremiumComposedLayout ? (
+                <PremiumAPlusLayoutEditor
+                  groups={premiumLayoutGroups}
+                  onChange={changePremiumLayoutGroups}
+                  brandStoryEnabled={premiumBrandStoryEnabled}
+                  onBrandStoryEnabledChange={changePremiumBrandStoryEnabled}
+                  brandStoryCardCount={premiumBrandStoryCardCount}
+                  onBrandStoryCardCountChange={changePremiumBrandStoryCardCount}
+                  disabled={isPlanning}
+                />
+              ) : (
+                <>
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div>
                   <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">A+ 模块编排</div>
@@ -2930,6 +3071,8 @@ export default function AmazonPlanner() {
                   </div>
                 ))}
               </div>
+                </>
+              )}
             </div>
           )}
           <div className="grid grid-cols-2 gap-2">

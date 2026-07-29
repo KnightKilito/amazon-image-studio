@@ -240,6 +240,26 @@ describe('mask draft lifecycle in store actions', () => {
     })
   })
 
+  it('fills the style reference slot when it is empty', () => {
+    const generatedStyleImage = { id: 'generated-style', dataUrl: 'data:image/png;base64,generated-style' }
+
+    const inserted = useStore.getState().setStyleReferenceImageIfEmpty(generatedStyleImage)
+
+    expect(inserted).toBe(true)
+    expect(useStore.getState().styleReferenceImage).toEqual(generatedStyleImage)
+  })
+
+  it('preserves an existing style reference when an AI style image finishes later', () => {
+    const existingStyleImage = { id: 'manual-style', dataUrl: 'data:image/png;base64,manual-style' }
+    const generatedStyleImage = { id: 'generated-style', dataUrl: 'data:image/png;base64,generated-style' }
+    useStore.getState().setStyleReferenceImage(existingStyleImage)
+
+    const inserted = useStore.getState().setStyleReferenceImageIfEmpty(generatedStyleImage)
+
+    expect(inserted).toBe(false)
+    expect(useStore.getState().styleReferenceImage).toEqual(existingStyleImage)
+  })
+
   it('replaces the current draft with one output image when quick editing output', async () => {
     await putImage(imageB)
     const maskDraft = {
@@ -769,6 +789,109 @@ describe('mask draft lifecycle in store actions', () => {
         workflow: 'amazon-aplus',
         amazonSlot: 'A+M01',
         aPlusType: 'mobile',
+      },
+    })
+  })
+
+  it('uses the explicit Mobile A+ panel count for legacy tasks without mother-image metadata', async () => {
+    const outputImage = { id: 'legacy-mobile-mother-output', dataUrl: 'data:image/png;base64,legacy-mobile-mother' }
+    await clearImages()
+    await putImage(outputImage)
+
+    await convertOutputToAPlusFormat(task({
+      outputImages: [outputImage.id],
+      params: { ...DEFAULT_PARAMS, size: '2928x2400' },
+      category: {
+        productTitle: 'Legacy Continuous Shoes',
+        workflow: 'amazon-aplus',
+        amazonSlot: 'A+P01',
+        aPlusType: 'premium',
+      },
+    }), outputImage.id, 'mobile', 2)
+
+    const state = useStore.getState()
+    expect(state.prompt).toContain('1200x1800')
+    expect(state.prompt).toContain('2 片连续母图')
+    expect(state.params.size).toBe('1200x1800')
+    expect(state.pendingTaskCategory).toMatchObject({
+      category: {
+        aPlusType: 'mobile',
+        aPlusPlanContext: {
+          layoutMode: 'composed',
+          groupKind: 'continuous-canvas',
+          sliceCount: 2,
+          slotCost: 2,
+          plannedGenerationSize: '1200x1800',
+        },
+      },
+    })
+  })
+
+  it('lets an explicit single-panel choice override stale mother-image metadata', async () => {
+    const outputImage = { id: 'single-mobile-output', dataUrl: 'data:image/png;base64,single-mobile' }
+    await clearImages()
+    await putImage(outputImage)
+
+    await convertOutputToAPlusFormat(task({
+      outputImages: [outputImage.id],
+      category: {
+        workflow: 'amazon-aplus',
+        aPlusType: 'premium',
+        aPlusPlanContext: {
+          layoutMode: 'composed',
+          groupId: 'old-three-panel-group',
+          groupKind: 'continuous-canvas',
+          itemIndex: 0,
+          sliceCount: 3,
+          slotCost: 3,
+          plannedGenerationSize: '2928x3600',
+        },
+      },
+    }), outputImage.id, 'mobile', 1)
+
+    const state = useStore.getState()
+    expect(state.params.size).toBe('1200x900')
+    expect(state.pendingTaskCategory?.category).not.toHaveProperty('aPlusPlanContext')
+  })
+
+  it('preserves continuous mother-image panel count when converting to Mobile A+', async () => {
+    const outputImage = { id: 'mobile-mother-output', dataUrl: 'data:image/png;base64,mobile-mother' }
+    await clearImages()
+    await putImage(outputImage)
+
+    await convertOutputToAPlusFormat(task({
+      outputImages: [outputImage.id],
+      params: { ...DEFAULT_PARAMS, size: '2928x3600' },
+      category: {
+        productTitle: 'Continuous Mobile Shoes',
+        workflow: 'amazon-aplus',
+        amazonSlot: 'A+F01-M',
+        aPlusType: 'premium',
+        aPlusPlanContext: {
+          layoutMode: 'composed',
+          groupId: 'continuous-mobile-test',
+          groupKind: 'continuous-canvas',
+          itemIndex: 0,
+          sliceCount: 3,
+          slotCost: 3,
+          plannedGenerationSize: '2928x3600',
+        },
+      },
+    }), outputImage.id, 'mobile')
+
+    const state = useStore.getState()
+    expect(state.prompt).toContain('1200x2700')
+    expect(state.prompt).toContain('3 片连续母图')
+    expect(state.prompt).toContain('不得拆成 3 张独立图片')
+    expect(state.params.size).toBe('1200x2700')
+    expect(state.pendingTaskCategory).toMatchObject({
+      category: {
+        aPlusType: 'mobile',
+        aPlusPlanContext: {
+          groupKind: 'continuous-canvas',
+          sliceCount: 3,
+          plannedGenerationSize: '1200x2700',
+        },
       },
     })
   })

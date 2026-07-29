@@ -1,6 +1,21 @@
 import type { AmazonImageKind, AmazonPromptDraft } from './amazonPrompt'
-import type { AmazonStyleDensityMode } from '../types'
+import type {
+  AmazonStyleDensityMode,
+  PremiumAPlusLayoutGroup,
+  PremiumAPlusPlanContext,
+} from '../types'
 import { calculateImageSize, type SizeTier } from './size'
+import {
+  PREMIUM_A_PLUS_SLICE_HEIGHT,
+  PREMIUM_A_PLUS_SLICE_WIDTH,
+  PREMIUM_A_PLUS_UPLOAD_SLICE_HEIGHT,
+  PREMIUM_A_PLUS_UPLOAD_SLICE_WIDTH,
+  getPremiumAPlusGroupSlotCost,
+  getPremiumAPlusGroupKindLabel,
+  getPremiumAPlusPurposeLabel,
+  getPremiumMotherImageSize,
+  normalizePremiumAPlusGroups,
+} from './premiumAPlusLayout'
 
 export type AmazonPlannerMode = 'listing' | 'aplus'
 export type { AmazonStyleDensityMode } from '../types'
@@ -12,6 +27,10 @@ export type APlusModuleKind =
   | 'hero-banner'
   | 'feature-image'
   | 'brand-story'
+  | 'continuous-canvas'
+  | 'carousel-slide'
+  | 'brand-story-background'
+  | 'brand-story-card'
   | 'logo'
   | 'comparison-thumbnail'
 
@@ -26,6 +45,10 @@ const A_PLUS_MODULE_KINDS: APlusModuleKind[] = [
   'hero-banner',
   'feature-image',
   'brand-story',
+  'continuous-canvas',
+  'carousel-slide',
+  'brand-story-background',
+  'brand-story-card',
   'logo',
   'comparison-thumbnail',
 ]
@@ -54,6 +77,9 @@ export interface AmazonAPlusModuleSpec {
   uploadWidth: number
   uploadHeight: number
   objective: string
+  planContext?: PremiumAPlusPlanContext
+  exactGenerationWidth?: number
+  exactGenerationHeight?: number
 }
 
 export interface AmazonAPlusPlan {
@@ -68,6 +94,141 @@ export interface AmazonAPlusPlan {
   textBody: string
   prompt: string
   negativePrompt: string
+  planContext?: PremiumAPlusPlanContext
+}
+
+export function buildPremiumAPlusComposedModuleSpecs(
+  groups: Array<Partial<PremiumAPlusLayoutGroup>>,
+  options: { brandStoryEnabled?: boolean; brandStoryCardCount?: number } = {},
+): AmazonAPlusModuleSpec[] {
+  const normalizedGroups = normalizePremiumAPlusGroups(groups)
+  const specs: AmazonAPlusModuleSpec[] = []
+
+  normalizedGroups.forEach((group, groupIndex) => {
+    const groupNumber = String(groupIndex + 1).padStart(2, '0')
+    const slotCost = getPremiumAPlusGroupSlotCost(group)
+    const baseContext = {
+      layoutMode: 'composed' as const,
+      groupId: group.id,
+      groupKind: group.kind,
+      groupPurpose: group.purpose,
+      slotCost,
+    }
+    const objective = [group.objective, group.customInstruction].filter(Boolean).join(' ')
+
+    if (group.kind === 'continuous-canvas') {
+      const sliceCount = group.sliceCount ?? 2
+      specs.push({
+        contentType: 'premium',
+        slot: `A+F${groupNumber}-M`,
+        label: `${sliceCount}-Panel Continuous Mother Image`,
+        displayLabel: `${sliceCount}片连续母图`,
+        moduleType: 'continuous-canvas',
+        uploadWidth: PREMIUM_A_PLUS_UPLOAD_SLICE_WIDTH,
+        uploadHeight: PREMIUM_A_PLUS_UPLOAD_SLICE_HEIGHT,
+        exactGenerationWidth: PREMIUM_A_PLUS_SLICE_WIDTH,
+        exactGenerationHeight: PREMIUM_A_PLUS_SLICE_HEIGHT * sliceCount,
+        objective,
+        planContext: {
+          ...baseContext,
+          itemIndex: 0,
+          sliceCount,
+          plannedGenerationSize: getPremiumMotherImageSize(sliceCount),
+        },
+      })
+      return
+    }
+
+    if (group.kind === 'lifestyle-carousel') {
+      const slideCount = group.slideCount ?? 3
+      for (let slideIndex = 0; slideIndex < slideCount; slideIndex += 1) {
+        specs.push({
+          contentType: 'premium',
+          slot: `A+F${groupNumber}-C${String(slideIndex + 1).padStart(2, '0')}`,
+          label: `Lifestyle Carousel Slide ${slideIndex + 1}`,
+          displayLabel: `场景轮播 ${slideIndex + 1}`,
+          moduleType: 'carousel-slide',
+          uploadWidth: PREMIUM_A_PLUS_UPLOAD_SLICE_WIDTH,
+          uploadHeight: PREMIUM_A_PLUS_UPLOAD_SLICE_HEIGHT,
+          exactGenerationWidth: PREMIUM_A_PLUS_SLICE_WIDTH,
+          exactGenerationHeight: PREMIUM_A_PLUS_SLICE_HEIGHT,
+          objective: `${objective} 这是同一轮播组的第 ${slideIndex + 1} 张，需与其他轮播图保持产品、人物和视觉系统一致，同时改变场景、姿态或取景。`,
+          planContext: {
+            ...baseContext,
+            itemIndex: slideIndex,
+            plannedGenerationSize: `${PREMIUM_A_PLUS_SLICE_WIDTH}x${PREMIUM_A_PLUS_SLICE_HEIGHT}`,
+          },
+        })
+      }
+      return
+    }
+
+    specs.push({
+      contentType: 'premium',
+      slot: `A+F${groupNumber}`,
+      label: `${getPremiumAPlusPurposeLabel(group.purpose)} Independent Image`,
+      displayLabel: group.label || getPremiumAPlusGroupKindLabel(group.kind),
+      moduleType: 'feature-image',
+      uploadWidth: PREMIUM_A_PLUS_UPLOAD_SLICE_WIDTH,
+      uploadHeight: PREMIUM_A_PLUS_UPLOAD_SLICE_HEIGHT,
+      exactGenerationWidth: PREMIUM_A_PLUS_SLICE_WIDTH,
+      exactGenerationHeight: PREMIUM_A_PLUS_SLICE_HEIGHT,
+      objective,
+      planContext: {
+        ...baseContext,
+        itemIndex: 0,
+        plannedGenerationSize: `${PREMIUM_A_PLUS_SLICE_WIDTH}x${PREMIUM_A_PLUS_SLICE_HEIGHT}`,
+      },
+    })
+  })
+
+  if (options.brandStoryEnabled) {
+    specs.push({
+      contentType: 'premium',
+      slot: 'A+BS-BG',
+      label: 'Product-Specific Brand Story Background',
+      displayLabel: '品牌故事背景',
+      moduleType: 'brand-story-background',
+      uploadWidth: 1464,
+      uploadHeight: 625,
+      exactGenerationWidth: 2928,
+      exactGenerationHeight: 1250,
+      objective: '为当前产品设计专属品牌故事背景。默认使用穿着本品的模特作为一侧视觉锚点，另一侧延展安静场景并预留卡片安全区域，不得生成通用品牌横幅。',
+      planContext: {
+        layoutMode: 'composed',
+        groupId: 'premium-brand-story',
+        groupKind: 'brand-story',
+        itemIndex: 0,
+        slotCost: 0,
+        plannedGenerationSize: '2928x1250',
+      },
+    })
+    const cardCount = Math.min(5, Math.max(1, Math.trunc(options.brandStoryCardCount ?? 3)))
+    for (let index = 0; index < cardCount; index += 1) {
+      specs.push({
+        contentType: 'premium',
+        slot: `A+BS-C${String(index + 1).padStart(2, '0')}`,
+        label: `Product-Specific Brand Story Card ${index + 1}`,
+        displayLabel: `品牌故事卡片 ${index + 1}`,
+        moduleType: 'brand-story-card',
+        uploadWidth: 463,
+        uploadHeight: 625,
+        exactGenerationWidth: 926,
+        exactGenerationHeight: 1250,
+        objective: `围绕当前产品策划第 ${index + 1} 张品牌故事卡片，可承担产品故事、品牌理念、模特场景、产品细节或系列展示，不得使用可套用到任意商品的空泛内容。`,
+        planContext: {
+          layoutMode: 'composed',
+          groupId: 'premium-brand-story',
+          groupKind: 'brand-story',
+          itemIndex: index + 1,
+          slotCost: 0,
+          plannedGenerationSize: '926x1250',
+        },
+      })
+    }
+  }
+
+  return specs
 }
 
 export const STANDARD_A_PLUS_MODULE_SPECS: AmazonAPlusModuleSpec[] = [
@@ -531,12 +692,13 @@ export function normalizeAPlusModuleSpecs(
   const sourceSpecs = Array.isArray(specs) && specs.length ? specs : fallbackSpecs
   const fallbackByModuleType = new Map(fallbackSpecs.map((spec) => [spec.moduleType, spec]))
   const moduleTypeCounts = new Map<APlusModuleKind, number>()
+  const maxCount = sourceSpecs.some((spec) => spec.planContext?.layoutMode === 'composed') ? 24 : MAX_A_PLUS_MODULE_COUNT
   const normalizedSource = sourceSpecs
-    .slice(0, MAX_A_PLUS_MODULE_COUNT)
+    .slice(0, maxCount)
     .filter((spec) => isAPlusModuleKind(spec.moduleType))
 
   const safeSource = normalizedSource.length ? normalizedSource : fallbackSpecs
-  return safeSource.slice(0, MAX_A_PLUS_MODULE_COUNT).map((spec, index) => {
+  return safeSource.slice(0, maxCount).map((spec, index) => {
     const fallback = fallbackByModuleType.get(spec.moduleType as APlusModuleKind) ?? fallbackSpecs[index] ?? fallbackSpecs[0]
     const moduleType = isAPlusModuleKind(spec.moduleType) ? spec.moduleType : fallback.moduleType
     const nextOrdinal = (moduleTypeCounts.get(moduleType) ?? 0) + 1
@@ -544,13 +706,16 @@ export function normalizeAPlusModuleSpecs(
     const text = getAPlusModuleTypeText(type, moduleType, nextOrdinal)
     return {
       contentType: type,
-      slot: `${getAPlusModuleSlotPrefix(type)}${String(index + 1).padStart(2, '0')}`,
-      label: text.label,
-      displayLabel: text.displayLabel,
+      slot: spec.planContext?.layoutMode === 'composed' && spec.slot ? spec.slot : `${getAPlusModuleSlotPrefix(type)}${String(index + 1).padStart(2, '0')}`,
+      label: spec.planContext?.layoutMode === 'composed' && spec.label ? spec.label : text.label,
+      displayLabel: spec.planContext?.layoutMode === 'composed' && spec.displayLabel ? spec.displayLabel : text.displayLabel,
       moduleType,
       uploadWidth: normalizeAPlusDimension(spec.uploadWidth, fallback.uploadWidth),
       uploadHeight: normalizeAPlusDimension(spec.uploadHeight, fallback.uploadHeight),
       objective: typeof spec.objective === 'string' && spec.objective.trim() ? spec.objective : fallback.objective,
+      ...(spec.planContext ? { planContext: { ...spec.planContext } } : {}),
+      ...(spec.exactGenerationWidth ? { exactGenerationWidth: normalizeAPlusDimension(spec.exactGenerationWidth, spec.uploadWidth ?? fallback.uploadWidth) } : {}),
+      ...(spec.exactGenerationHeight ? { exactGenerationHeight: normalizeAPlusDimension(spec.exactGenerationHeight, spec.uploadHeight ?? fallback.uploadHeight) } : {}),
     }
   })
 }
@@ -644,6 +809,14 @@ export function getAPlusModuleDisplayName(module: (Pick<AmazonAPlusPlan, 'slot' 
       return '高级大图模块'
     case 'brand-story':
       return '品牌故事'
+    case 'continuous-canvas':
+      return '连续母图'
+    case 'carousel-slide':
+      return '场景轮播图'
+    case 'brand-story-background':
+      return '品牌故事背景'
+    case 'brand-story-card':
+      return '品牌故事卡片'
     case 'logo':
       return '品牌 Logo'
     case 'comparison-thumbnail':
@@ -667,15 +840,27 @@ export function formatAPlusModuleText(plan: Pick<AmazonAPlusPlan, 'textTitle' | 
   return [plan.textTitle.trim(), plan.textBody.trim()].filter(Boolean).join('\n\n')
 }
 
-export function getAPlusModuleUploadSize(spec: Pick<AmazonAPlusModuleSpec, 'uploadWidth' | 'uploadHeight'>): string {
+export function getAPlusModuleUploadSize(spec: Pick<AmazonAPlusModuleSpec, 'uploadWidth' | 'uploadHeight' | 'planContext'>): string {
+  if (spec.planContext?.groupKind === 'continuous-canvas' && spec.planContext.sliceCount) {
+    return `${spec.uploadWidth}x${spec.uploadHeight} × ${spec.planContext.sliceCount}片`
+  }
   return formatAPlusUploadSize(spec)
 }
 
-export function getAPlusModuleGenerationSize(spec: Pick<AmazonAPlusModuleSpec, 'uploadWidth' | 'uploadHeight'>, tier: SizeTier): string {
+export function getAPlusModuleGenerationSize(spec: Pick<AmazonAPlusModuleSpec, 'uploadWidth' | 'uploadHeight' | 'exactGenerationWidth' | 'exactGenerationHeight' | 'planContext'>, tier: SizeTier): string {
+  if (spec.planContext?.groupKind === 'continuous-canvas' && spec.planContext.sliceCount) {
+    return getPremiumMotherImageSize(spec.planContext.sliceCount)
+  }
+  if (spec.planContext?.plannedGenerationSize) return spec.planContext.plannedGenerationSize
+  if (spec.exactGenerationWidth && spec.exactGenerationHeight) return `${spec.exactGenerationWidth}x${spec.exactGenerationHeight}`
   return getAPlusGenerationSizeFromDimensions(spec.uploadWidth, spec.uploadHeight, tier)
 }
 
-export function getAPlusPlanGenerationSize(plan: Pick<AmazonAPlusPlan, 'slot' | 'uploadSize'>, tier: SizeTier): string {
+export function getAPlusPlanGenerationSize(plan: Pick<AmazonAPlusPlan, 'slot' | 'uploadSize' | 'planContext'>, tier: SizeTier): string {
+  if (plan.planContext?.groupKind === 'continuous-canvas' && plan.planContext.sliceCount) {
+    return getPremiumMotherImageSize(plan.planContext.sliceCount)
+  }
+  if (plan.planContext?.plannedGenerationSize) return plan.planContext.plannedGenerationSize
   const match = plan.uploadSize.match(/^(\d+)x(\d+)$/)
   if (match) return getAPlusGenerationSizeFromDimensions(Number(match[1]), Number(match[2]), tier)
 
@@ -684,9 +869,36 @@ export function getAPlusPlanGenerationSize(plan: Pick<AmazonAPlusPlan, 'slot' | 
   return tier === '4K' ? '2880x2880' : '2048x2048'
 }
 
+const CONTINUOUS_POST_PROCESS_SECTION_RE = /(?:输出|生成|尺寸|后期|后处理).*(?:裁切|切片|拆分|上传)|(?:裁切|切片|拆分).*(?:输出|尺寸|上传|后期|后处理)/
+
+export function sanitizeContinuousCanvasPlanMarkdown(markdown: string) {
+  const lines = markdown.trim().split(/\r?\n/)
+  const kept: string[] = []
+  let skippedHeadingLevel: number | null = null
+
+  for (const line of lines) {
+    const heading = line.match(/^(#{1,6})\s+(.+?)\s*$/)
+    if (skippedHeadingLevel != null) {
+      if (!heading || heading[1].length > skippedHeadingLevel) continue
+      skippedHeadingLevel = null
+    }
+
+    if (heading && CONTINUOUS_POST_PROCESS_SECTION_RE.test(heading[2].replace(/[：:｜|]/g, ''))) {
+      skippedHeadingLevel = heading[1].length
+      continue
+    }
+    kept.push(line)
+  }
+
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
 export function withAPlusGenerationSizes(plans: AmazonAPlusPlan[], tier: SizeTier): AmazonAPlusPlan[] {
   return plans.map((plan) => ({
     ...plan,
+    planMarkdown: plan.planContext?.groupKind === 'continuous-canvas'
+      ? sanitizeContinuousCanvasPlanMarkdown(plan.planMarkdown)
+      : plan.planMarkdown,
     generationSize: getAPlusPlanGenerationSize(plan, tier),
   }))
 }
@@ -694,6 +906,7 @@ export function withAPlusGenerationSizes(plans: AmazonAPlusPlan[], tier: SizeTie
 export function buildAmazonAPlusPlanPrompt(plan: Pick<AmazonAPlusPlan, 'prompt' | 'negativePrompt'> & {
   uploadSize: string
   generationSize: string
+  planContext?: PremiumAPlusPlanContext
   seriesStyleGuide?: string | null
   visualStyleEnabled?: boolean
   styleReferenceAttached?: boolean
@@ -717,22 +930,62 @@ function normalizeAPlusPromptOutputSize(prompt: string, uploadSize: string, gene
   return prompt.trim().replace(new RegExp(escapedUploadSize, 'gi'), generationSize)
 }
 
-function formatAPlusGenerationRequirement(plan: Pick<AmazonAPlusPlan, 'uploadSize' | 'generationSize'>) {
+function parseImageDimensions(size: string) {
+  const match = size.match(/^(\d+)x(\d+)$/i)
+  if (!match) return null
+  return { width: Number(match[1]), height: Number(match[2]) }
+}
+
+function formatAPlusGenerationRequirement(plan: Pick<AmazonAPlusPlan, 'uploadSize' | 'generationSize' | 'planContext'>) {
+  const sliceCount = plan.planContext?.groupKind === 'continuous-canvas' ? plan.planContext.sliceCount : null
+  const dimensions = parseImageDimensions(plan.generationSize)
+  const continuousRules = sliceCount
+    ? [
+        `- The full ${plan.generationSize} canvas is one uninterrupted master composition. Design the complete mother image first; the complete image takes priority over making future website-managed regions look like independent panels.`,
+        dimensions
+          ? `- Canvas orientation is fixed: width ${dimensions.width}px, total height ${dimensions.height}px, aspect ratio ${(dimensions.width / dimensions.height).toFixed(3)}:1. Do not swap width and height or reinterpret the request as ${sliceCount} portrait posters.`
+          : '',
+        `- Use one scene, one camera/perspective, one lighting system, and one continuous visual hierarchy from top to bottom. Do not assign separate upper/lower scenes, separate hero/still-life treatments, or separate headline systems to future slices.`,
+        `- Treat each horizontal position every ${PREMIUM_A_PLUS_SLICE_HEIGHT} px as an invisible composition safety boundary used later by the website. Do not draw divider lines, seams, gutters, borders, panel frames, abrupt background changes, or centered horizontal transitions there.`,
+        '- Continue scene planes, architecture, floor lines, fabric, shadows, light, color fields, and other non-critical visual forms naturally across every safety boundary so the result reads as one image.',
+        `- Only avoid bisecting faces, the exact product, logos, measurements, and complete text blocks. Do not isolate all content inside separate safe-zone boxes.`,
+        `- Generate and return exactly one complete ${plan.generationSize} image. Do not crop, slice, resize, split, or return ${sliceCount} separate images; all later processing is handled by the website.`,
+        '- If any earlier plan describes upper/lower panel strategies or separate per-slice compositions, override it and merge those ideas into one continuous master scene.',
+      ]
+    : []
   return [
     'A+ output size requirements (highest priority):',
     `- Generate the image canvas at exactly ${plan.generationSize} px.`,
-    `- ${plan.uploadSize} px is only the final Amazon Seller Central upload/display size.`,
+    ...(sliceCount ? [] : [`- ${plan.uploadSize} px is only the final Amazon Seller Central upload/display size.`]),
+    ...continuousRules,
     '- If any earlier sentence treats the upload size as the generation canvas, override it with the generation size above.',
   ].join('\n')
 }
 
-export function buildAmazonAPlusPlanOnlyPrompt(plan: Pick<AmazonAPlusPlan, 'planMarkdown' | 'uploadSize' | 'generationSize'>) {
+export function buildAmazonAPlusPlanOnlyPrompt(plan: Pick<AmazonAPlusPlan, 'planMarkdown' | 'uploadSize' | 'generationSize' | 'planContext'>) {
+  const sliceCount = plan.planContext?.groupKind === 'continuous-canvas' ? plan.planContext.sliceCount : null
+  const dimensions = parseImageDimensions(plan.generationSize)
+  const continuousRules = sliceCount
+    ? [
+        `- 完整 ${plan.generationSize} 画布是一张不可中断的母图，必须按一张完整大图设计；完整画面的整体效果优先。`,
+        dimensions
+          ? `- 画布方向固定为宽 ${dimensions.width}px、总高 ${dimensions.height}px、宽高比 ${(dimensions.width / dimensions.height).toFixed(3)}:1，不得交换宽高，也不得理解成 ${sliceCount} 张竖版海报。`
+          : '',
+        '- 从上到下保持同一场景、同一镜头与透视、同一光线系统和同一视觉层级；禁止分别策划上片/下片，禁止在边界处切换成另一套模特图、产品静物、背景或标题系统。',
+        `- 每隔 ${PREMIUM_A_PLUS_SLICE_HEIGHT}px 的横向位置只是供网站后续处理使用的隐形构图安全边界，不得出现分隔线、接缝、留白沟槽、边框、模块框、背景突变或刻意居中的横向过渡。`,
+        '- 地面、建筑线条、纱帘、布料、阴影、光线、色块和其他非关键视觉元素应自然跨越每个边界，让上下拼接后仍是一张完整图片。',
+        '- 只需避免人脸、产品主体、Logo、尺寸标注和完整文字块跨越安全边界，不要把所有内容分别关进上下两个安全区。',
+        `- AI 只需生成并返回一张完整的 ${plan.generationSize} 图片，不得裁切、拆分、缩放或返回 ${sliceCount} 张图片；后续处理全部由网站完成。`,
+        '- 如果前面的策划案包含“上片/下片”或分片独立构图，以这里为准，将所有内容重新融合成一张连续母图。',
+      ]
+    : []
   return [
     plan.planMarkdown.trim(),
     '',
     '生图输出要求（最高优先级）：',
     `- 生成画布尺寸：${plan.generationSize} px。`,
-    `- 亚马逊 Seller Central 最终上传/展示尺寸：${plan.uploadSize} px。`,
+    ...(sliceCount ? [] : [`- 亚马逊 Seller Central 最终上传/展示尺寸：${plan.uploadSize} px。`]),
+    ...continuousRules,
     '- 如果策划案其他位置把上传尺寸写成了生成画布尺寸，以这里的生成画布尺寸为准。',
   ].join('\n')
 }

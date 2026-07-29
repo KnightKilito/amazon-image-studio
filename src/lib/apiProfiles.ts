@@ -293,6 +293,8 @@ export function createDefaultOpenAIProfile(overrides: Partial<ApiProfile> = {}):
     apiProxy: DEFAULT_OPENAI_API_PROXY,
     streamImages: false,
     streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
+    motherImageSupport: 'auto',
+    maxMotherSlices: 7,
     ...overrides,
   }
 }
@@ -331,6 +333,8 @@ export function createDefaultFalProfile(overrides: Partial<ApiProfile> = {}): Ap
     apiProxy: false,
     streamImages: false,
     streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
+    motherImageSupport: 'auto',
+    maxMotherSlices: 7,
     ...overrides,
   }
 }
@@ -347,6 +351,8 @@ export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvi
       responseFormatB64Json: profile.responseFormatB64Json,
       streamImages: profile.streamImages,
       streamPartialImages: profile.streamPartialImages,
+      motherImageSupport: profile.motherImageSupport,
+      maxMotherSlices: profile.maxMotherSlices,
     },
   }
   const savedDraft = providerDrafts[provider]
@@ -363,6 +369,8 @@ export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvi
       responseFormatB64Json: savedDraft?.responseFormatB64Json,
       streamImages: false,
       streamPartialImages: savedDraft?.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES,
+      motherImageSupport: savedDraft?.motherImageSupport ?? 'auto',
+      maxMotherSlices: savedDraft?.maxMotherSlices ?? 7,
       providerDrafts,
     }
   }
@@ -380,6 +388,8 @@ export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvi
       responseFormatB64Json: savedDraft?.responseFormatB64Json,
       streamImages: false,
       streamPartialImages: savedDraft?.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES,
+      motherImageSupport: savedDraft?.motherImageSupport ?? 'auto',
+      maxMotherSlices: savedDraft?.maxMotherSlices ?? 7,
       providerDrafts,
     }
   }
@@ -395,6 +405,8 @@ export function switchApiProfileProvider(profile: ApiProfile, provider: ApiProvi
     responseFormatB64Json: savedDraft?.responseFormatB64Json,
     streamImages: savedDraft?.streamImages ?? (profile.provider === 'openai' ? profile.streamImages : true),
     streamPartialImages: savedDraft?.streamPartialImages ?? (profile.provider === 'openai' ? profile.streamPartialImages : DEFAULT_STREAM_PARTIAL_IMAGES),
+    motherImageSupport: savedDraft?.motherImageSupport ?? profile.motherImageSupport ?? 'auto',
+    maxMotherSlices: savedDraft?.maxMotherSlices ?? profile.maxMotherSlices ?? 7,
     providerDrafts,
   }
 }
@@ -419,6 +431,8 @@ function normalizeProviderDraft(input: unknown, provider: ApiProvider, customPro
     responseFormatB64Json: input.responseFormatB64Json === true ? true : undefined,
     streamImages: typeof input.streamImages === 'boolean' ? input.streamImages : fallback.streamImages,
     streamPartialImages: normalizeStreamPartialImages(input.streamPartialImages, fallback.streamPartialImages),
+    motherImageSupport: input.motherImageSupport === 'supported' || input.motherImageSupport === 'unsupported' ? input.motherImageSupport : 'auto',
+    maxMotherSlices: Math.min(7, Math.max(2, Math.trunc(Number(input.maxMotherSlices) || 7))),
   }
 }
 
@@ -681,6 +695,8 @@ export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfil
     responseFormatB64Json: record.responseFormatB64Json === true ? true : undefined,
     streamImages: typeof record.streamImages === 'boolean' ? record.streamImages : defaults.streamImages,
     streamPartialImages: normalizeStreamPartialImages(record.streamPartialImages, defaults.streamPartialImages),
+    motherImageSupport: record.motherImageSupport === 'supported' || record.motherImageSupport === 'unsupported' ? record.motherImageSupport : 'auto',
+    maxMotherSlices: Math.min(7, Math.max(2, Math.trunc(Number(record.maxMotherSlices) || defaults.maxMotherSlices || 7))),
     providerDrafts: normalizeProviderDrafts(record.providerDrafts, customProviderIds),
   }
 }

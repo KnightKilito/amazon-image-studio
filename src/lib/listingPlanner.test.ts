@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_CHAT_MODEL, createDefaultOpenAIProfile } from './apiProfiles'
 import { DEFAULT_AMAZON_PROMPT_DRAFT } from './amazonPrompt'
 import {
+  buildPremiumAPlusComposedModuleSpecs,
   buildAmazonAPlusPlanPrompt,
   buildAmazonAPlusPlanOnlyPrompt,
   buildAmazonPlanPrompt,
@@ -17,6 +18,7 @@ import {
   getPaletteSwatchColor,
   isAmazonListingMainSlot,
   removeAPlusModuleSpecAt,
+  sanitizeContinuousCanvasPlanMarkdown,
 } from './listingPlanner'
 import { callAmazonPlannerApi } from './listingPlannerApi'
 
@@ -211,6 +213,96 @@ describe('Amazon prompt builders', () => {
 })
 
 describe('A+ module helpers', () => {
+  it('keeps a continuous group as one vertically stacked mother-image plan', () => {
+    const specs = buildPremiumAPlusComposedModuleSpecs([{
+      id: 'hero-story',
+      kind: 'continuous-canvas',
+      purpose: 'hero',
+      label: 'Three panel hero',
+      objective: 'Create one connected model-led campaign image.',
+      customInstruction: '',
+      sliceCount: 3,
+    }])
+    const spec = specs[0]!
+
+    expect(specs).toHaveLength(1)
+    expect(spec).toMatchObject({
+      moduleType: 'continuous-canvas',
+      exactGenerationWidth: 2928,
+      exactGenerationHeight: 3600,
+      planContext: {
+        groupId: 'hero-story',
+        groupKind: 'continuous-canvas',
+        sliceCount: 3,
+        slotCost: 3,
+        plannedGenerationSize: '2928x3600',
+      },
+    })
+
+    const prompt = buildAmazonAPlusPlanPrompt({
+      prompt: 'Use one scene, but place a model in the upper panel and a still life in the lower panel.',
+      negativePrompt: 'unrelated tiles',
+      uploadSize: '1464x600 × 3片',
+      generationSize: '2928x3600',
+      planContext: spec.planContext,
+    })
+    expect(prompt).toContain('one uninterrupted master composition')
+    expect(prompt).toContain('the complete image takes priority over making future website-managed regions look like independent panels')
+    expect(prompt).toContain('width 2928px, total height 3600px, aspect ratio 0.813:1')
+    expect(prompt).toContain('Do not assign separate upper/lower scenes')
+    expect(prompt).toContain('Continue scene planes, architecture, floor lines, fabric, shadows, light, color fields')
+    expect(prompt).toContain('Generate and return exactly one complete 2928x3600 image')
+    expect(prompt).toContain('all later processing is handled by the website')
+    expect(prompt).not.toContain('After generation, this one mother image will be cropped')
+    expect(prompt).toContain('override it and merge those ideas into one continuous master scene')
+    expect(prompt).not.toContain('1464x600 × 3片 px is only')
+
+    const planOnlyPrompt = buildAmazonAPlusPlanOnlyPrompt({
+      planMarkdown: '### 连续画面结构\n- 上片使用模特主视觉。\n- 下片改为产品静物。',
+      uploadSize: '1464x600 × 3片',
+      generationSize: '2928x3600',
+      planContext: spec.planContext,
+    })
+    expect(planOnlyPrompt).toContain('必须按一张完整大图设计')
+    expect(planOnlyPrompt).toContain('禁止分别策划上片/下片')
+    expect(planOnlyPrompt).toContain('不要把所有内容分别关进上下两个安全区')
+    expect(planOnlyPrompt).toContain('AI 只需生成并返回一张完整的 2928x3600 图片')
+    expect(planOnlyPrompt).toContain('后续处理全部由网站完成')
+    expect(planOnlyPrompt).not.toContain('生成完成后再连续裁成')
+    expect(planOnlyPrompt).not.toContain('最终上传/展示尺寸：1464x600 × 3片 px')
+    expect(getAPlusModuleGenerationSize({
+      ...spec,
+      planContext: {
+        ...spec.planContext!,
+        plannedGenerationSize: '8784x1200',
+      },
+    }, '2K')).toBe('2928x3600')
+  })
+
+  it('removes website post-processing sections from continuous-canvas plans', () => {
+    const markdown = [
+      '### 核心任务',
+      '设计一张完整连续母图。',
+      '',
+      '### 输出与裁切',
+      '生成后裁成两张并缩小上传。',
+      '',
+      '#### 上传说明',
+      '每张上传到 Seller Central。',
+      '',
+      '### 图中文字',
+      '主标题保持完整。',
+    ].join('\n')
+
+    expect(sanitizeContinuousCanvasPlanMarkdown(markdown)).toBe([
+      '### 核心任务',
+      '设计一张完整连续母图。',
+      '',
+      '### 图中文字',
+      '主标题保持完整。',
+    ].join('\n'))
+  })
+
   it('returns local Chinese module names while preserving English labels', () => {
     const highlightSpec = getAPlusModuleSpecs('standard')[4]!
     const premiumSpec = getAPlusModuleSpecs('premium')[0]!
@@ -1229,6 +1321,51 @@ describe('callAmazonPlannerApi', () => {
     expect(chatBody.messages[0].content).toContain('aPlusPlans must contain exactly 6 items in this order: A+L01, A+L02, A+L03, A+L04, A+L05, A+L06.')
     expect(chatBody.messages[1].content).toContain('Use these A+ modules exactly: A+L01, A+L02, A+L03, A+L04, A+L05, A+L06.')
     expect(chatResult.aPlusPlans).toHaveLength(6)
+  })
+
+  it('instructs the planner to design continuous groups as one master composition', async () => {
+    const composedSpecs = buildPremiumAPlusComposedModuleSpecs([{
+      id: 'continuous-test',
+      kind: 'continuous-canvas',
+      purpose: 'hero',
+      label: 'Two panel mother image',
+      objective: 'Create one uninterrupted campaign scene.',
+      customInstruction: '',
+      sliceCount: 2,
+    }])
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
+      output_text: JSON.stringify(createAPlusPayloadFromSpecs(composedSpecs, 'Continuous A+ shoes', 'ExampleBrand')),
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: { ...DEFAULT_AMAZON_PROMPT_DRAFT, brand: 'ExampleBrand' },
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+      mode: 'aplus',
+      aPlusType: 'premium',
+      aPlusModuleSpecs: composedSpecs,
+      aPlusGenerationTier: '2K',
+    })
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
+    expect(body.instructions).toContain('generate exactly one uninterrupted 2928x2400px master canvas')
+    expect(body.instructions).toContain('the website handles all later slicing, resizing, and upload preparation')
+    expect(body.instructions).not.toContain('crop it into 2 consecutive images')
+    expect(body.instructions).toContain('The complete mother image is the primary design')
+    expect(body.instructions).toContain('Do not organize planMarkdown or prompt into upper/lower panel strategies')
+    expect(body.instructions).toContain('Require scene planes, architecture, floors, fabric, shadows, lighting, color fields')
+    expect(body.instructions).toContain('Never ask the image model to crop, slice, split, resize, downscale, prepare uploads, or return multiple images')
+    expect(body.instructions).toContain('Do not add planMarkdown sections such as “输出与裁切”')
+    expect(body.instructions).not.toContain('final upload 1464x600 × 2片px')
   })
 
   it('parses Mobile A+ output as five fixed 600x450 modules', async () => {

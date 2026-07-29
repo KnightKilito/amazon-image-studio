@@ -549,6 +549,44 @@ stop-amazon-image-studio.bat
 
 如果 OpenRouter 报 404，通常是旧版本请求到了 `/images/generations`。请更新后使用 `https://openrouter.ai/api/v1` 和带 `image` 输出能力的模型；OpenRouter 的图片生成实际走 `/chat/completions`。
 
+## 使用文档维护
+
+应用右上角的“使用文档”由 `src/docs/*.md` 自动生成。修改正文、调整顺序或新增文档时，只需要维护 Markdown 文件，不需要修改 React 组件。
+
+每篇文档必须以 YAML Front Matter 开头：
+
+```markdown
+---
+id: listing
+title: Listing 图使用文档
+navTitle: Listing 图
+description: 主图、附图策划与生图流程。
+eyebrow: 图片策划与生成
+icon: photo
+order: 10
+tags:
+  - 主图
+  - 附图
+---
+
+## 01 开始前的配置
+
+这里填写 Markdown 正文。
+```
+
+- `id`：文档唯一标识，不可与其他文档重复。
+- `title`：正文顶部标题。
+- `navTitle`：左侧或移动端导航标题；省略时使用 `title`。
+- `description`：导航摘要和正文顶部说明。
+- `eyebrow`：标题上方的小分类文字；省略时显示“使用文档”。
+- `icon`：支持 `photo`、`layers`、`history`、`book`，其他值回退为书本图标。
+- `order`：导航排序，数字越小越靠前。
+- `tags`：可选标签数组。
+
+正文支持 GFM Markdown，包括表格、列表、代码块、引用块和链接。二级标题推荐使用 `## 01 标题` 格式，页面会自动渲染章节编号。需要生成复制按钮时，可以使用 `[复制内容](#copy-需要复制的内容)`。
+
+Front Matter 缺少必填字段、字段类型错误或 `id` 重复时，开发和生产构建会直接报出对应 Markdown 文件路径。
+
 ## 构建
 
 如果需要生成生产构建：

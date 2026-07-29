@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { calculateImageSize, normalizeImageSize, parseRatio, type SizeTier } from '../lib/size'
+import { isAPlusMotherImageSize } from '../lib/premiumAPlusLayout'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import ViewportTooltip from './ViewportTooltip'
 
@@ -32,6 +33,7 @@ function parseSize(size: string) {
 }
 
 function findPresetForSize(size: string) {
+  if (isAPlusMotherImageSize(size)) return null
   const normalized = normalizeImageSize(size)
   for (const tier of TIERS) {
     for (const ratio of RATIOS) {
@@ -91,7 +93,10 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
       const w = parseInt(customW, 10)
       const h = parseInt(customH, 10)
       if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
-        return normalizeImageSize(`${w}x${h}`)
+        const requestedSize = `${w}x${h}`
+        return normalizeImageSize(requestedSize, {
+          preservePremiumMotherSize: isAPlusMotherImageSize(requestedSize),
+        })
       }
       return ''
     }
@@ -111,6 +116,9 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
     }
     return false
   }, [mode, ratio, customRatioClamped, customW, customH, previewSize])
+  const sizeLimitText = isAPlusMotherImageSize(previewSize)
+    ? '当前尺寸来自高级 A+ 连续母图策划，将按原值提交。是否支持该纵向长图尺寸取决于当前服务商和模型。'
+    : SIZE_LIMIT_TEXT
 
   const showHint = () => setHintVisible(true)
   const hideHint = () => {
@@ -305,7 +313,7 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
                     <svg className="mt-[2px] h-4 w-4 flex-shrink-0 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
-                    <div className="whitespace-pre-line leading-relaxed">{SIZE_LIMIT_TEXT}</div>
+                    <div className="whitespace-pre-line leading-relaxed">{sizeLimitText}</div>
                   </div>
                 </div>
               </div>
@@ -332,7 +340,7 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                   <ViewportTooltip visible={hintVisible} className="w-56 whitespace-pre-line text-center">
-                    {SIZE_LIMIT_TEXT}
+                    {sizeLimitText}
                   </ViewportTooltip>
                 </div>
               )}

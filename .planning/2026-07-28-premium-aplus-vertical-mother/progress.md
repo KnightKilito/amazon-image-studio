@@ -1,0 +1,21 @@
+# Progress
+
+- Started audit after user reported incorrect vertical-cut guidance.
+- Confirmed the root model is horizontal rather than vertical stacking.
+- Audited dimension generation, planner prompts, API instructions, slicing geometry, dialog guides, task derivation metadata, settings copy, docs, and tests.
+- Changed mother-image dimensions to fixed 2928px width with 1200px height per panel.
+- Replaced visible vertical-cut instructions with invisible horizontal-boundary and seamless-continuity rules.
+- Switched browser slicing and preview guides from width-based to height-based geometry.
+- Added migration behavior so restored historical continuous plans recalculate their size from the slice count.
+- Updated the size picker note to explain that tall mother-image dimensions bypass generic limits only when the provider supports them.
+- Focused tests passed: 4 files, 52 tests.
+- Full test suite passed: 22 files, 274 tests.
+- Production build passed.
+- Browser verification confirmed the composed editor displays a 2-panel mother image as 2928x2400 with no console errors.
+- Follow-up started after a generated image showed a strong midpoint composition change and incorrect actual dimensions.
+- Reworked appended generation requirements to override panel-first plans and require one scene, camera, lighting system, and visual hierarchy.
+- Reworded planner module dimensions as one exact master canvas followed by consecutive crops uploaded individually.
+- Updated the usage document to describe master-canvas-first planning and height-based slicing.
+- Focused follow-up tests passed: 4 files, 53 tests.
+- Full suite passed: 22 files, 275 tests.
+- Production build passed and the local application loaded without console errors.

@@ -58,12 +58,13 @@ function normalizeDimensions(width: number, height: number) {
   return { width: normalizedWidth, height: normalizedHeight }
 }
 
-export function normalizeImageSize(size: string) {
+export function normalizeImageSize(size: string, options: { preservePremiumMotherSize?: boolean } = {}) {
   const trimmed = size.trim()
   const match = trimmed.match(SIZE_PATTERN)
   if (!match) return trimmed
   const canonical = `${Number(match[1])}x${Number(match[2])}`
   if (EXACT_SIZE_ALLOWLIST.has(canonical)) return canonical
+  if (options.preservePremiumMotherSize && isAPlusMotherImageSize(canonical)) return canonical
 
   const { width, height } = normalizeDimensions(Number(match[1]), Number(match[2]))
   return `${width}x${height}`
@@ -206,3 +207,4 @@ export function calculateImageSize(tier: SizeTier, ratio: string) {
   if (bestPixels === 0) return null
   return `${bestWidth}x${bestHeight}`
 }
+import { isAPlusMotherImageSize } from './premiumAPlusLayout'

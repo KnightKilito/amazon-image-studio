@@ -56,6 +56,8 @@ import { getChangedParams, normalizeParamsForSettings } from './lib/paramCompati
 import { prepareReferenceImageAndMaskPayload } from './lib/referenceImagePayload'
 import { getTaskHistoryCategory } from './lib/taskHistory'
 import { isAmazonListingMainSlot } from './lib/listingPlanner'
+import { sliceImageDataUrlVertically, type APlusSliceFormat } from './lib/imageSlicing'
+import { getMobileMotherImageSize, getPremiumMotherImageSize, MAX_PREMIUM_MOTHER_SLICES, MIN_PREMIUM_MOTHER_SLICES } from './lib/premiumAPlusLayout'
 import { fetchAdminSettings, readAdminToken, saveAdminSettings } from './lib/adminApi'
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 
@@ -146,11 +148,15 @@ function createNextSubmitTaskCategory(task: TaskRecord): NonNullable<TaskRecord[
   const amazonSlot = task.category?.amazonSlot?.trim() || historyCategory.amazonSlot
   const aPlusType = task.category?.aPlusType ?? historyCategory.aPlusType
   const styleReferenceImageId = task.category?.styleReferenceImageId?.trim()
+  const aPlusPlanContext = task.category?.aPlusPlanContext
   const category: NonNullable<TaskRecord['category']> = { workflow }
 
   if (hasExplicitProductTitle || productTitle) category.productTitle = productTitle
   if (amazonSlot) category.amazonSlot = amazonSlot
   if (workflow === 'amazon-aplus' && aPlusType) category.aPlusType = aPlusType
+  if (workflow === 'amazon-aplus' && aPlusPlanContext && !task.derivation) {
+    category.aPlusPlanContext = { ...aPlusPlanContext }
+  }
   if (styleReferenceImageId && !(workflow === 'amazon-listing' && isAmazonListingMainSlot(amazonSlot))) {
     category.styleReferenceImageId = styleReferenceImageId
   }
@@ -820,6 +826,7 @@ interface AppState {
   clearInputImages: () => void
   setInputImages: (imgs: InputImage[], options?: { equivalentImageIds?: Record<string, string> }) => void
   setStyleReferenceImage: (img: InputImage | null) => void
+  setStyleReferenceImageIfEmpty: (img: InputImage) => boolean
   clearStyleReferenceImage: () => void
   moveInputImage: (fromIdx: number, toIdx: number) => void
   maskDraft: MaskDraft | null
@@ -1325,6 +1332,15 @@ export const useStore = create<AppState>()(
           })
         }),
       setStyleReferenceImage: (styleReferenceImage) => set((s) => syncActiveInputDraft(s, { styleReferenceImage })),
+      setStyleReferenceImageIfEmpty: (styleReferenceImage) => {
+        let inserted = false
+        set((s) => {
+          if (s.styleReferenceImage) return s
+          inserted = true
+          return syncActiveInputDraft(s, { styleReferenceImage })
+        })
+        return inserted
+      },
       clearStyleReferenceImage: () => set((s) => syncActiveInputDraft(s, { styleReferenceImage: null })),
       moveInputImage: (fromIdx, toIdx) =>
         set((s) => {
@@ -2221,6 +2237,23 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     return false
   }
   const category = resolvePendingTaskCategory(pendingTaskCategory, trimmedPrompt)
+  const motherPlanContext = category.aPlusPlanContext?.groupKind === 'continuous-canvas'
+    ? category.aPlusPlanContext
+    : null
+  if (motherPlanContext) {
+    const requestedSlices = motherPlanContext.sliceCount ?? 2
+    const maxMotherSlices = Math.min(7, Math.max(2, activeProfile.maxMotherSlices ?? 7))
+    if (activeProfile.motherImageSupport === 'unsupported' || requestedSlices > maxMotherSlices) {
+      showToast(
+        activeProfile.motherImageSupport === 'unsupported'
+          ? `当前生图配置「${activeProfile.name}」已标记为不支持连续母图，请切换配置后再提交。`
+          : `当前生图配置「${activeProfile.name}」最多支持 ${maxMotherSlices} 片连续母图，本次需要 ${requestedSlices} 片。`,
+        'error',
+      )
+      useStore.getState().setShowSettings(true, 'api')
+      return false
+    }
+  }
 
   let orderedInputImages = inputImages
   let maskImageId: string | null = null
@@ -2277,7 +2310,10 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     await storeImage(img.dataUrl)
   }
 
-  const normalizedParams = normalizeParamsForSettings(params, requestSettings, { hasInputImages: orderedInputImages.length > 0 })
+  const normalizedParams = normalizeParamsForSettings(params, requestSettings, {
+    hasInputImages: orderedInputImages.length > 0,
+    preservePremiumMotherSize: Boolean(motherPlanContext),
+  })
   const normalizedParamPatch = getChangedParams(params, normalizedParams)
   if (Object.keys(normalizedParamPatch).length) {
     useStore.getState().setParams(normalizedParamPatch)
@@ -2576,6 +2612,7 @@ function addTaskReferencedImageIds(target: Set<string>, task: TaskRecord) {
   if (task.maskImageId) target.add(task.maskImageId)
   for (const id of task.outputImages || []) target.add(id)
   for (const id of task.streamPartialImageIds || []) target.add(id)
+  if (task.derivation?.sourceImageId) target.add(task.derivation.sourceImageId)
 }
 
 async function deleteUnreferencedImageIds(imageIds: Iterable<string>) {
@@ -4066,6 +4103,91 @@ export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>) {
   if (task) putTask(task)
 }
 
+/** 将一张高级或手机 A+ 纵向连续母图等高切成多个 PNG，并作为新的派生任务保存。 */
+export async function createPremiumAPlusSliceTask(
+  sourceTask: TaskRecord,
+  sourceImageId: string,
+  sliceCount: number,
+  format: APlusSliceFormat = 'premium',
+): Promise<TaskRecord> {
+  if (!sourceTask.outputImages.includes(sourceImageId)) {
+    throw new Error('当前图片不属于该任务，无法切割。')
+  }
+
+  const sourceDataUrl = await ensureImageCached(sourceImageId)
+  if (!sourceDataUrl) throw new Error('无法读取母图，请刷新后重试。')
+
+  const storedSliceIds: string[] = []
+  try {
+    const result = await sliceImageDataUrlVertically(sourceDataUrl, sliceCount, format)
+    for (const slice of result.slices) {
+      const imageId = await storeImage(slice.dataUrl, 'derived')
+      cacheImage(imageId, slice.dataUrl)
+      storedSliceIds.push(imageId)
+    }
+
+    const now = Date.now()
+    const firstSlice = result.slices[0]
+    const sliceSize = `${firstSlice.width}x${firstSlice.height}`
+    const actualParamsByImage = Object.fromEntries(
+      storedSliceIds.map((imageId, index) => [
+        imageId,
+        {
+          size: `${result.slices[index].width}x${result.slices[index].height}`,
+          output_format: 'png' as const,
+        },
+      ]),
+    )
+    const derivedTask: TaskRecord = {
+      id: genId(),
+      prompt: sourceTask.prompt,
+      params: {
+        ...sourceTask.params,
+        size: sliceSize,
+        n: storedSliceIds.length,
+        output_format: 'png',
+        quality: 'high',
+      },
+      actualParams: { size: sliceSize, output_format: 'png' },
+      actualParamsByImage,
+      inputImageIds: [],
+      maskTargetImageId: null,
+      maskImageId: null,
+      outputImages: storedSliceIds,
+      status: 'done',
+      error: null,
+      createdAt: now,
+      finishedAt: now,
+      elapsed: 0,
+      sourceMode: sourceTask.sourceMode,
+      derivation: {
+        type: format === 'mobile' ? 'mobile-aplus-vertical-slices' : 'premium-aplus-vertical-slices',
+        sourceTaskId: sourceTask.id,
+        sourceImageId,
+        sliceCount: storedSliceIds.length,
+        sourceWidth: result.width,
+        sourceHeight: result.height,
+      },
+      category: {
+        ...sourceTask.category,
+        workflow: 'amazon-aplus',
+        aPlusType: format,
+        amazonSlot: sourceTask.category?.amazonSlot
+          ? `${sourceTask.category.amazonSlot} · ${storedSliceIds.length} 片切割`
+          : `${format === 'mobile' ? '手机 A+' : '高级 A+'} · ${storedSliceIds.length} 片切割`,
+      },
+    }
+
+    await putTask(derivedTask)
+    const latestTasks = useStore.getState().tasks
+    useStore.getState().setTasks([derivedTask, ...latestTasks])
+    return derivedTask
+  } catch (error) {
+    await deleteUnreferencedImageIds(storedSliceIds)
+    throw error
+  }
+}
+
 /** 重试失败的任务：创建新任务并执行 */
 export async function retryTask(task: TaskRecord) {
   const { settings, setConfirmDialog, adminAccess, isAdminAuthenticated } = useStore.getState()
@@ -4083,7 +4205,10 @@ export async function retryTask(task: TaskRecord) {
     return
   }
   const requestSettings = createSettingsForApiProfile(settings, activeProfile)
-  const normalizedParams = normalizeParamsForSettings(task.params, requestSettings, { hasInputImages: task.inputImageIds.length > 0 })
+  const normalizedParams = normalizeParamsForSettings(task.params, requestSettings, {
+    hasInputImages: task.inputImageIds.length > 0,
+    preservePremiumMotherSize: !task.derivation && task.category?.aPlusPlanContext?.groupKind === 'continuous-canvas',
+  })
   const taskId = genId()
   const newTask: TaskRecord = {
     id: taskId,
@@ -4103,7 +4228,7 @@ export async function retryTask(task: TaskRecord) {
     createdAt: Date.now(),
     finishedAt: null,
     elapsed: null,
-    category: task.category,
+    category: createNextSubmitTaskCategory(task),
   }
 
   const latestTasks = useStore.getState().tasks
@@ -4124,7 +4249,10 @@ export async function reuseConfig(task: TaskRecord) {
   const taskProfileName = matchedProfile?.name ?? getTaskApiProfileName(task)
   const paramsSettings = shouldTemporarilyReuseProfile && matchedProfile ? createSettingsForApiProfile(normalizedSettings, matchedProfile) : normalizedSettings
 
-  setParams(normalizeParamsForSettings(task.params, paramsSettings, { hasInputImages: task.inputImageIds.length > 0 }))
+  setParams(normalizeParamsForSettings(task.params, paramsSettings, {
+    hasInputImages: task.inputImageIds.length > 0,
+    preservePremiumMotherSize: !task.derivation && task.category?.aPlusPlanContext?.groupKind === 'continuous-canvas',
+  }))
   setReusedTaskApiProfile(
     shouldTemporarilyReuseProfile && matchedProfile ? matchedProfile.id : null,
     missingReusedProfile,
@@ -4228,32 +4356,64 @@ function getAPlusOutputConversionTargetLabel(target: APlusOutputConversionTarget
   return target === 'premium' ? '高级A+' : '手机A+'
 }
 
-function getAPlusOutputConversionRatioText(target: APlusOutputConversionTarget) {
+export function getSuggestedAPlusOutputConversionSliceCount(task: TaskRecord) {
+  if (task.derivation || task.category?.aPlusPlanContext?.groupKind !== 'continuous-canvas') return 1
+  const sliceCount = Number(task.category.aPlusPlanContext.sliceCount)
+  if (!Number.isFinite(sliceCount)) return 1
+  return Math.min(MAX_PREMIUM_MOTHER_SLICES, Math.max(MIN_PREMIUM_MOTHER_SLICES, Math.trunc(sliceCount)))
+}
+
+function getAPlusOutputConversionSize(target: APlusOutputConversionTarget, sliceCount: number) {
+  if (sliceCount > 1) {
+    return target === 'premium'
+      ? getPremiumMotherImageSize(sliceCount)
+      : getMobileMotherImageSize(sliceCount)
+  }
   return target === 'premium' ? '2928x1200' : '1200x900'
 }
 
-function getAPlusOutputConversionSize(target: APlusOutputConversionTarget) {
-  return target === 'premium' ? '2928x1200' : '1200x900'
-}
-
-function buildAPlusOutputConversionPrompt(target: APlusOutputConversionTarget) {
-  const ratioText = getAPlusOutputConversionRatioText(target)
-  return `我是一名亚马逊美国站专业卖家。请将这张高级A+图片的画布比例调整为 ${ratioText}，以适配亚马逊移动端高级A+展示需求。保持产品本身完全不变，包括产品外观、颜色、材质、角度、光影、细节及清晰度，不得修改或重新设计产品。仅调整整体画面排版和元素布局，合理重新安排文字、背景及装饰元素，使画面在${ratioText}比例下依然美观、平衡且具有高级感。禁止对整张图片进行拉伸、压缩、裁切或变形，不要通过缩放或拉伸来适配比例，而是通过重新布局画面内容完成适配。`
+function buildAPlusOutputConversionPrompt(target: APlusOutputConversionTarget, size: string, sliceCount: number) {
+  const targetLabel = target === 'premium' ? '高级A+' : '移动端高级A+'
+  const motherImageRequirement = sliceCount > 1
+    ? `当前参考图是一张 ${sliceCount} 片连续母图，请继续将输出设计为一张完整、上下连贯的连续母图，目标画布为 ${size}，不得拆成 ${sliceCount} 张独立图片或独立海报。`
+    : ''
+  return `我是一名亚马逊美国站专业卖家。请将这张高级A+图片的画布尺寸调整为 ${size}，以适配亚马逊${targetLabel}展示需求。${motherImageRequirement}保持产品本身完全不变，包括产品外观、颜色、材质、角度、光影、细节及清晰度，不得修改或重新设计产品。仅调整整体画面排版和元素布局，合理重新安排文字、背景及装饰元素，使画面在 ${size} 画布下依然美观、平衡且具有高级感。禁止对整张图片进行拉伸、压缩、裁切或变形，不要通过缩放或拉伸来适配比例，而是通过重新布局画面内容完成适配。`
 }
 
 function createAPlusOutputConversionTaskCategory(
   task: TaskRecord,
   target: APlusOutputConversionTarget,
+  size: string,
+  sliceCount: number,
 ): NonNullable<TaskRecord['category']> {
   const baseCategory = createNextSubmitTaskCategory(task)
-  const { styleReferenceImageId: _styleReferenceImageId, ...baseCategoryWithoutStyle } = baseCategory
+  const {
+    styleReferenceImageId: _styleReferenceImageId,
+    aPlusPlanContext: basePlanContext,
+    ...baseCategoryWithoutTransientFields
+  } = baseCategory
   const historyCategory = getTaskHistoryCategory(task)
   return {
-    ...baseCategoryWithoutStyle,
+    ...baseCategoryWithoutTransientFields,
     workflow: 'amazon-aplus',
     productTitle: baseCategory.productTitle ?? historyCategory.productTitle,
     amazonSlot: baseCategory.amazonSlot ?? historyCategory.amazonSlot,
     aPlusType: target,
+    ...(sliceCount > 1
+      ? {
+          aPlusPlanContext: {
+            layoutMode: basePlanContext?.layoutMode ?? 'composed',
+            groupId: basePlanContext?.groupId ?? `output-conversion-${target}-${task.id}`,
+            groupKind: 'continuous-canvas' as const,
+            groupPurpose: basePlanContext?.groupPurpose,
+            itemIndex: basePlanContext?.itemIndex ?? 0,
+            sliceCount,
+            slotCost: sliceCount,
+            plannedGenerationSize: size,
+            ...(basePlanContext?.plannerSessionId ? { plannerSessionId: basePlanContext.plannerSessionId } : {}),
+          },
+        }
+      : {}),
   }
 }
 
@@ -4262,32 +4422,40 @@ export async function convertOutputToAPlusFormat(
   task: TaskRecord,
   selectedOutputImageId: string | undefined,
   target: APlusOutputConversionTarget,
+  explicitSliceCount?: number,
 ) {
   const { showToast, setParams, setPendingTaskCategory } = useStore.getState()
   const outputImageId = selectedOutputImageId && task.outputImages?.includes(selectedOutputImageId)
     ? selectedOutputImageId
     : task.outputImages?.[0]
-  if (!outputImageId) return
+  if (!outputImageId) return false
 
   const dataUrl = await ensureImageCached(outputImageId)
   if (!dataUrl) {
     showToast('无法读取输出图，请稍后重试', 'error')
-    return
+    return false
   }
 
+  const suggestedSliceCount = getSuggestedAPlusOutputConversionSliceCount(task)
+  const sliceCount = explicitSliceCount == null
+    ? suggestedSliceCount
+    : Math.min(MAX_PREMIUM_MOTHER_SLICES, Math.max(1, Math.trunc(Number(explicitSliceCount) || 1)))
+  const size = getAPlusOutputConversionSize(target, sliceCount)
+
   useStore.setState((state) => syncActiveInputDraft(state, {
-    prompt: buildAPlusOutputConversionPrompt(target),
+    prompt: buildAPlusOutputConversionPrompt(target, size, sliceCount),
     inputImages: [{ id: outputImageId, dataUrl }],
     maskDraft: null,
     maskEditorImageId: null,
   }))
   useStore.getState().clearStyleReferenceImage()
-  setParams({ size: getAPlusOutputConversionSize(target), ...AMAZON_GENERATION_DEFAULTS })
+  setParams({ size, ...AMAZON_GENERATION_DEFAULTS })
   setPendingTaskCategory({
     mode: 'next-submit',
-    category: createAPlusOutputConversionTaskCategory(task, target),
+    category: createAPlusOutputConversionTaskCategory(task, target, size, sliceCount),
   })
   showToast(`已准备转为${getAPlusOutputConversionTargetLabel(target)}`, 'success')
+  return true
 }
 
 /** 删除多条任务 */
@@ -4349,12 +4517,8 @@ export async function removeTask(task: TaskRecord) {
   const { tasks, setTasks, inputImages, styleReferenceImage, galleryInputDraft, showToast } = useStore.getState()
 
   // 收集此任务关联的图片
-  const taskImageIds = new Set([
-    ...(task.inputImageIds || []),
-    ...(task.maskImageId ? [task.maskImageId] : []),
-    ...(task.outputImages || []),
-    ...(task.streamPartialImageIds || []),
-  ])
+  const taskImageIds = new Set<string>()
+  addTaskReferencedImageIds(taskImageIds, task)
 
   // 从列表移除
   const remaining = await scrubAgentOutputPayloadsForDeletedTasks([task], tasks.filter((t) => t.id !== task.id))
@@ -4549,6 +4713,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
           ...(task.maskImageId ? [task.maskImageId] : []),
           ...(task.outputImages || []),
           ...(task.streamPartialImageIds || []),
+          ...(task.derivation?.sourceImageId ? [task.derivation.sourceImageId] : []),
         ]) {
           const prev = imageCreatedAtFallback.get(id)
           if (prev == null || task.createdAt < prev) {

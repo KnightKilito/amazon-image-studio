@@ -1,4 +1,5 @@
 import { ensureImageCached } from '../store'
+import { zipSync } from 'fflate'
 
 const MIME_EXTENSIONS: Record<string, string> = {
   'image/png': 'png',
@@ -43,6 +44,41 @@ export async function downloadImageIds(imageIds: string[], fileNameBase = 'image
   return { successCount, failCount }
 }
 
+export async function downloadImageIdsAsZip(
+  imageIds: string[],
+  fileNameBase = 'images',
+): Promise<DownloadImagesResult> {
+  if (imageIds.length === 0) return { successCount: 0, failCount: 0 }
+
+  const files: Record<string, Uint8Array> = {}
+  let successCount = 0
+  let failCount = 0
+  const safeBase = sanitizeFileName(fileNameBase)
+
+  for (let index = 0; index < imageIds.length; index++) {
+    try {
+      const blob = await getImageBlob(imageIds[index])
+      const order = String(index + 1).padStart(2, '0')
+      const bytes = new Uint8Array(await blob.arrayBuffer())
+      files[`${safeBase}-${order}.${getBlobExtension(blob)}`] = bytes
+      successCount++
+    } catch (err) {
+      console.error(err)
+      failCount++
+    }
+  }
+
+  if (successCount > 0) {
+    const zipped = zipSync(files, { level: 0 })
+    triggerDownload(
+      new Blob([zipped.slice().buffer as ArrayBuffer], { type: 'application/zip' }),
+      `${safeBase}.zip`,
+    )
+  }
+
+  return { successCount, failCount }
+}
+
 async function getImageBlob(imageIdOrUrl: string): Promise<Blob> {
   let src = imageIdOrUrl
   if (!imageIdOrUrl.startsWith('data:') && !imageIdOrUrl.startsWith('http://') && !imageIdOrUrl.startsWith('https://')) {
@@ -67,6 +103,11 @@ function triggerDownload(blob: Blob, fileName: string) {
 
 function getBlobExtension(blob: Blob): string {
   return MIME_EXTENSIONS[blob.type.toLowerCase()] ?? blob.type.split('/')[1] ?? 'png'
+}
+
+function sanitizeFileName(value: string) {
+  const normalized = value.trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-').replace(/\s+/g, '-')
+  return normalized || 'images'
 }
 
 function delay(ms: number) {

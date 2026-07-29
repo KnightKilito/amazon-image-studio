@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useStore } from '../store'
 import { useTooltip } from '../hooks/useTooltip'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { loginAdmin, logoutAdmin, readAdminToken, saveAdminToken } from '../lib/adminApi'
 import ViewportTooltip from './ViewportTooltip'
-import HelpModal from './HelpModal'
 import { HelpCircleIcon, InstallIcon, SettingsIcon } from './icons'
+
+const HelpModal = lazy(() => import('./HelpModal'))
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
@@ -421,12 +422,12 @@ export default function Header() {
                   setShowHelp(true)
                 }}
                 className="rounded-lg p-2 transition-colors hover:bg-gray-100 dark:hover:bg-gray-900"
-                aria-label="操作指南"
+                aria-label="使用文档"
               >
                 <HelpCircleIcon className="h-5 w-5 text-gray-600 dark:text-gray-400" />
               </button>
               <ViewportTooltip visible={helpTooltip.visible} className="whitespace-nowrap">
-                操作指南
+                使用文档
               </ViewportTooltip>
             </div>
             <div
@@ -469,7 +470,11 @@ export default function Header() {
       <div className="safe-area-top invisible pointer-events-none" aria-hidden="true">
         <div className="safe-header-inner" />
       </div>
-      {showHelp && <HelpModal appMode="gallery" onClose={() => setShowHelp(false)} />}
+      {showHelp && (
+        <Suspense fallback={null}>
+          <HelpModal onClose={() => setShowHelp(false)} />
+        </Suspense>
+      )}
       {showAdmin && <AdminModal onClose={() => setShowAdmin(false)} />}
     </>
   )

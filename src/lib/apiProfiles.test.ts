@@ -18,10 +18,28 @@ import {
   isOpenRouterImageGenerationProfile,
   mergeImportedSettings,
   normalizeSettings,
+  normalizeApiProfile,
   switchApiProfileProvider,
 } from './apiProfiles'
 
 describe('mergeImportedSettings', () => {
+  it('normalizes Premium A+ mother-image capability metadata', () => {
+    expect(normalizeApiProfile({
+      motherImageSupport: 'supported',
+      maxMotherSlices: 99,
+    })).toMatchObject({
+      motherImageSupport: 'supported',
+      maxMotherSlices: 7,
+    })
+    expect(normalizeApiProfile({
+      motherImageSupport: 'invalid',
+      maxMotherSlices: 1,
+    })).toMatchObject({
+      motherImageSupport: 'auto',
+      maxMotherSlices: 2,
+    })
+  })
+
   it('creates separate default profiles for image generation and AI planning', () => {
     const settings = normalizeSettings({})
 

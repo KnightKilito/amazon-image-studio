@@ -1734,6 +1734,40 @@ export default function SettingsModal() {
                 </div>
               </label>
 
+              {activeProfile.apiMode === 'images' && (
+                <div className="rounded-xl border border-gray-200/70 bg-gray-50/70 px-3 py-3 dark:border-white/[0.08] dark:bg-white/[0.03]">
+                  <div className="text-sm font-medium text-gray-700 dark:text-gray-200">高级 A+ 连续母图能力</div>
+                  <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs text-gray-500 dark:text-gray-400">服务商支持状态</span>
+                      <Select
+                        value={activeProfile.motherImageSupport ?? 'auto'}
+                        onChange={(value) => updateActiveProfile({ motherImageSupport: value as ApiProfile['motherImageSupport'] }, true)}
+                        options={[
+                          { label: '自动尝试', value: 'auto' },
+                          { label: '确认支持', value: 'supported' },
+                          { label: '不支持', value: 'unsupported' },
+                        ]}
+                        className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-gray-950/60 dark:text-gray-200 dark:focus:border-blue-500/50"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs text-gray-500 dark:text-gray-400">最大连续片数</span>
+                      <Select
+                        value={Math.min(7, Math.max(2, activeProfile.maxMotherSlices ?? 7))}
+                        onChange={(value) => updateActiveProfile({ maxMotherSlices: Number(value) }, true)}
+                        disabled={activeProfile.motherImageSupport === 'unsupported'}
+                        options={Array.from({ length: 6 }, (_, index) => ({ label: `${index + 2} 片`, value: index + 2 }))}
+                        className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 disabled:opacity-50 dark:border-white/[0.08] dark:bg-gray-950/60 dark:text-gray-200 dark:focus:border-blue-500/50"
+                      />
+                    </label>
+                  </div>
+                  <div data-selectable-text className="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                    用于 `2928x2400` 至 `2928x8400` 的单次纵向连续母图请求。自动尝试不会拆分请求；接口不支持时会原样显示上游错误。
+                  </div>
+                </div>
+              )}
+
               {/* 8. 流式传输 + 中间步骤图像数 */}
               {activeProfile.provider === 'openai' && (
                 <div className="block space-y-3">

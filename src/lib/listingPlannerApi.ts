@@ -13,6 +13,7 @@ import {
   getAPlusModuleUploadSize,
   normalizeListingImageCount,
   normalizeAPlusModuleSpecs,
+  sanitizeContinuousCanvasPlanMarkdown,
   type APlusContentType,
   type AmazonAPlusModuleSpec,
   type AmazonAPlusPlan,
@@ -547,6 +548,9 @@ function normalizeAPlusPlan(
 ): AmazonAPlusPlan {
   const spec = specs[index]
   if (!spec) throw new Error('A+ 模块规格不存在')
+  const planMarkdown = spec.planContext?.groupKind === 'continuous-canvas'
+    ? sanitizeContinuousCanvasPlanMarkdown(plan?.planMarkdown || '')
+    : plan?.planMarkdown || ''
 
   return {
     slot: plan?.slot || spec.slot,
@@ -556,13 +560,14 @@ function normalizeAPlusPlan(
     generationSize: getAPlusModuleGenerationSize(spec, tier),
     summary: getAPlusPlanSummary({
       summary: plan?.summary,
-      planMarkdown: plan?.planMarkdown || '',
+      planMarkdown,
     }, spec.objective),
-    planMarkdown: plan?.planMarkdown || '',
+    planMarkdown,
     textTitle: plan?.textTitle || '',
     textBody: plan?.textBody || '',
     prompt: plan?.prompt || '',
     negativePrompt: plan?.negativePrompt || '',
+    ...(spec.planContext ? { planContext: { ...spec.planContext } } : {}),
   }
 }
 
@@ -637,15 +642,36 @@ function getAPlusPlannerTypeName(aPlusType: APlusContentType) {
   }
 }
 
+function formatAPlusPlannerModuleRequirement(spec: AmazonAPlusModuleSpec, generationTier: SizeTier) {
+  const generationSize = getAPlusModuleGenerationSize(spec, generationTier)
+  if (spec.planContext?.groupKind === 'continuous-canvas' && spec.planContext.sliceCount) {
+    return `${spec.slot} ${spec.label}, generate exactly one uninterrupted ${generationSize}px master canvas for a ${spec.planContext.sliceCount}-slot continuous layout; the website handles all later slicing, resizing, and upload preparation`
+  }
+  return `${spec.slot} ${spec.label}, generate ${generationSize}px, final upload ${getAPlusModuleUploadSize(spec)}px`
+}
+
 function buildAPlusPlannerInstructions(baseDraft: AmazonPromptDraft, aPlusType: APlusContentType, specs: AmazonAPlusModuleSpec[], visualStyleMode: AmazonVisualStyleMode, generationTier: SizeTier) {
   const typeLabel = getAPlusPlannerTypeName(aPlusType)
   const mobileGuidance = aPlusType === 'mobile'
     ? 'For Mobile A+ modules, design every 600x450 image for compact mobile screens: one clear message per module, large product evidence, short mobile-readable US-English copy, and no dense multi-column layouts.'
     : ''
+  const composedGuidance = specs.some((spec) => spec.planContext?.layoutMode === 'composed')
+    ? [
+        'This is a freely composed Premium A+ campaign. Preserve the exact group structure represented by the ordered module specifications.',
+        'A continuous-canvas item is one single generation request for one uninterrupted master composition. The complete mother image is the primary design and must not be art-directed as independent upper/lower panels.',
+        'Plan one scene, one camera/perspective, one lighting system, and one continuous visual hierarchy across the entire declared generation canvas. Do not organize planMarkdown or prompt into upper/lower panel strategies, per-slice scenes, separate hero versus still-life sections, or separate headline systems.',
+        'Treat horizontal positions every 1200 generation pixels as invisible composition safety boundaries used later by the website. Never render dividers, seams, gutters, borders, panel frames, abrupt background changes, or deliberately centered horizontal transitions there.',
+        'Require scene planes, architecture, floors, fabric, shadows, lighting, color fields, or other non-critical visual anchors to continue naturally across every safety boundary. Only keep faces, the exact product, complete copy blocks, logos, measurements, and critical details from crossing a boundary.',
+        'The image prompt must request exactly one complete mother image. Never ask the image model to crop, slice, split, resize, downscale, prepare uploads, or return multiple images; the website owns all post-processing.',
+        'Do not add planMarkdown sections such as “输出与裁切”, “裁切与上传”, or other cropping, resizing, and upload workflow instructions. Keep planMarkdown focused on creative direction, composition, product evidence, and on-image copy.',
+        'Carousel slide items belong to one carousel module. Keep product fidelity, campaign identity, palette, casting, and image language consistent, but vary pose, crop, scene, or usage moment across slides.',
+        'Brand-story background and card items are product-specific. The background should use a model wearing the exact product as an optional side anchor and extend a quiet scene into safe card areas. Do not write generic brand copy that could apply to any product.',
+      ].join(' ')
+    : ''
   return [
     'You are an Amazon A+ Content image-planning agent. The user provides listing copy, optional brand notes, and optional product reference images.',
     `Create a ${typeLabel} image module plan. Do not generate images. Only return JSON matching the schema.`,
-    `Return exactly ${specs.length} modules in this order: ${specs.map((spec) => `${spec.slot} ${spec.label}, generate ${getAPlusModuleGenerationSize(spec, generationTier)}px, final upload ${getAPlusModuleUploadSize(spec)}px`).join('; ')}.`,
+    `Return exactly ${specs.length} modules in this order: ${specs.map((spec) => formatAPlusPlannerModuleRequirement(spec, generationTier)).join('; ')}.`,
     'The application only fixes the module order, module type, upload size, and generation size. You must decide the strategy, composition, copy approach, visual treatment, prompt content, and negative prompt content.',
     'Every English image prompt must request the listed generation size as its canvas size. Treat the smaller upload size only as the final Seller Central upload/display target, never as the image-generation canvas.',
     'Use the Amazon A+ reference material below to improve compliance judgment. It is not a fixed module creative framework, and it must not replace the product facts from the listing and reference images.',
@@ -655,6 +681,7 @@ function buildAPlusPlannerInstructions(baseDraft: AmazonPromptDraft, aPlusType: 
     'For each module, also return summary as one or two concise Simplified Chinese sentences describing the specific selling point, composition strategy, and product evidence for that module. Keep summaries distinct across repeated module types; do not repeat the module name, module position, or dimensions.',
     'Each module prompt should fully plan the finished Amazon image: composition, product evidence, on-image US-English copy when useful, callouts or information areas when useful, visual hierarchy, and rendering style.',
     'For A+ information modules, prefer complete information design with clear hierarchy and useful product evidence; lifestyle or brand modules should still have purposeful composition and visible product support.',
+    composedGuidance,
     mobileGuidance,
     baseDraft.brand
       ? `Known brand/model: ${baseDraft.brand}. For header-banner and hero-banner modules, naturally include this real brand/model as a small brand line, headline prefix, or subline when it improves the composition. For brand-story modules, use this brand/model to frame the brand tone or promise only when supported by the provided listing or brand notes.`
@@ -708,11 +735,17 @@ function buildCompactPlannerInstructions(
     const specs = normalizeAPlusModuleSpecs(aPlusType, options.aPlusModuleSpecs)
     return [
       'You are an Amazon A+ Content image-planning agent. Return only one valid JSON object.',
-      `Create exactly ${specs.length} A+ image module plans in this order: ${specs.map((spec) => `${spec.slot} ${spec.label}, generate ${getAPlusModuleGenerationSize(spec, options.aPlusGenerationTier)}px, final upload ${getAPlusModuleUploadSize(spec)}px`).join('; ')}.`,
+      `Create exactly ${specs.length} A+ image module plans in this order: ${specs.map((spec) => formatAPlusPlannerModuleRequirement(spec, options.aPlusGenerationTier)).join('; ')}.`,
       'Each English prompt must use the generation size as its canvas size. The upload size is only the final Seller Central target.',
       'Use only facts from the listing and user-provided product facts. Do not invent brand claims, certifications, logos, package contents, sizes, materials, colors, accessories, reviews, pricing, or guarantees.',
       'Each summary must be one or two concise Simplified Chinese sentences specific to that module. Each planMarkdown must be concise Simplified Chinese. Each prompt and negativePrompt must be professional English for image generation.',
       'For A+ modules, make the composition Amazon-ready, readable on mobile, product-focused, and compliant: no pricing, reviews, QR codes, external links, medical claims, competitor names, or unsupported superlatives.',
+      specs.some((spec) => spec.planContext?.groupKind === 'continuous-canvas')
+        ? 'Continuous-canvas items are one uninterrupted master composition, not upper/lower panels. Use one scene, camera, lighting system, and visual hierarchy across the exact canvas; make non-critical scene elements cross invisible 1200px safety boundaries naturally. Request exactly one complete image and never include cropping, slicing, resizing, upload preparation, or multiple-image instructions in planMarkdown or prompt; the website handles all post-processing.'
+        : '',
+      specs.some((spec) => spec.planContext?.groupKind === 'brand-story')
+        ? 'Brand-story items must be specific to the exact product, with a model/product anchor, quiet background extension, and coordinated story cards; avoid generic reusable brand claims.'
+        : '',
       options.visualStyleMode === 'ai'
         ? 'Return aiVisualStyle with the full product-specific art direction and direction-board prompt, plus seriesStyleGuide for coherent module variation.'
         : 'Return seriesStyleGuide as a short English guide for product consistency only.',

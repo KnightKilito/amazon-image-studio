@@ -10,6 +10,7 @@ export type ReferenceImageEditAction = 'ask' | 'replace-reference' | 'add-mask'
 export type BuiltInApiProvider = 'openai' | 'fal'
 export type ApiProvider = BuiltInApiProvider | string
 export type CustomProviderTemplate = 'http-image'
+export type MotherImageSupport = 'auto' | 'supported' | 'unsupported'
 export const DEFAULT_STREAM_PARTIAL_IMAGES = 1
 export const DEFAULT_AGENT_MAX_TOOL_ROUNDS = 15
 export const DEFAULT_REFERENCE_IMAGE_UPLOAD_LIMIT = 16
@@ -89,7 +90,9 @@ export interface ApiProfile {
   responseFormatB64Json?: boolean
   streamImages?: boolean
   streamPartialImages?: number
-  providerDrafts?: Partial<Record<ApiProvider, Partial<Pick<ApiProfile, 'baseUrl' | 'model' | 'apiMode' | 'codexCli' | 'apiProxy' | 'responseFormatB64Json' | 'streamImages' | 'streamPartialImages'>>>>
+  motherImageSupport?: MotherImageSupport
+  maxMotherSlices?: number
+  providerDrafts?: Partial<Record<ApiProvider, Partial<Pick<ApiProfile, 'baseUrl' | 'model' | 'apiMode' | 'codexCli' | 'apiProxy' | 'responseFormatB64Json' | 'streamImages' | 'streamPartialImages' | 'motherImageSupport' | 'maxMotherSlices'>>>>
 }
 
 export interface AppSettings {
@@ -231,6 +234,14 @@ export interface TaskRecord {
   agentBatchCallId?: string
   /** Agent 图像工具实际动作 */
   agentToolAction?: 'generate' | 'edit' | 'auto' | string
+  derivation?: {
+    type: 'premium-aplus-vertical-slices' | 'premium-aplus-horizontal-slices' | 'mobile-aplus-vertical-slices'
+    sourceTaskId: string
+    sourceImageId: string
+    sliceCount: number
+    sourceWidth: number
+    sourceHeight: number
+  }
   /** 历史筛选分类元数据；旧任务可为空并由前端推断 */
   category?: {
     productTitle?: string
@@ -238,7 +249,45 @@ export interface TaskRecord {
     amazonSlot?: string
     aPlusType?: 'standard' | 'standard-large' | 'premium' | 'mobile'
     styleReferenceImageId?: string
+    aPlusPlanContext?: PremiumAPlusPlanContext
   }
+}
+
+export type PremiumAPlusLayoutMode = 'independent' | 'composed'
+export type PremiumAPlusGroupKind = 'independent-image' | 'continuous-canvas' | 'lifestyle-carousel'
+export type PremiumAPlusGroupPurpose =
+  | 'auto'
+  | 'hero'
+  | 'lifestyle'
+  | 'technical-detail'
+  | 'comfort-structure'
+  | 'material-detail'
+  | 'color-lineup'
+  | 'size-fit'
+  | 'comparison'
+  | 'custom'
+
+export interface PremiumAPlusLayoutGroup {
+  id: string
+  kind: PremiumAPlusGroupKind
+  purpose: PremiumAPlusGroupPurpose
+  label: string
+  objective: string
+  customInstruction: string
+  sliceCount?: number
+  slideCount?: number
+}
+
+export interface PremiumAPlusPlanContext {
+  plannerSessionId?: string
+  layoutMode: PremiumAPlusLayoutMode
+  groupId: string
+  groupKind: PremiumAPlusGroupKind | 'brand-story'
+  groupPurpose?: PremiumAPlusGroupPurpose
+  itemIndex: number
+  sliceCount?: number
+  slotCost: number
+  plannedGenerationSize: string
 }
 
 export interface AmazonVisualSystem {
@@ -309,6 +358,7 @@ export interface AmazonPlannerSessionAPlusPlan {
   textBody: string
   prompt: string
   negativePrompt: string
+  planContext?: PremiumAPlusPlanContext
 }
 
 export interface AmazonPlannerSessionAPlusModuleSpec {
@@ -320,6 +370,9 @@ export interface AmazonPlannerSessionAPlusModuleSpec {
   uploadWidth: number
   uploadHeight: number
   objective: string
+  planContext?: PremiumAPlusPlanContext
+  exactGenerationWidth?: number
+  exactGenerationHeight?: number
 }
 
 export interface AmazonPlannerSessionStyleImage {
@@ -356,6 +409,10 @@ export interface AmazonPlannerSession {
   resolution: '2k' | '4k'
   listingImageCount?: number
   aPlusModuleSpecs?: Partial<Record<'standard' | 'standard-large' | 'premium' | 'mobile', AmazonPlannerSessionAPlusModuleSpec[]>>
+  premiumLayoutMode?: PremiumAPlusLayoutMode
+  premiumLayoutGroups?: PremiumAPlusLayoutGroup[]
+  premiumBrandStoryEnabled?: boolean
+  premiumBrandStoryCardCount?: number
   listingText: string
   referenceImageIds: string[]
   draft: AmazonPlannerSessionDraft
@@ -436,7 +493,7 @@ export interface StoredImage {
   /** 图片首次存储时间（ms） */
   createdAt?: number
   /** 图片来源：用户上传 / API 生成 / 遮罩 / 风格参考 */
-  source?: 'upload' | 'generated' | 'mask' | 'preset' | 'style-custom'
+  source?: 'upload' | 'generated' | 'derived' | 'mask' | 'preset' | 'style-custom'
   /** 原图宽度 */
   width?: number
   /** 原图高度 */
@@ -581,7 +638,7 @@ export interface ExportData {
   imageFiles?: Record<string, {
     path: string
     createdAt?: number
-    source?: 'upload' | 'generated' | 'mask' | 'preset' | 'style-custom'
+    source?: 'upload' | 'generated' | 'derived' | 'mask' | 'preset' | 'style-custom'
     width?: number
     height?: number
   }>

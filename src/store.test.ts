@@ -71,6 +71,17 @@ vi.mock('./lib/api', () => ({
     revisedPrompts: [],
   })),
 }))
+vi.mock('./lib/imageUpscaling', () => ({
+  upscaleImageDataUrlForAPlus: vi.fn(async (dataUrl: string) => ({
+    dataUrl: `${dataUrl}-upscaled`,
+    sourceWidth: 300,
+    sourceHeight: 225,
+    targetWidth: 600,
+    targetHeight: 450,
+    scale: 2,
+    needsUpscale: true,
+  })),
+}))
 vi.mock('./lib/agentApi', () => ({
   callAgentConversationTitleApi: vi.fn(async () => '标题'),
   callAgentResponsesApi: vi.fn(() => new Promise(() => {})),
@@ -95,7 +106,7 @@ vi.mock('./lib/agentApi', () => ({
 import { clearAmazonPlannerSessions, clearImages, clearTasks, getAllAmazonPlannerSessions, getImage, putAmazonPlannerSession, putImage } from './lib/db'
 import { callImageApi } from './lib/api'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
-import { cleanStaleAgentInputDrafts, clearData, convertOutputToAPlusFormat, editOutputs, exportData, generatePlannerStyleReferenceImage, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
+import { cleanStaleAgentInputDrafts, clearData, convertOutputToAPlusFormat, createAPlusBatchUpscaleTask, editOutputs, exportData, generatePlannerStyleReferenceImage, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -894,6 +905,53 @@ describe('mask draft lifecycle in store actions', () => {
         },
       },
     })
+  })
+
+  it('batch-upscales all outputs into one PNG/high task', async () => {
+    const sourceImages = [
+      { id: 'batch-upscale-a', dataUrl: 'data:image/png;base64,batch-a' },
+      { id: 'batch-upscale-b', dataUrl: 'data:image/png;base64,batch-b' },
+      { id: 'batch-upscale-c', dataUrl: 'data:image/png;base64,batch-c' },
+    ]
+    await clearImages()
+    for (const image of sourceImages) await putImage(image)
+
+    const sourceTask = task({
+      outputImages: sourceImages.map(({ id }) => id),
+      params: { ...DEFAULT_PARAMS, n: 3 },
+      category: {
+        workflow: 'amazon-aplus',
+        aPlusType: 'mobile',
+        amazonSlot: 'A+M01',
+      },
+    })
+    useStore.setState({ tasks: [sourceTask] })
+
+    const upscaledTask = await createAPlusBatchUpscaleTask(
+      sourceTask,
+      sourceImages.map(({ id }) => id),
+      'mobile',
+    )
+
+    expect(upscaledTask.outputImages).toHaveLength(3)
+    expect(upscaledTask.inputImageIds).toEqual(sourceImages.map(({ id }) => id))
+    expect(upscaledTask.params).toMatchObject({
+      n: 3,
+      size: '600x450',
+      output_format: 'png',
+      quality: 'high',
+      output_compression: null,
+    })
+    expect(Object.values(upscaledTask.actualParamsByImage ?? {})).toHaveLength(3)
+    expect(Object.values(upscaledTask.actualParamsByImage ?? {})).toEqual(expect.arrayContaining([
+      expect.objectContaining({ size: '600x450', output_format: 'png', quality: 'high' }),
+    ]))
+    expect(upscaledTask.category).toMatchObject({
+      workflow: 'amazon-aplus',
+      aPlusType: 'mobile',
+      amazonSlot: 'A+M01 · 批量等比放大',
+    })
+    expect(useStore.getState().tasks[0]?.id).toBe(upscaledTask.id)
   })
 
   it('preserves reused A+ category and type on the next submit', async () => {

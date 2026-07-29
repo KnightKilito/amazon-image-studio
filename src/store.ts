@@ -57,6 +57,7 @@ import { prepareReferenceImageAndMaskPayload } from './lib/referenceImagePayload
 import { getTaskHistoryCategory } from './lib/taskHistory'
 import { isAmazonListingMainSlot } from './lib/listingPlanner'
 import { sliceImageDataUrlVertically, type APlusSliceFormat } from './lib/imageSlicing'
+import { upscaleImageDataUrlForAPlus, type APlusUpscaleFormat } from './lib/imageUpscaling'
 import { getMobileMotherImageSize, getPremiumMotherImageSize, MAX_PREMIUM_MOTHER_SLICES, MIN_PREMIUM_MOTHER_SLICES } from './lib/premiumAPlusLayout'
 import { fetchAdminSettings, readAdminToken, saveAdminSettings } from './lib/adminApi'
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
@@ -4184,6 +4185,93 @@ export async function createPremiumAPlusSliceTask(
     return derivedTask
   } catch (error) {
     await deleteUnreferencedImageIds(storedSliceIds)
+    throw error
+  }
+}
+
+/** 使用浏览器 Canvas 将 A+ 图片等比放大，并保存为新任务。 */
+export async function createAPlusUpscaleTask(
+  sourceTask: TaskRecord,
+  sourceImageId: string,
+  format: APlusUpscaleFormat,
+): Promise<TaskRecord> {
+  return createAPlusBatchUpscaleTask(sourceTask, [sourceImageId], format)
+}
+
+/** 批量等比放大同一 A+ 任务中的输出图片，并保存到同一条新任务。 */
+export async function createAPlusBatchUpscaleTask(
+  sourceTask: TaskRecord,
+  sourceImageIds: string[],
+  format: APlusUpscaleFormat,
+): Promise<TaskRecord> {
+  const uniqueSourceImageIds = [...new Set(sourceImageIds)]
+  if (uniqueSourceImageIds.length === 0) throw new Error('当前任务没有可放大的图片。')
+  if (uniqueSourceImageIds.some((imageId) => !sourceTask.outputImages.includes(imageId))) {
+    throw new Error('部分图片不属于当前任务，无法批量放大。')
+  }
+
+  const storedOutputs: Array<{ imageId: string, size: string }> = []
+  try {
+    for (const sourceImageId of uniqueSourceImageIds) {
+      const sourceDataUrl = await ensureImageCached(sourceImageId)
+      if (!sourceDataUrl) throw new Error('无法读取部分图片，请刷新后重试。')
+      const result = await upscaleImageDataUrlForAPlus(sourceDataUrl, format)
+      const imageId = await storeImage(result.dataUrl, 'derived')
+      cacheImage(imageId, result.dataUrl)
+      storedOutputs.push({
+        imageId,
+        size: `${result.targetWidth}x${result.targetHeight}`,
+      })
+    }
+
+    const now = Date.now()
+    const outputSize = storedOutputs[0].size
+    const formatLabel = format === 'mobile' ? '手机 A+' : '高级 A+'
+    const actualParamsByImage = Object.fromEntries(storedOutputs.map(({ imageId, size }) => [
+      imageId,
+      { size, output_format: 'png' as const, quality: 'high' as const, output_compression: null },
+    ]))
+    const { aPlusPlanContext, ...baseCategory } = sourceTask.category ?? {}
+    const upscaledTask: TaskRecord = {
+      id: genId(),
+      prompt: sourceTask.prompt,
+      params: {
+        ...sourceTask.params,
+        size: outputSize,
+        n: storedOutputs.length,
+        output_format: 'png',
+        quality: 'high',
+        output_compression: null,
+      },
+      actualParams: { size: outputSize, output_format: 'png', quality: 'high', output_compression: null },
+      actualParamsByImage,
+      inputImageIds: uniqueSourceImageIds,
+      maskTargetImageId: null,
+      maskImageId: null,
+      outputImages: storedOutputs.map(({ imageId }) => imageId),
+      status: 'done',
+      error: null,
+      createdAt: now,
+      finishedAt: now,
+      elapsed: 0,
+      sourceMode: sourceTask.sourceMode,
+      category: {
+        ...baseCategory,
+        workflow: 'amazon-aplus',
+        aPlusType: format,
+        ...(!sourceTask.derivation && aPlusPlanContext ? { aPlusPlanContext } : {}),
+        amazonSlot: sourceTask.category?.amazonSlot
+          ? `${sourceTask.category.amazonSlot} · ${storedOutputs.length > 1 ? '批量' : ''}等比放大`
+          : `${formatLabel} · ${storedOutputs.length > 1 ? '批量' : ''}等比放大`,
+      },
+    }
+
+    await putTask(upscaledTask)
+    const latestTasks = useStore.getState().tasks
+    useStore.getState().setTasks([upscaledTask, ...latestTasks])
+    return upscaledTask
+  } catch (error) {
+    await deleteUnreferencedImageIds(storedOutputs.map(({ imageId }) => imageId))
     throw error
   }
 }

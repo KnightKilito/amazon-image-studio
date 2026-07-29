@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import type { TaskRecord } from '../types'
-import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, convertOutputToAPlusFormat, createPremiumAPlusSliceTask, getSuggestedAPlusOutputConversionSliceCount, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask } from '../store'
+import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, convertOutputToAPlusFormat, createPremiumAPlusSliceTask, createAPlusUpscaleTask, createAPlusBatchUpscaleTask, getSuggestedAPlusOutputConversionSliceCount, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { useTooltip } from '../hooks/useTooltip'
@@ -12,6 +12,7 @@ import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { downloadImageIds, downloadImageIdsAsZip } from '../lib/downloadImages'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { getAspectLabel, getTaskHistoryCategory, getWorkflowLabel } from '../lib/taskHistory'
+import { getAPlusUpscalePlan, type APlusUpscaleFormat } from '../lib/imageUpscaling'
 import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, LinkIcon, TrashIcon } from './icons'
 
 import ViewportTooltip from './ViewportTooltip'
@@ -45,6 +46,8 @@ export default function DetailModal() {
   const [showMobileConversionDialog, setShowMobileConversionDialog] = useState(false)
   const [mobileConversionPanelCount, setMobileConversionPanelCount] = useState(1)
   const [mobileConversionBusy, setMobileConversionBusy] = useState(false)
+  const [upscaleBusy, setUpscaleBusy] = useState(false)
+  const [batchUpscaleBusy, setBatchUpscaleBusy] = useState(false)
   const [streamPreviewLoaded, setStreamPreviewLoaded] = useState(false)
   const [categoryProductInput, setCategoryProductInput] = useState('')
   const [categoryWorkflowInput, setCategoryWorkflowInput] = useState('gallery')
@@ -121,6 +124,8 @@ export default function DetailModal() {
     setShowMobileConversionDialog(false)
     setMobileConversionPanelCount(1)
     setMobileConversionBusy(false)
+    setUpscaleBusy(false)
+    setBatchUpscaleBusy(false)
   }, [detailTaskId])
 
   useEffect(() => {
@@ -227,8 +232,8 @@ export default function DetailModal() {
   const showReferenceSection = allInputImageIds.length > 0 || isAgentEditTool
 
   const outputLen = task.outputImages?.length || 0
-  const currentImageRatio = currentOutputImageId ? imageRatios[currentOutputImageId] : ''
-  const currentImageSize = currentOutputImageId ? imageSizes[currentOutputImageId] : ''
+  const currentImageRatio = (currentOutputImageId ? imageRatios[currentOutputImageId] : '') || ''
+  const currentImageSize = (currentOutputImageId ? imageSizes[currentOutputImageId] : '') || ''
   const currentActualParams = currentOutputImageId ? task.actualParamsByImage?.[currentOutputImageId] : undefined
   const currentRevisedPrompt = currentOutputImageId ? task.revisedPromptByImage?.[currentOutputImageId]?.trim() : ''
   const showRevisedPrompt = Boolean(currentRevisedPrompt && currentRevisedPrompt !== task.prompt.trim())
@@ -248,6 +253,14 @@ export default function DetailModal() {
   const currentStreamPreviewSrc = activeStreamPreviewSrc
   const streamPartialImageIds = task.streamPartialImageIds ?? []
   const currentHistoryCategory = historyCategory ?? getTaskHistoryCategory(task)
+  const aPlusUpscaleFormat: APlusUpscaleFormat | null = currentHistoryCategory.workflow === 'amazon-aplus'
+    && (currentHistoryCategory.aPlusType === 'premium' || currentHistoryCategory.aPlusType === 'mobile')
+    ? currentHistoryCategory.aPlusType
+    : null
+  const currentImageDimensionMatch = currentImageSize.match(/^(\d+)\s*[xX×]\s*(\d+)$/)
+  const currentUpscalePlan = aPlusUpscaleFormat && currentImageDimensionMatch
+    ? getAPlusUpscalePlan(Number(currentImageDimensionMatch[1]), Number(currentImageDimensionMatch[2]), aPlusUpscaleFormat)
+    : null
   const categoryChanged =
     categoryProductInput.trim() !== currentHistoryCategory.productTitle ||
     categoryWorkflowInput !== (task.category?.workflow ?? currentHistoryCategory.workflow)
@@ -302,6 +315,37 @@ export default function DetailModal() {
       }
     } finally {
       setMobileConversionBusy(false)
+    }
+  }
+
+  const handleUpscaleCurrentOutput = async () => {
+    if (!currentOutputImageId || !aPlusUpscaleFormat || upscaleBusy || batchUpscaleBusy) return
+    setUpscaleBusy(true)
+    try {
+      const upscaledTask = await createAPlusUpscaleTask(task, currentOutputImageId, aPlusUpscaleFormat)
+      const outputSize = upscaledTask.actualParams?.size ?? upscaledTask.params.size
+      showToast(`已等比放大并保存为 ${outputSize}`, 'success')
+      setDetailTaskId(upscaledTask.id)
+    } catch (err) {
+      console.error(err)
+      showToast(err instanceof Error ? err.message : '图片放大失败', 'error')
+    } finally {
+      setUpscaleBusy(false)
+    }
+  }
+
+  const handleBatchUpscaleOutputs = async () => {
+    if (!aPlusUpscaleFormat || outputLen < 2 || upscaleBusy || batchUpscaleBusy) return
+    setBatchUpscaleBusy(true)
+    try {
+      const upscaledTask = await createAPlusBatchUpscaleTask(task, task.outputImages, aPlusUpscaleFormat)
+      showToast(`已批量等比放大并保存 ${upscaledTask.outputImages.length} 张图片`, 'success')
+      setDetailTaskId(upscaledTask.id)
+    } catch (err) {
+      console.error(err)
+      showToast(err instanceof Error ? err.message : '批量放大失败', 'error')
+    } finally {
+      setBatchUpscaleBusy(false)
     }
   }
 
@@ -1069,6 +1113,34 @@ export default function DetailModal() {
               >
                 切割{task.category?.aPlusType === 'mobile' ? '手机' : '高级'} A+ 母图
               </button>
+            )}
+            {aPlusUpscaleFormat && (
+              <div className={`grid gap-2 ${outputLen > 1 ? 'sm:grid-cols-2' : ''}`}>
+                <button
+                  type="button"
+                  onClick={() => void handleUpscaleCurrentOutput()}
+                  disabled={!currentOutputImageId || !currentOutputPreviewSrc || !currentUpscalePlan || upscaleBusy || batchUpscaleBusy}
+                  title="使用浏览器 Canvas 等比放大当前图片并保存为新任务，不调用 AI 接口"
+                  className="flex w-full items-center justify-center rounded-xl bg-sky-50 px-3 py-2 text-sm font-medium text-sky-700 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-sky-500/10 dark:text-sky-300 dark:hover:bg-sky-500/20"
+                >
+                  {upscaleBusy
+                    ? '正在放大当前图片...'
+                    : currentUpscalePlan
+                      ? `当前图放大到 ${currentUpscalePlan.targetWidth}x${currentUpscalePlan.targetHeight}`
+                      : '放大当前图片'}
+                </button>
+                {outputLen > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => void handleBatchUpscaleOutputs()}
+                    disabled={upscaleBusy || batchUpscaleBusy}
+                    title="逐张等比放大当前任务的全部图片，并保存到同一条新任务"
+                    className="flex w-full items-center justify-center rounded-xl bg-teal-50 px-3 py-2 text-sm font-medium text-teal-700 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-teal-500/10 dark:text-teal-300 dark:hover:bg-teal-500/20"
+                  >
+                    {batchUpscaleBusy ? `正在批量放大 ${outputLen} 张...` : `批量等比放大 ${outputLen} 张`}
+                  </button>
+                )}
+              </div>
             )}
             <div className="grid grid-cols-2 gap-2">
               <button

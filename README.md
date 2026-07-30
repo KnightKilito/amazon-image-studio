@@ -1,6 +1,4 @@
-# 说明
 
-本项目来源于https://github.com/Ali-Aria/amazon-image-studio，在本人自己的需求下进行修改自用
 
 # 亚马逊图片工作台
 
@@ -8,7 +6,9 @@
 
 它适合用来把产品标题、五点描述、卖点文案和参考图，整理成 Amazon Listing 图片或 A+ Content 图片策划，并逐张生成图片。
 
-项目仓库：[Ali-Aria/amazon-image-studio](https://github.com/Ali-Aria/amazon-image-studio)
+最初始的版本为：[Ali-Aria/amazon-image-studio](https://github.com/Ali-Aria/amazon-image-studio)
+
+因为不满足个人需求，我在此基础上进行大量魔改，项目地址：[KnightKilito/amazon-image-studio](https://github.com/KnightKilito/amazon-image-studio)
 
 ## 管理员统一配置
 

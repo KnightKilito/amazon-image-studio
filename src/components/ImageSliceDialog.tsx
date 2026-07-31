@@ -72,7 +72,7 @@ export default function ImageSliceDialog({ source, initialSliceCount, format = '
                 className="h-10 rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 outline-none transition hover:border-gray-300 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-200"
               />
             </label>
-            <div className={`rounded-lg border px-3 py-2.5 text-xs leading-relaxed ${validation.valid ? validation.lowResolution ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-100' : 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-100' : 'border-red-200 bg-red-50 text-red-700 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-200'}`}>
+            <div className={`rounded-lg border px-3 py-2.5 text-xs leading-relaxed ${validation.valid && !validation.lowResolution ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-100' : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-100'}`}>
               <div className="font-semibold">实际尺寸 {dimensions.width || '-'}x{dimensions.height || '-'}</div>
               <div className="mt-1">{dimensions.width ? validation.message : '正在读取图片尺寸...'}</div>
             </div>
@@ -81,7 +81,7 @@ export default function ImageSliceDialog({ source, initialSliceCount, format = '
 
         <div className="flex justify-end gap-2 border-t border-gray-200 px-4 py-3 dark:border-white/[0.08]">
           <button type="button" disabled={busy} onClick={onClose} className="h-9 rounded-lg border border-gray-200 px-4 text-sm font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.05]">取消</button>
-          <button type="button" disabled={busy || !validation.valid} onClick={() => onConfirm(sliceCount)} className="h-9 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-white/[0.08] dark:disabled:text-gray-500">
+          <button type="button" disabled={busy || dimensions.width <= 0 || dimensions.height <= 0} onClick={() => onConfirm(sliceCount)} className="h-9 rounded-lg bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-white/[0.08] dark:disabled:text-gray-500">
             {busy ? '正在切割...' : `切割并保存 ${sliceCount} 张`}
           </button>
         </div>

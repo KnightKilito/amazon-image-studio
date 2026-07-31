@@ -96,7 +96,7 @@ export function validateAPlusMotherGeometry(
       ? lowResolution
         ? `比例正确，但每片约 ${Math.round(sliceWidth)}x${Math.round(sliceHeight)}，低于 ${geometry.label} 建议上传尺寸。`
         : `比例正确，可切成 ${count} 张约 ${Math.round(sliceWidth)}x${Math.round(sliceHeight)} 的 ${geometry.label} 图片。`
-      : `当前比例 ${actualRatio.toFixed(3)} 与 ${count} 片 ${geometry.label} 目标比例 ${expectedRatio.toFixed(3)} 不一致，不能自动切割。`,
+      : `当前比例 ${actualRatio.toFixed(3)} 与 ${count} 片 ${geometry.label} 目标比例 ${expectedRatio.toFixed(3)} 不一致。仍可按高度等分切割，但切片尺寸或比例可能不符合预期，请确认预览中的切割位置。`,
   }
 }
 
@@ -112,7 +112,6 @@ export function getVerticalSliceBounds(height: number, sliceCount: number) {
 export async function sliceImageDataUrlVertically(dataUrl: string, sliceCount: number, format: APlusSliceFormat = 'premium') {
   const image = await loadImage(dataUrl)
   const validation = validateAPlusMotherGeometry(image.naturalWidth, image.naturalHeight, sliceCount, format)
-  if (!validation.valid) throw new Error(validation.message)
 
   const bounds = getVerticalSliceBounds(image.naturalHeight, sliceCount)
   const slices: Array<{ dataUrl: string; width: number; height: number }> = []

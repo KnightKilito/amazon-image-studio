@@ -23,10 +23,11 @@ describe('Premium A+ vertical slicing geometry', () => {
     })
   })
 
-  it('blocks wrong ratios instead of stretching or cropping them', () => {
+  it('flags wrong ratios with a warning without treating them as valid geometry', () => {
     const validation = validatePremiumMotherGeometry(2928, 3200, 3)
     expect(validation.valid).toBe(false)
     expect(validation.expectedRatio).toBeCloseTo(getPremiumMotherExpectedRatio(3))
+    expect(validation.message).toContain('仍可按高度等分切割')
   })
 
   it('warns when each resulting panel is below the Amazon upload size', () => {

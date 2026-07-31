@@ -2018,43 +2018,47 @@ export default function AmazonPlanner() {
               </div>
             )}
             {plannerMode === 'aplus' && (
-              <div className="mt-3 space-y-2">
-                <div className="inline-flex rounded-xl border border-gray-200 bg-gray-100 p-1 dark:border-white/[0.08] dark:bg-white/[0.04]">
-                  {([
-                    ['standard-large', '普通A+'],
-                    ['standard', '标准A+'],
-                    ['premium', '高级A+'],
-                    ['mobile', '手机A+'],
-                  ] as const).map(([type, label]) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => changeAPlusType(type)}
-                      className={`h-8 rounded-lg px-3 text-sm font-medium transition ${aPlusType === type ? 'bg-white text-gray-900 shadow-sm dark:bg-white/10 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                {aPlusType === 'premium' && (
-                  <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5 dark:border-white/[0.08] dark:bg-gray-950">
+                // 改为水平 flex，两端对齐（或 ml-auto 推右）
+                <div className="mt-3 flex items-center gap-4">
+                  {/* 第一组：左对齐 */}
+                  <div className="inline-flex rounded-xl border border-gray-200 bg-gray-100 p-1 dark:border-white/[0.08] dark:bg-white/[0.04]">
                     {([
-                      ['independent', '独立模块'],
-                      ['composed', '自由编排'],
-                    ] as const).map(([mode, label]) => (
-                      <button
-                        key={mode}
-                        type="button"
-                        disabled={isPlanning}
-                        onClick={() => changePremiumLayoutMode(mode)}
-                        className={`h-8 rounded-md px-3 text-xs font-semibold transition ${premiumLayoutMode === mode ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-950' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.05] dark:hover:text-gray-100'}`}
-                      >
-                        {label}
-                      </button>
+                      ['standard-large', '普通A+'],
+                      ['standard', '标准A+'],
+                      ['premium', '高级A+'],
+                      ['mobile', '手机A+'],
+                    ] as const).map(([type, label]) => (
+                        <button
+                            key={type}
+                            type="button"
+                            onClick={() => changeAPlusType(type)}
+                            className={`h-8 rounded-lg px-3 text-sm font-medium transition ${aPlusType === type ? 'bg-white text-gray-900 shadow-sm dark:bg-white/10 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+                        >
+                          {label}
+                        </button>
                     ))}
                   </div>
-                )}
-              </div>
+
+                  {/* 第二组：靠右（用 ml-auto 推至右侧） */}
+                  {aPlusType === 'premium' && (
+                      <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5 dark:border-white/[0.08] dark:bg-gray-950 ml-auto">
+                        {([
+                          ['independent', '独立模块'],
+                          ['composed', '自由编排'],
+                        ] as const).map(([mode, label]) => (
+                            <button
+                                key={mode}
+                                type="button"
+                                disabled={isPlanning}
+                                onClick={() => changePremiumLayoutMode(mode)}
+                                className={`h-8 rounded-md px-3 text-xs font-semibold transition ${premiumLayoutMode === mode ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-950' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.05] dark:hover:text-gray-100'}`}
+                            >
+                              {label}
+                            </button>
+                        ))}
+                      </div>
+                  )}
+                </div>
             )}
             <label className={`mt-3 block rounded-xl transition ${getGuideFocusClass(guideState.target === 'planner-input')}`}>
               <span className={LABEL_CLASS}>{plannerMode === 'aplus' ? '标题 / 五点描述 / 品牌说明' : '标题 / 五点描述'}</span>

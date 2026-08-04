@@ -46,7 +46,32 @@ tags:
 > **接口错误请保留完整信息**  
 > 反馈问题时请保留请求 URL、HTTP 状态码、响应内容和发生时间；API Key 请打码，不要公开发送完整密钥。
 
-## 05 联系与反馈
+## 05 常见问题
+
+### 启动后打不开页面
+
+在项目目录重新安装依赖并启动：
+
+```powershell
+npm ci
+npm run dev
+```
+
+Windows 用户也可重新双击 `start-amazon-image-studio.bat`。
+
+### AI 策划失败
+
+确认“AI 策划配置”使用文本接口，模型不是纯图片生成模型。DeepSeek 请使用 `Chat Completions (/chat/completions)`；官方接口不接收参考图，应用会自动改为仅发送商品文本。仅提供 `/v1/images` 的中转接口不能用于 AI 策划。
+
+### 生图失败
+
+检查当前生图配置的 API URL、API Key、模型和接口类型是否对应。建议从 `Images API (/v1/images)` 与 `gpt-image-2` 开始验证。OpenRouter 生图实际使用 `/chat/completions`；请填写 `https://openrouter.ai/api/v1` 并选择支持图片输出的模型。
+
+### 参考图或历史记录丢失
+
+图片任务和大部分个人配置保存在当前浏览器。清空站点数据、更换浏览器或使用无痕窗口可能导致数据不可恢复；重要结果请及时下载。
+
+## 06 联系与反馈
 
 网站功能建议或问题反馈可通过微信联系。
 

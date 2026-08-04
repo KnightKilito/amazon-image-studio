@@ -1,228 +1,150 @@
-
-
 # 亚马逊图片工作台
 
-亚马逊图片工作台是一个面向 Amazon Listing 的产品图片策划与生成工作台，基于 [CookSleep/gpt_image_playground](https://github.com/CookSleep/gpt_image_playground) 修改。
+面向 Amazon Listing 与 A+ Content 的图片策划和生成工作台。输入商品信息与参考图，即可生成分镜方案、提示词并逐张出图。
 
-它适合用来把产品标题、五点描述、卖点文案和参考图，整理成 Amazon Listing 图片或 A+ Content 图片策划，并逐张生成图片。
+[🌐 作者博客](https://meochun.fun) · [🐛 反馈问题](https://github.com/KnightKilito/amazon-image-studio/issues) · [📝 更新日志](#-更新日志)
 
-最初始的版本为：[Ali-Aria/amazon-image-studio](https://github.com/Ali-Aria/amazon-image-studio)
+> 在线体验和本地应用均不内置 API Key。请使用自己的 OpenAI 或兼容服务，并自行承担调用费用。
 
-因为不满足个人需求，我在此基础上进行大量魔改，项目地址：[KnightKilito/amazon-image-studio](https://github.com/KnightKilito/amazon-image-studio)
+## ✨ 功能
 
-## 管理员统一配置
+- 🪶 Listing 图片策划：默认 `MAIN + PT01-PT06`，可自定义为 `7-12` 张。
+- ✒️ A+ 图片策划：支持普通、标准、高级与手机 A+ 模块，可在策划前增删模块。
+- 💾 参考图、遮罩编辑、视觉风格、历史记录、批量下载与本地 IndexedDB 存储。
+- 🧠 支持 OpenAI / OpenAI 兼容接口、OpenRouter，以及独立的 Chat Completions / Responses 策划配置。
+- 🗒️ 内置 Amazon 主图、附图与 A+ 尺寸规则；生成时会带入目标分辨率与合规约束。
 
-前端不会直接连接 MySQL。统一游客 API URL、游客权限、参考图上限和管理员账号密码由 Node 管理 API 读写 MySQL。
+## 📸 截图
 
-```bash
+<!-- 截图预留：上传后将图片放至 docs/screenshots/，并取消对应 img 标签的注释。 -->
+
+<!--
+<p align="center">
+  <img src="docs/screenshots/overview.png" alt="亚马逊图片工作台主界面" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/planner.png" alt="Listing 与 A+ 图片策划" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/settings.png" alt="API 与管理员设置" width="100%">
+</p>
+-->
+
+## 🚀 快速开始
+
+要求：Node.js 20+、npm。
+
+```powershell
+npm ci
+npm run dev
+```
+
+打开终端显示的地址，通常为 `http://127.0.0.1:5173/` 。Windows 也可双击 `start-amazon-image-studio.bat`；停止服务请按 `Ctrl + C`，或运行 `stop-amazon-image-studio.bat`。
+
+常用命令：
+
+| 命令 | 用途 |
+| --- | --- |
+| `npm run dev` | 启动开发环境 |
+| `npm run build` | 构建静态文件到 `dist/` |
+| `npm run test` | 运行测试 |
+| `npm run admin:server` | 启动管理员 API |
+
+## 📖 使用流程
+
+1. 在右上角设置中分别配置生图 API 与 AI 策划 API。
+2. 选择 `Listing 图` 或 `A+ 图`，填写商品标题、五点描述、卖点或品牌信息，并按需上传参考图。
+3. 执行 AI 策划，在右侧选择图片位，检查 Prompt Preview。
+4. 逐张提交生成；生成结果可在历史记录中筛选、复用、编辑或下载。
+
+生图建议使用 `Images API (/v1/images)` 与 `gpt-image-2`。策划使用文本或多模态模型，建议选择 `Chat Completions (/chat/completions)` 或 `Responses API (/v1/responses)`。DeepSeek 官方 Chat Completions 不接收参考图，应用会自动以纯文本请求策划。
+
+## 🛠️ 管理与部署
+
+前端可作为 Vite 静态站点部署，构建命令为 `npm run build`，输出目录为 `dist/`。GitHub Pages、Cloudflare Pages 等静态托管均可使用此构建产物。
+
+需要统一管理游客权限、API URL、模型列表和参考图上限时，另行部署 Node 管理 API 与 MySQL：
+
+```powershell
+Copy-Item config.example.yaml config.yaml
 npm run admin:server
 ```
 
-首次启动会自动创建 `amazon_image_studio` 数据库，以及 `admin_users`、`admin_settings` 表。默认管理员账号为 `admin`，密码沿用旧前端内置管理员密码；部署时建议先复制 `config.example.yaml` 为 `config.yaml`，再在 `config.yaml` 中修改管理员账号、密码、MySQL 连接和管理 API 端口。
+编辑 `config.yaml` 中的管理员账户和 MySQL 连接信息。生产环境需将 `/admin-api` 反向代理到 Node 服务；跨域 API 才需要启用可选的 `/api-proxy`，并应通过 `allowedTargets` 限制目标地址。部署示例见 [config.example.yaml](config.example.yaml) 与 [deploy/nginx.conf](deploy/nginx.conf)。
 
-`config.yaml` 是本机/服务器实际配置文件，已经加入 `.gitignore`，不会被提交到 Git；`config.example.yaml` 是可提交的模板。环境变量仍然可用，并且优先级高于 `config.yaml`，适合 systemd、Docker 或临时覆盖。开发环境下 Vite 会把 `/admin-api` 代理到 Node 管理 API；生产部署时也需要把 `/admin-api` 转发到该 Node 服务。
+### 部署 FAQ
 
-### 需要修改的配置项
+**构建或启动失败怎么办？** 确认使用 Node.js 20+，在项目根目录执行 `npm ci` 后重试。部署静态站点时，安装命令为 `npm ci`，构建命令为 `npm run build`，发布目录为 `dist/`。
 
-如果你把项目部署到自己的服务器，通常需要复制并修改根目录下的 `config.yaml`：
+**为什么管理员设置没有生效？** 静态前端不保存统一配置。确认 Node 管理 API 正在运行、MySQL 可访问，且生产反向代理已将 `/admin-api` 转发至该服务。
 
-```bash
-cp config.example.yaml config.yaml
-```
+**什么情况下需要 `/api-proxy`？** 仅当第三方 API 不允许浏览器跨域请求时启用。公网环境不要开启无目标限制的转发，优先以 `allowedTargets` 配置白名单。
 
-```yaml
-adminServer:
-  port: 8787
-  username: admin
-  password: "你的管理员密码"
-  passwordSha256: ""
+**本地端口被占用怎么办？** 停止已有开发服务，或使用 Vite 输出的其他端口；Windows 脚本可运行 `stop-amazon-image-studio.bat`，不会强制结束无关进程。
 
-mysql:
-  host: 127.0.0.1
-  port: 3306
-  user: root
-  password: "你的MySQL密码"
-  database: amazon_image_studio
+## 📄 许可与来源
 
-apiProxy:
-  enabled: false
-  locked: false
-  prefix: /api-proxy
-  allowAllTargets: false
-  allowedTargets: []
-  target: ""
-  changeOrigin: true
-  secure: true
-```
+本项目以 [MIT License](LICENSE) 发布，基于 [CookSleep/gpt_image_playground](https://github.com/CookSleep/gpt_image_playground) 和 [Ali-Aria/amazon-image-studio](https://github.com/Ali-Aria/amazon-image-studio) 修改。源码不包含任何 API Key、模型服务或免费调用额度。
 
-这些 YAML 配置项也可以用环境变量覆盖：
+## 📝 更新日志
 
-- `mysql.host` / `AIS_DB_HOST`：MySQL 主机地址，默认 `127.0.0.1`
-- `mysql.port` / `AIS_DB_PORT`：MySQL 端口，默认 `3306`
-- `mysql.user` / `AIS_DB_USER`：MySQL 用户名
-- `mysql.password` / `AIS_DB_PASSWORD`：MySQL 密码
-- `mysql.database` / `AIS_DB_NAME`：数据库名，默认 `amazon_image_studio`
-- `adminServer.port` / `AIS_ADMIN_PORT`：Node 管理 API 监听端口，默认 `8787`
-- `adminServer.username` / `AIS_ADMIN_USERNAME`：管理员账号，默认 `admin`
-- `adminServer.password` / `AIS_ADMIN_PASSWORD`：管理员明文密码，首次启动时会被转成 SHA-256 后写入数据库
-- `adminServer.passwordSha256` / `AIS_ADMIN_PASSWORD_SHA256`：如果你已经自己准备好了 SHA-256 密码哈希，可以直接填这个值
-- `apiProxy.enabled` / `AIS_API_PROXY_ENABLED`：是否启用 Node 同源 API 代理，用于解决浏览器跨域
-- `apiProxy.locked` / `AIS_API_PROXY_LOCKED`：是否强制前端使用代理，开启后用户不能关闭设置里的 API 代理
-- `apiProxy.prefix` / `AIS_API_PROXY_PREFIX`：前端访问代理的同源路径，默认 `/api-proxy`
-- `apiProxy.allowAllTargets` / `AIS_API_PROXY_ALLOW_ALL_TARGETS`：是否允许代理任意 `http/https` API URL，公网部署要谨慎
-- `apiProxy.allowedTargets`：允许代理的 API base URL 白名单，适合后续收紧代理范围
-- `apiProxy.target` / `AIS_API_PROXY_TARGET`：兼容旧固定目标模式；如果请求没有携带目标地址，会回退到这个地址
-- `apiProxy.changeOrigin` / `AIS_API_PROXY_CHANGE_ORIGIN`：转发时是否改写 Host，默认 `true`
-- `apiProxy.secure` / `AIS_API_PROXY_SECURE`：预留的 HTTPS 校验配置，默认 `true`
-
-管理员在后台里保存的内容会落到数据库表 `admin_settings`，包括：
-
-- 游客是否允许修改 API URL
-- 游客是否允许查看 API URL
-- 游客是否允许创建新 API 配置
-- 游客是否允许修改服务商类型
-- 游客是否允许创建自定义服务商
-- 统一游客策划 API URL
-- 统一游客生图 API URL
-- 模型 ID 可选项列表
-- 参考图上传上限
-
-如果你只改前端静态文件，不启动 Node 管理 API，那么这些统一配置不会生效。
-
-## 服务器环境要求
-
-新增 Node 后端后，服务器除了能跑前端静态站点，还需要具备这些环境：
-
-- Node.js 20 或更新版本
-- npm
-- MySQL 8.0 或兼容版本
-- 一台能够长期运行 Node 管理 API 的机器或容器
-- 反向代理或网关，例如 Nginx、Caddy、Apache，或者云平台自带转发规则
-- 如果你要把站点放到 HTTPS 域名下，建议给前端和 Node 管理 API 都配好 HTTPS
-
-推荐的最低部署形态是：
-
-- 前端静态资源由 Nginx、CDN、GitHub Pages、Cloudflare Pages、Vercel Static 等托管
-- Node 管理 API 单独跑在服务器上，同时提供 `/admin-api` 和可选的 `/api-proxy`
-- MySQL 只对 Node 管理 API 开放，不要直接暴露给浏览器
-
-## 服务器部署流程
-
-下面是把这个项目部署到自己服务器的一套常见流程：
-
-1. 在服务器上安装 Node.js 20+ 和 MySQL。
-2. 在 MySQL 里准备一个可连接账号，建议单独创建一个只给这个项目用的用户。
-3. 把项目代码部署到服务器，执行 `npm ci` 安装依赖。
-4. 复制配置模板并修改真实配置：
-
-```bash
-cp config.example.yaml config.yaml
-vi config.yaml
-```
-
-5. 启动 Node 管理 API：
-
-```bash
-npm run admin:server
-```
-
-6. 确认首次启动后数据库里已经自动创建 `amazon_image_studio`、`admin_users`、`admin_settings`。
-7. 构建前端静态资源：
-
-```bash
-npm run build
-```
-
-8. 把 `dist/` 部署到你的静态托管环境。
-9. 配置反向代理，把前端站点访问到的 `/admin-api` 和 `/api-proxy` 都转发到 Node 管理 API，例如 `http://127.0.0.1:8787/admin-api`、`http://127.0.0.1:8787/api-proxy`。
-10. 打开前端页面，登录管理员，检查统一 URL、游客权限和参考图上限是否已经从数据库读取成功。
-
-如果你使用 Docker、PM2、systemd 或云平台部署，也遵循同样的顺序：先保证 MySQL 可用，再启动 Node 管理 API，最后发布前端静态文件并转发 `/admin-api`。
-
-### 配置项位置
-
-这些配置项不是在前端页面里改，而是在服务器项目根目录的 `config.yaml` 里改。仓库只提交 `config.example.yaml` 模板，真实的 `config.yaml` 已经加入 `.gitignore`，避免把 MySQL 密码和管理员密码提交出去。
-
-主要配置项：
-
-- `mysql.host`、`mysql.port`、`mysql.user`、`mysql.password`、`mysql.database`：MySQL 连接信息
-- `adminServer.port`：Node 管理 API 监听端口
-- `adminServer.username`、`adminServer.password`、`adminServer.passwordSha256`：首次初始化管理员账号使用
-- `apiProxy.enabled`、`apiProxy.locked`、`apiProxy.prefix`、`apiProxy.allowAllTargets`、`apiProxy.allowedTargets`、`apiProxy.target`：同源 API 代理配置，AI 策划或生图接口跨域时建议开启
-
-如果你用 `systemd`、Docker 或临时命令行部署，也可以继续用 `AIS_DB_HOST`、`AIS_DB_PORT`、`AIS_DB_USER`、`AIS_DB_PASSWORD`、`AIS_DB_NAME`、`AIS_ADMIN_PORT`、`AIS_ADMIN_USERNAME`、`AIS_ADMIN_PASSWORD`、`AIS_ADMIN_PASSWORD_SHA256`、`AIS_API_PROXY_ENABLED`、`AIS_API_PROXY_ALLOW_ALL_TARGETS`、`AIS_API_PROXY_TARGET` 等环境变量覆盖 YAML。环境变量优先级高于 `config.yaml`。
-
-小带宽服务器建议保持 `apiProxy.enabled: false`，这样 AI 策划和生图会由浏览器直接请求你在前端填写的 API URL，不经过 Node 后端。只有第三方接口不允许浏览器跨域时，再开启某个 API 配置里的“API 代理”开关；如果使用 `apiProxy.allowAllTargets: true`，Node 会按前端请求携带的目标 API URL 转发，有开放转发器风险，后续建议改成 `allowAllTargets: false` 并把常用 API base URL 写入 `allowedTargets`。
-
-注意：管理员账号会在首次启动时写入数据库 `admin_users`。如果数据库里已经有同名管理员，后续只改 `config.yaml` 里的 `adminServer.password` 不会自动覆盖数据库密码，需要手动更新数据库或删除旧管理员记录后重新初始化。
-
-### CentOS 8 示例
-
-CentOS 8 上可以按下面的顺序部署：
-
-1. 安装基础组件、Node.js 和 MySQL。
-2. 把项目代码放到服务器，例如 `/opt/amazon-image-studio`。
-3. 在项目目录执行 `npm ci`。
-4. 复制 `config.example.yaml` 为 `config.yaml`，填写 MySQL 和管理员信息。
-5. 启动 Node 管理 API，让它读 MySQL 并自动建库建表。
-6. 执行 `npm run build`，把 `dist/` 作为静态前端目录。
-7. 用 Nginx 把站点根目录指向 `dist/`，同时把 `/admin-api` 和 `/api-proxy` 代理到 `127.0.0.1:8787`。
-8. 浏览器打开站点，登录管理员，检查统一 URL、权限开关和模型 ID 列表是否都能读到。
-
-如果你用 `systemd`，可以把 Node 管理 API 做成一个独立服务，前端静态文件继续交给 Nginx 托管。这样重启更稳，也方便开机自启。
-
-### Nginx 示例
-
-如果前端和 Node 管理 API 部署在同一台服务器上，可以参考下面的 Nginx 思路：
-
-```nginx
-server {
-  listen 80;
-  server_name example.com;
-
-  location /admin-api/ {
-    proxy_pass http://127.0.0.1:8787/admin-api/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-  }
-
-  location /api-proxy/ {
-    proxy_pass http://127.0.0.1:8787/api-proxy/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_read_timeout 300s;
-  }
-
-  location / {
-    root /var/www/amazon-image-studio/dist;
-    try_files $uri $uri/ /index.html;
-  }
-}
-```
-
-如果你把前端静态站点放在 CDN、GitHub Pages、Cloudflare Pages 或 Vercel Static，上面的 `/admin-api` 仍然需要由另一台能够运行 Node 的服务器提供。
-
-## 开源说明
-
-本仓库公开的是前端应用源码、Amazon 图片策划逻辑、Prompt 模板、知识文档、本地启动脚本和部署配置，采用 [MIT License](LICENSE) 发布。
-
-需要注意：
-
-- Codex / Claude Code / OpenClaw 只是可选的安装助手，不是项目运行依赖；不用 AI 编程工具也可以按下面的手动方式本地运行。
-- 在线体验和本地应用都不会内置 API Key。生成图片和 AI 策划需要使用者填写自己的 OpenAI 或兼容接口 Key，并自行承担调用费用。
-- `package.json` 中的 `"private": true` 仅用于防止误发布到 npm，不代表 GitHub 仓库私有，也不影响源码开源。
-
-## 更新日志
-
-按自然周（周一至周日）整理，最新一周在最上方。每个周块可展开查看本周推送内容，提交号用于回溯具体改动。
+按自然周（周一至周日）整理，最新一周在最上方。完整记录同步维护于 [CHANGELOG.md](CHANGELOG.md)。
 
 <details open>
+<summary><strong>2026-07-27 至 2026-08-02</strong> - 高级 A+ 母图、切图与本地批量放大</summary>
+
+- 高级 A+ 新增独立模块与自由编排，可将独立大图、连续母图、场景轮播和品牌故事组合为一套内容结构。
+- 连续母图支持按计划一次生成，并在图片详情中按高度等分切割；切图前会校验实际尺寸与比例，避免静默拉伸或裁切。
+- 优化转为手机 A+ 流程，支持确认母图片数并按移动端比例生成、切割连续内容。
+- 高级 A+ 与手机 A+ 图片支持浏览器本地等比放大，支持一次处理多张图片，原图不会被覆盖。
+- 修复切图数量限制，提升多片母图的可用性；同步完善高级 A+、切图与站内使用文档。
+- 提交：`d5daf97`、`5fb5c0e`、`f4f10a3`、`3dfa58a`。
+
+</details>
+
+<details>
+<summary><strong>2026-07-20 至 2026-07-26</strong> - 默认输出参数与视觉风格体验</summary>
+
+- 新建任务和“编辑输出”统一默认使用 `PNG` 与 `high` 质量，减少重复配置。
+- 优化图片详情页、模块概述与生成操作区的布局和按钮排列。
+- 调整视觉风格编辑与选择界面，改善策划过程中的信息层级。
+- 提交：`bc9cd6c`、`358d0c3`、`5dfa440`、`2d3c40c`、`41773b6`。
+
+</details>
+
+<details>
+<summary><strong>2026-07-13 至 2026-07-19</strong> - AI 风格图优化</summary>
+
+- 修复风格图上传和保存异常。
+- 优化 AI 生成风格图的提示与策划逻辑，减少模板化输出。
+- 提交：`07f76a6`、`1a1f18d`。
+
+</details>
+
+<details>
+<summary><strong>2026-07-06 至 2026-07-12</strong> - A+ 转换与显式风格参考图</summary>
+
+- 图片详情新增“转为高级 A+”和“转为手机 A+”快捷入口。
+- 右侧参考图区域新增独立的风格参考图槽位，支持上传、替换、预览和移除；MAIN 主图会自动清空该槽位以避免误用风格图。
+- 转换为高级 A+ 或手机 A+ 时不再继承隐藏风格参考图，并会按当前转换结果覆盖右侧输入内容。
+- 提交：`a5bde15`、`66ea052`、`d306c39`。
+
+</details>
+
+<details>
+<summary><strong>2026-06-22 至 2026-06-28</strong> - 管理员统一配置与接口兼容</summary>
+
+- 新增管理员登录和统一配置管理，可控制游客查看或修改 API URL、修改服务商类型、创建自定义服务商，并配置模型列表和参考图上传上限。
+- 新增 Node 管理 API 的 YAML / 环境变量配置读取，以及 MySQL 持久化的管理员与系统设置。
+- 完善同源 API 代理与浏览器直连模式，修复 Node 转发请求问题。
+- AI 策划在 Responses API 不兼容时会自动降级重试 Chat Completions，并修复第三方中转站、参考图上限和不支持流式响应的兼容问题。
+- 提交：`1e98206`、`37ec732`、`8ce1264`、`8d35648`、`fd6ab8c`、`be8ea59`、`15deaad`、`54f0ec0`、`bf5759e`。
+
+</details>
+
+<details>
 <summary><strong>2026-06-15 至 2026-06-21</strong> - 自定义策划数量、A+ 模块编排与提示词分辨率</summary>
 
 - Listing AI 策划支持自定义图片数量，默认仍为 7 张，可在 `7-12` 张之间选择，数量包含 `MAIN` 主图。
@@ -236,17 +158,13 @@ server {
 </details>
 
 <details>
-<summary><strong>2026-06-08 至 2026-06-14</strong> - 可编辑风格图、A+ 类型扩展、移动端操作窗与 DeepSeek 策划兼容</summary>
+<summary><strong>2026-06-08 至 2026-06-14</strong> - DeepSeek 策划兼容与部署提示</summary>
 
-- 视觉风格新增可编辑预设和“我的风格”库，用户可从内置风格派生色板、字体、光影、材质和信息密度，并作为隐藏参考图参与附图和 A+ 生图。
-- 风格编辑窗口保留英文方向作为实际参考内容，同时为字体方向、光影方向和材质方向增加中文说明，便于理解但不写入最终风格参考图。
-- A+ 策划类型统一为普通A+、标准A+、高级A+、手机A+；新增手机A+ 5 张 `600x450` 模块，适合移动端短屏阅读。
-- 移动端生成操作悬浮窗支持收起到左侧或右侧，收起后可通过贴边小标签展开，减少遮挡图片预览和底部输入区。
 - AI 策划检测到 `https://api.deepseek.com` 时自动跳过参考图，仅发送纯文本 Chat Completions 请求，避免 DeepSeek 官方接口因 `image_url` 报错。
 - 补充 DeepSeek 策划配置说明，明确官方 Chat Completions 当前不接收参考图。
 - DeepSeek Chat Completions 和 Responses 策划统一按纯文本模型处理，增加反脑补约束，并在设置页和 Amazon 面板提示用户补齐产品关键特征。
 - 补充 Vercel 体验版调用 HTTP API 的 HTTPS 安全策略提示。
-- 提交：`8927ad1`、`8a42d09`、`b2ab475`，以及本次可编辑风格图更新。
+- 提交：`8927ad1`、`8a42d09`、`b2ab475`。
 
 </details>
 
@@ -255,7 +173,7 @@ server {
 
 - OpenRouter 生图改走 Chat Completions 图片生成，修复普通 Images API 路径下的 404。
 - OpenRouter 请求补齐 `image_config.aspect_ratio` 和 `image_config.image_size`，A+ 非 1:1 图片会映射到最接近的支持比例，减少实际输出回落到 1024 级别。
-- 视觉风格支持内置预设和可编辑“我的风格”，附图和 A+ 生成时会作为隐藏参考图参与最终生图。
+- 风格板生成新增“停止”按钮，并把停止信号接入 OpenRouter、OpenAI Images API、自定义接口和 fal 请求链路。
 - 参考图请求前会压缩、控尺寸并校验负载，修复大参考图导致的 413。
 - 普通生图限制为 Images API，OpenRouter 图片模型保留兼容入口，避免误用不支持生图的配置。
 - README 增加在线体验说明，Windows 启动脚本会在启动前自动检查并安装依赖。
@@ -291,389 +209,3 @@ server {
 - 提交：`ab63d9b`、`78ef9ea`、`3826fbc`、`ae118af`、`94c5cca`、`d929bdc`、`5860ddd`、`93f9585`、`f9198cb`。
 
 </details>
-
-## 在线体验
-
-- 体验地址：[https://ali-aria.github.io/amazon-image-studio/](https://ali-aria.github.io/amazon-image-studio/)
-- 打开在线体验不需要 Codex；Codex 只是一种可选的本地安装方式。
-- 在线体验不会内置 API Key；生成图片和 AI 策划都需要在右上角设置中填写你自己的 OpenAI 或兼容接口 Key。
-- API Key 保存在当前浏览器本地，不会提交到仓库；如果线上页面加载异常，也可以按下面的“启动项目”在本地运行。
-- 💡 提示：若需调用非 HTTPS 的内网或本地 HTTP API，请使用 GitHub Pages 版本或自行部署，Vercel 部署的体验版绑定的 .dev 域名因安全策略通常要求接口必须为 HTTPS。
-
-## 核心功能
-
-- AI 策划 Listing 图片：粘贴标题、五点描述或产品说明后，默认生成 `MAIN + PT01-PT06` 共 7 张图片，也可自定义为 `7-12` 张。
-- AI 策划 A+ 图片：支持 `普通A+ / 标准A+ / 高级A+ / 手机A+` 四套 A+ 模块编排，策划前可按行添加或删除同尺寸模块。
-- 参考图上传：支持上传产品实拍图、包装图、结构图，生成时会作为参考图一起发送。
-- 逐张生成：在右侧选择 `MAIN`、`PT01`、`A+L01`、`A+S01`、`A+P01`、`A+M01` 等图片位后，当前 Prompt Preview 会切换到对应提示词。
-- Amazon 合规提示：主图白底、商品占比、禁用 Amazon/Prime/价格/评价/Best Seller 等风险元素。
-- 支持 2K / 4K 输出；Listing 图默认方图，A+ 图按模块比例生成高清图，并显示 Seller Central 上传建议尺寸。
-- 最终生图提示词会自动写入当前期望输出分辨率，让提示词和尺寸参数保持一致。
-- A+ 小方块模块支持单独输出标题/正文文案，和图片内文字分开，避免把长文案画进 220x220 图片里。
-- 支持 OpenAI / OpenAI 兼容图片接口，以及独立的 AI 策划 Chat Completions / Responses API 配置。
-- 历史记录支持按商品、来源、形状筛选；从历史记录复用或编辑 Listing / A+ 图片时，新任务会继承原商品分类。
-- 保留原项目的参考图、遮罩编辑、历史记录、批量下载、本地 IndexedDB 存储等能力。
-
-## 环境要求
-
-推荐在 Windows 上使用。
-
-需要先安装：
-
-- Node.js 20 LTS 或更新版本
-- npm
-
-安装完成后，可以在 PowerShell 或命令行中检查：
-
-```powershell
-node --version
-npm --version
-```
-
-## 首次安装
-
-首次安装只需要做一次。下面两种方式二选一即可；如果已经让 AI 工具完成安装并启动，就不要再重复执行手动安装。
-
-### 方式一：Codex / Claude Code / OpenClaw 安装并启动
-
-如果你要把项目发给别人使用，最简单的方式是直接发 GitHub 仓库链接：
-
-```text
-https://github.com/Ali-Aria/amazon-image-studio
-```
-
-对方可以在 Codex、Claude Code、Claw Code 或其它 AI 编程工具里粘贴下面这段话：
-
-```text
-请把这个 GitHub 项目安装到我的本地电脑并启动：
-https://github.com/Ali-Aria/amazon-image-studio
-
-要求：
-1. 先确认本机已经安装 Node.js 20 LTS 或更新版本和 npm。
-2. 如果本地还没有项目，就 clone 仓库；如果已经下载 ZIP 或源码文件夹，直接进入现有项目目录，不要重复下载。
-3. 在项目目录运行 npm ci 安装依赖。
-4. 如果我是 Windows 用户，优先检查仓库里的 start-amazon-image-studio.bat，能用的话帮我用它启动项目；停止时可以用 stop-amazon-image-studio.bat。
-5. 如果不使用 bat 脚本，就运行 npm run dev 启动项目。
-6. 告诉我浏览器应该打开哪个本地地址。
-```
-
-如果 AI 工具不会自动执行命令，也可以让它按下面“方式二：手动安装（通用）”和“启动项目”里的命令一步一步带你操作。Windows 用户可以优先双击 `start-amazon-image-studio.bat` 启动；脚本会在首次启动或依赖变更后自动安装依赖，停止时双击 `stop-amazon-image-studio.bat`。项目启动后，每个使用者都需要在页面右上角设置里填写自己的 API Key；不要把你的 API Key 发给别人。
-
-### 方式二：手动安装（通用）
-
-先把仓库下载到本地：
-
-```powershell
-git clone https://github.com/Ali-Aria/amazon-image-studio.git
-cd amazon-image-studio
-```
-
-如果你已经下载了 ZIP 或复制了源码文件夹，直接在终端进入你自己的项目目录即可。
-
-安装依赖：
-
-```powershell
-npm ci
-```
-
-依赖只需要安装一次。以后日常使用直接看下面的“启动项目”。
-
-## 启动项目
-
-### 方式一：手动启动（通用）
-
-在项目目录中执行：
-
-```powershell
-npm run dev
-```
-
-然后打开终端中显示的本地地址，通常是：
-
-```text
-http://127.0.0.1:5173/
-```
-
-停止时，在运行开发服务的终端中按 `Ctrl + C`。
-
-### 方式二：双击启动（Windows 可选）
-
-仓库根目录包含 Windows 便捷脚本：
-
-```text
-start-amazon-image-studio.bat
-```
-
-双击后会启动本地开发服务，并自动打开浏览器：
-
-```text
-http://127.0.0.1:5173/
-```
-
-如果服务已经在运行，脚本会直接打开浏览器。
-
-首次双击或 `package-lock.json` 发生变化后，脚本会先运行 `npm ci` 安装依赖；依赖安装成功后才会启动项目。如果电脑还没有安装 Node.js 20 LTS 或更新版本，脚本会提示先安装 Node.js。
-
-## 停止项目
-
-手动启动时，在终端中按 `Ctrl + C` 即可停止。
-
-如果使用 Windows 双击脚本启动，也可以双击：
-
-```text
-stop-amazon-image-studio.bat
-```
-
-脚本会停止当前项目对应的本地开发服务。如果 5173 端口被其它程序占用，脚本不会强行关闭无关进程。
-
-## API 配置
-
-打开页面后，点击右上角设置图标，进入 API 配置。
-
-`API URL` 填写的是接口基础地址，不要填写完整 endpoint。例如填写 `https://api.example.com/v1`，应用会根据接口类型自动拼接 `/images/generations`、`/images/edits`、`/responses` 或 `/chat/completions`。如果填写 `https://api.example.com/v1/images/edits`，保存时会被规范化回 `https://api.example.com/v1`。
-
-建议准备两个配置：
-
-### 1. 生图配置
-
-用于真正生成图片。
-
-- 服务商：OpenAI 或 OpenAI 兼容接口
-- API 接口：`Images API (/v1/images)`
-- 模型：`gpt-image-2`
-- API Key：填写你自己的 Key
-
-OpenRouter 生图模型不提供 OpenAI `/images/generations` 路径，应用会自动把 `https://openrouter.ai/api/v1` 的生图请求转到 `/chat/completions` 并发送 `modalities`。OpenRouter 示例：API URL 填 `https://openrouter.ai/api/v1`，模型填支持图片输出的模型，例如 `google/gemini-2.5-flash-image`；API 接口选择 `Images API` 或 `Chat Completions` 都可以。遮罩编辑仍需使用支持 `/images/edits` 的接口。
-
-### 2. AI 策划配置
-
-用于根据 Listing 生成 `MAIN + PT01...` 或 A+ 模块图片策划。
-
-- 服务商：OpenAI
-- API 接口：`Chat Completions (/chat/completions)`；OpenAI 官方也可继续使用 `Responses API (/v1/responses)`
-- 模型：文本/多模态模型，例如 DeepSeek 使用 `deepseek-v4-flash`
-- API Key：填写你自己的 Key
-
-DeepSeek 示例：API URL 填 `https://api.deepseek.com`，API 接口选择 `Chat Completions (/chat/completions)`，模型填 `deepseek-v4-flash`。当前 DeepSeek 官方 Chat Completions 接口只接收文本内容，本项目检测到该地址时会自动跳过参考图，仅用 Listing 文本做 AI 策划。
-
-在设置页中，把“AI 策划配置”选择为这个 Chat Completions 配置。这样生图和策划不需要来回切换接口类型。
-
-AI 策划提示词已内置精炼版亚马逊图片知识库规则，包括 Listing 主图/附图规范、A+ 模块尺寸、移动端可读性和合规禁用项。原始知识库 Markdown 保存在 `docs/knowledge/` 作为规则来源备查，运行时不会把整篇原文发送给模型。
-
-## 使用流程
-
-1. 启动项目并打开页面。
-2. 在设置中配置生图 API 和 AI 策划 API。
-3. 在 Amazon 面板顶部选择 `Listing 图` 或 `A+ 图`。
-4. 如果选择 `Listing 图`，可在顶部选择本次策划图片数量，默认 7 张，范围为 7-12 张。
-5. 如果选择 `A+ 图`，默认使用 `普通A+`，也可以切换为 `标准A+`、`高级A+` 或 `手机A+` 编排，并在右侧模块清单里添加、删除或恢复默认模块。
-6. 在策划输入框中粘贴产品标题、五点描述、产品说明或品牌说明。
-7. 在“参考图”区域上传产品实拍图、包装图或结构图。
-8. 点击 `AI策划` 或 `AI策划A+`，生成逐张方案。
-9. 在右侧选择要生成的图片位，例如 `MAIN`、`PT01`、`A+L01`、`A+S01`、`A+P01` 或 `A+M01`。
-10. 检查 Prompt Preview，必要时调整左侧商品信息。
-11. 点击“填入”把当前提示词填到底部输入栏，或点击“提交生成”直接开始生成。
-12. 生成完一张后，继续选择下一张图片位逐张生成。
-
-## A+ 图片说明
-
-普通A+ 当前默认编排，也是 A+ 图片策划的默认选项：
-
-- `A+L01` Header Banner：上传建议 `970x300`
-- `A+L02-A+L05` Single Image：上传建议 `970x600`
-
-标准A+ 编排：
-
-- `A+S01` Header Banner：上传建议 `970x300`
-- `A+S02-A+S04` Single Image：上传建议 `970x600`
-- `A+S05-A+S08` Highlight Tile：上传建议 `220x220`
-
-高级A+ 编排：
-
-- `A+P01` Hero Banner：上传建议 `1464x600`
-- `A+P02-A+P04` Feature Image：上传建议 `970x600`
-- `A+P05-A+P06` Brand Story：上传建议 `463x625`
-
-手机A+ 编排面向移动端短屏阅读，默认 5 张 4:3 图片：
-
-- `A+M01` Mobile Hero：上传建议 `600x450`
-- `A+M02-A+M05` Mobile Feature：上传建议 `600x450`
-
-A+ 策划前可以在右侧模块编排中调整数量：点击某一行的加号会在该行后添加同尺寸、同类型模块；点击删除会移除该模块；“恢复默认”会回到当前 A+ 类型的默认编排。每个 A+ 类型最少 1 张，最多 12 张。AI 策划完成后的结果列表保持只读，如需修改数量，请重新调整模块后再次 AI 策划。
-
-A+ 生图会按模块比例请求 2K / 4K 高清画布，页面中会同时显示“生成尺寸”和“上传建议尺寸”。`Highlight Tile` 会额外生成可复制的 A+ 标题/正文文案；这些外部文案不会写入图片生成 Prompt。当前版本不自动裁切、压缩到 2 MB，也不默认生成 Logo 图或对比图。
-
-## 安全说明
-
-- 不要把你的 API Key 提交到 GitHub。
-- 不要把包含 API Key 的配置截图发给别人。
-- 本项目的 API Key 保存在你自己浏览器的本地存储中。
-- 每个使用者应填写自己的 API Key，并自行承担 API 调用费用。
-- 如果你要把项目发给别人，请确认仓库中没有 `.env`、私钥、真实 API Key 或个人数据。
-
-## 常见问题
-
-### 启动后打不开页面
-
-确认是否已经安装依赖：
-
-```powershell
-npm ci
-```
-
-然后重新运行：
-
-```powershell
-npm run dev
-```
-
-Windows 用户也可以重新双击 `start-amazon-image-studio.bat`。
-
-### 5173 端口被占用
-
-如果是手动启动，先在终端中按 `Ctrl + C`。如果是 Windows 脚本启动，可以双击：
-
-```text
-stop-amazon-image-studio.bat
-```
-
-如果仍然提示被占用，说明 5173 可能被其它程序使用，需要先关闭对应程序，或改用 Vite 输出的其它端口。
-
-### AI 策划失败
-
-检查“AI 策划配置”是否使用了文本接口，并确认模型不是图片生成模型。DeepSeek 请使用 `Chat Completions (/chat/completions)`；当前 DeepSeek 官方接口不接收参考图，本项目会自动跳过参考图。部分图片中转接口只开放 `/v1/images`，不支持聊天或 Responses 接口，这种情况下 AI 策划会失败。
-
-### 生图失败
-
-检查当前生图配置是否填写了正确的 API URL、API Key、模型和接口类型。生成图片建议使用 `Images API (/v1/images)` + `gpt-image-2`。
-
-如果 OpenRouter 报 404，通常是旧版本请求到了 `/images/generations`。请更新后使用 `https://openrouter.ai/api/v1` 和带 `image` 输出能力的模型；OpenRouter 的图片生成实际走 `/chat/completions`。
-
-## 使用文档维护
-
-应用右上角的“使用文档”由 `src/docs/*.md` 自动生成。修改正文、调整顺序或新增文档时，只需要维护 Markdown 文件，不需要修改 React 组件。
-
-每篇文档必须以 YAML Front Matter 开头：
-
-```markdown
----
-id: listing
-title: Listing 图使用文档
-navTitle: Listing 图
-description: 主图、附图策划与生图流程。
-eyebrow: 图片策划与生成
-icon: photo
-order: 10
-tags:
-  - 主图
-  - 附图
----
-
-## 01 开始前的配置
-
-这里填写 Markdown 正文。
-```
-
-- `id`：文档唯一标识，不可与其他文档重复。
-- `title`：正文顶部标题。
-- `navTitle`：左侧或移动端导航标题；省略时使用 `title`。
-- `description`：导航摘要和正文顶部说明。
-- `eyebrow`：标题上方的小分类文字；省略时显示“使用文档”。
-- `icon`：支持 `photo`、`layers`、`history`、`book`，其他值回退为书本图标。
-- `order`：导航排序，数字越小越靠前。
-- `tags`：可选标签数组。
-
-正文支持 GFM Markdown，包括表格、列表、代码块、引用块和链接。二级标题推荐使用 `## 01 标题` 格式，页面会自动渲染章节编号。需要生成复制按钮时，可以使用 `[复制内容](#copy-需要复制的内容)`。
-
-Front Matter 缺少必填字段、字段类型错误或 `id` 重复时，开发和生产构建会直接报出对应 Markdown 文件路径。
-
-## 构建
-
-如果需要生成生产构建：
-
-```powershell
-npm run build
-```
-
-构建产物在：
-
-```text
-dist/
-```
-
-## 静态部署
-
-前端部分仍然是 Vite 单页应用，静态托管平台只需要安装依赖、运行构建命令，并把 `dist/` 作为静态目录发布。  
-如果你启用了新增的 Node 管理后端，静态部署只覆盖前端页面，Node 服务和 MySQL 仍然需要单独部署。
-
-推荐配置：
-
-```text
-Install command: npm ci
-Build command: npm run build
-Output directory: dist
-Node.js version: 20
-```
-
-### GitHub Pages
-
-仓库已包含 GitHub Pages 工作流：
-
-```text
-.github/workflows/deploy.yml
-```
-
-使用步骤：
-
-1. 进入 GitHub 仓库的 `Settings -> Pages`。
-2. `Build and deployment` 的 `Source` 选择 `GitHub Actions`。
-3. 推送到 `main` 后会自动构建并部署。也可以在 `Actions` 页面手动运行 `Deploy to GitHub Pages`，或推送 `v*` 格式的 tag，例如 `v0.1.0`。
-
-项目的 Vite `base` 已设置为 `./`，可以部署在 `https://<username>.github.io/amazon-image-studio/` 这类子路径下。
-
-当前仓库的 GitHub Pages 体验地址：
-
-```text
-https://ali-aria.github.io/amazon-image-studio/
-```
-
-### Cloudflare Pages
-
-连接 GitHub 仓库后，按以下方式配置：
-
-```text
-Framework preset: Vite
-Build command: npm run build
-Build output directory: dist
-Node.js version: 20
-```
-
-如果使用 Cloudflare Workers 静态资源部署，也可以使用仓库中的 `wrangler.jsonc`，先执行：
-
-```powershell
-npm run build
-```
-
-再按你的 Cloudflare 账号配置运行 Wrangler 部署。
-
-### Vercel
-
-当前仓库的 `vercel.json` 里关闭了 Git 自动部署：
-
-```json
-{
-  "git": {
-    "deploymentEnabled": false
-  }
-}
-```
-
-如果要让 Vercel 在每次 push 后自动部署，请删除这段配置，或把 `deploymentEnabled` 改为 `true`。如果继续保留它，可以使用 `.github/workflows/vercel-tag-deploy.yml` 中的 Deploy Hook 方式，并在 GitHub Secrets 里配置 `VERCEL_DEPLOY_HOOK`。
-
-## 许可与来源
-
-本项目源码以 [MIT License](LICENSE) 发布。开源范围包括前端源码、Prompt 模板、内置知识文档、本地启动脚本和部署配置；不包含 OpenAI、ChatGPT、Codex 或任何第三方模型服务本身，也不附带 API Key 或免费调用额度。
-
-本项目基于 MIT 许可的 [GPT Image Playground](https://github.com/CookSleep/gpt_image_playground) 修改，原作者为 CookSleep。
-
-请保留应用内“关于”页中的原项目署名与 MIT 许可声明。

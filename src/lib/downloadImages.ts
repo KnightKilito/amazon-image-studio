@@ -1,5 +1,6 @@
-import { ensureImageCached } from '../store'
+import { ensureImageCached, useStore } from '../store'
 import { zipSync } from 'fflate'
+import { embedSyntheticPerformerXmp } from './xmpMetadata'
 
 const MIME_EXTENSIONS: Record<string, string> = {
   'image/png': 'png',
@@ -87,7 +88,10 @@ async function getImageBlob(imageIdOrUrl: string): Promise<Blob> {
 
   const res = await fetch(src)
   if (!res.ok && !src.startsWith('data:')) throw new Error(`读取图片失败：${imageIdOrUrl}`)
-  return await res.blob()
+  const blob = await res.blob()
+  return useStore.getState().settings.embedSyntheticPerformerMetadata
+    ? embedSyntheticPerformerXmp(blob)
+    : blob
 }
 
 function triggerDownload(blob: Blob, fileName: string) {

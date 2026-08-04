@@ -112,6 +112,7 @@ export interface AppSettings {
   persistInputOnRestart: boolean
   reuseTaskApiProfileTemporarily: boolean
   alwaysShowRetryButton: boolean
+  embedSyntheticPerformerMetadata: boolean
   enterSubmit: boolean
   referenceImageEditAction: ReferenceImageEditAction
   agentScrollToBottomAfterSubmit: boolean

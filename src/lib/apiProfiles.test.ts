@@ -23,6 +23,12 @@ import {
 } from './apiProfiles'
 
 describe('mergeImportedSettings', () => {
+  it('enables synthetic performer metadata by default and preserves an explicit opt-out', () => {
+    expect(normalizeSettings({}).embedSyntheticPerformerMetadata).toBe(true)
+    expect(DEFAULT_SETTINGS.embedSyntheticPerformerMetadata).toBe(true)
+    expect(normalizeSettings({ embedSyntheticPerformerMetadata: false }).embedSyntheticPerformerMetadata).toBe(false)
+  })
+
   it('normalizes Premium A+ mother-image capability metadata', () => {
     expect(normalizeApiProfile({
       motherImageSupport: 'supported',

@@ -23,6 +23,12 @@ import {
 } from './apiProfiles'
 
 describe('mergeImportedSettings', () => {
+  it('shows retry buttons by default and preserves an explicit opt-out', () => {
+    expect(normalizeSettings({}).alwaysShowRetryButton).toBe(true)
+    expect(DEFAULT_SETTINGS.alwaysShowRetryButton).toBe(true)
+    expect(normalizeSettings({ alwaysShowRetryButton: false }).alwaysShowRetryButton).toBe(false)
+  })
+
   it('enables synthetic performer metadata by default and preserves an explicit opt-out', () => {
     expect(normalizeSettings({}).embedSyntheticPerformerMetadata).toBe(true)
     expect(DEFAULT_SETTINGS.embedSyntheticPerformerMetadata).toBe(true)

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_PARAMS, type TaskRecord } from '../types'
 import {
   UNCATEGORIZED_PRODUCT_FILTER,
+  getFilteredTaskHistory,
   getTaskHistoryCategory,
   getTaskProductFilterOptions,
   matchesTaskHistoryFilters,
@@ -166,5 +167,23 @@ describe('task history categories', () => {
       value: 'Summer Dresses for Women',
       count: 2,
     })
+  })
+
+  it('returns matching history in newest-first order', () => {
+    const filters = {
+      searchQuery: '',
+      filterStatus: 'done' as const,
+      filterFavorite: false,
+      filterProductTitle: '',
+      filterWorkflow: 'all' as const,
+      filterAspect: 'all' as const,
+    }
+    const result = getFilteredTaskHistory([
+      task({ id: 'older', createdAt: 1 }),
+      task({ id: 'ignored', createdAt: 3, status: 'error' }),
+      task({ id: 'newer', createdAt: 5 }),
+    ], filters)
+
+    expect(result.map((item) => item.id)).toEqual(['newer', 'older'])
   })
 })

@@ -11,7 +11,7 @@ import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { getSafeBoundingClientRect } from '../lib/domRect'
 import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
-import { matchesTaskHistoryFilters } from '../lib/taskHistory'
+import { getFilteredTaskHistory } from '../lib/taskHistory'
 import { useHintTooltip } from '../hooks/useHintTooltip'
 import { downloadImageIds, formatExportFileTime } from '../lib/downloadImages'
 import Select from './Select'
@@ -421,27 +421,32 @@ export default function InputBar() {
   const filterProductTitle = useStore((s) => s.filterProductTitle)
   const filterWorkflow = useStore((s) => s.filterWorkflow)
   const filterAspect = useStore((s) => s.filterAspect)
+  const historyPage = useStore((s) => s.historyPage)
+  const historyPageSize = useStore((s) => s.historyPageSize)
 
   const filteredTasks = useMemo(() => {
-    const sorted = [...tasks].sort((a, b) => b.createdAt - a.createdAt)
-    
-    return sorted.filter((task) => matchesTaskHistoryFilters(task, {
+    return getFilteredTaskHistory(tasks, {
       searchQuery,
       filterStatus,
       filterFavorite,
       filterProductTitle,
       filterWorkflow,
       filterAspect,
-    }))
+    })
   }, [tasks, searchQuery, filterStatus, filterFavorite, filterProductTitle, filterWorkflow, filterAspect])
+  const visibleTasks = useMemo(() => {
+    const start = (historyPage - 1) * historyPageSize
+    return filteredTasks.slice(start, start + historyPageSize)
+  }, [filteredTasks, historyPage, historyPageSize])
+  const visibleTaskIds = useMemo(() => visibleTasks.map((task) => task.id), [visibleTasks])
+  const areAllVisibleTasksSelected = visibleTaskIds.length > 0 && visibleTaskIds.every((id) => selectedTaskIds.includes(id))
 
   const handleSelectAllToggle = useCallback(() => {
-    if (selectedTaskIds.length === filteredTasks.length && filteredTasks.length > 0) {
-      clearSelection()
-    } else {
-      setSelectedTaskIds(filteredTasks.map((t) => t.id))
-    }
-  }, [selectedTaskIds.length, filteredTasks, clearSelection, setSelectedTaskIds])
+    const visibleTaskIdSet = new Set(visibleTaskIds)
+    setSelectedTaskIds((current) => areAllVisibleTasksSelected
+      ? current.filter((id) => !visibleTaskIdSet.has(id))
+      : Array.from(new Set([...current, ...visibleTaskIds])))
+  }, [areAllVisibleTasksSelected, setSelectedTaskIds, visibleTaskIds])
 
   const handleToggleFavorite = useCallback(() => {
     const selectedTasks = tasks.filter((t) => selectedTaskIds.includes(t.id))
@@ -2152,9 +2157,9 @@ export default function InputBar() {
               <button
                 onClick={handleSelectAllToggle}
                 className="p-2 text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
-                title={selectedTaskIds.length === filteredTasks.length && filteredTasks.length > 0 ? "取消全选" : "全选当前可见"}
+                title={areAllVisibleTasksSelected ? "取消选择当前页" : "全选当前页"}
               >
-                {selectedTaskIds.length === filteredTasks.length && filteredTasks.length > 0 ? (
+                {areAllVisibleTasksSelected ? (
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
                     <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
                     <path d="M9 12l2 2 4-4" />

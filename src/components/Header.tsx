@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { useStore } from '../store'
 import { useTooltip } from '../hooks/useTooltip'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
-import { loginAdmin, logoutAdmin, readAdminToken, saveAdminToken } from '../lib/adminApi'
+import { loginAdmin, readAdminToken, saveAdminSettingsAndLogout, saveAdminToken } from '../lib/adminApi'
 import ViewportTooltip from './ViewportTooltip'
 import { HelpCircleIcon, InstallIcon, SettingsIcon } from './icons'
 
@@ -49,11 +49,20 @@ function AdminModal({ onClose }: { onClose: () => void }) {
 
   const handleLogout = async () => {
     const token = readAdminToken()
-    await flushAdminAccessSave()
-    saveAdminToken('')
-    setAdminAuthenticated(false)
-    await logoutAdmin(token).catch(() => {})
-    await syncAdminAccess()
+    setError('')
+    setIsChecking(true)
+    try {
+      await flushAdminAccessSave()
+      const result = await saveAdminSettingsAndLogout(token, useStore.getState().adminAccess)
+      setAdminAccess(result.adminAccess, { persist: false })
+      saveAdminToken('')
+      setAdminAuthenticated(false)
+      await syncAdminAccess()
+    } catch (err) {
+      setError(`退出前保存管理员设置失败，已取消退出：${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setIsChecking(false)
+    }
   }
 
   const addModelId = () => {
@@ -262,12 +271,18 @@ function AdminModal({ onClose }: { onClose: () => void }) {
                 )}
               </div>
             </div>
+            {error && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-200">
+                {error}
+              </div>
+            )}
             <button
               type="button"
               onClick={() => void handleLogout()}
-              className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]"
+              disabled={isChecking}
+              className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]"
             >
-              退出管理员
+              {isChecking ? '保存并退出中...' : '退出管理员'}
             </button>
           </div>
         ) : (

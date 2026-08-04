@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
 import { useStore, reuseConfig, editOutputs, removeTask } from '../store'
-import { matchesTaskHistoryFilters } from '../lib/taskHistory'
+import { getFilteredTaskHistory, HISTORY_PAGE_SIZE_OPTIONS } from '../lib/taskHistory'
 import TaskCard from './TaskCard'
+import Pagination from './Pagination'
 
 export default function TaskGrid() {
   const tasks = useStore((s) => s.tasks)
@@ -11,6 +12,10 @@ export default function TaskGrid() {
   const filterProductTitle = useStore((s) => s.filterProductTitle)
   const filterWorkflow = useStore((s) => s.filterWorkflow)
   const filterAspect = useStore((s) => s.filterAspect)
+  const historyPage = useStore((s) => s.historyPage)
+  const setHistoryPage = useStore((s) => s.setHistoryPage)
+  const historyPageSize = useStore((s) => s.historyPageSize)
+  const setHistoryPageSize = useStore((s) => s.setHistoryPageSize)
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const selectedTaskIds = useStore((s) => s.selectedTaskIds)
@@ -33,17 +38,35 @@ export default function TaskGrid() {
   const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform)
 
   const filteredTasks = useMemo(() => {
-    const sorted = [...tasks].sort((a, b) => b.createdAt - a.createdAt)
-    
-    return sorted.filter((task) => matchesTaskHistoryFilters(task, {
+    return getFilteredTaskHistory(tasks, {
       searchQuery,
       filterStatus,
       filterFavorite,
       filterProductTitle,
       filterWorkflow,
       filterAspect,
-    }))
+    })
   }, [tasks, searchQuery, filterStatus, filterFavorite, filterProductTitle, filterWorkflow, filterAspect])
+  const pageCount = Math.max(1, Math.ceil(filteredTasks.length / historyPageSize))
+  const visibleTasks = useMemo(() => {
+    const start = (historyPage - 1) * historyPageSize
+    return filteredTasks.slice(start, start + historyPageSize)
+  }, [filteredTasks, historyPage, historyPageSize])
+
+  useEffect(() => {
+    if (historyPage > pageCount) setHistoryPage(pageCount)
+  }, [historyPage, pageCount, setHistoryPage])
+
+  const handlePageChange = (page: number) => {
+    if (page === historyPage || page < 1 || page > pageCount) return
+    setHistoryPage(page)
+    window.requestAnimationFrame(() => rootRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+  }
+
+  const handlePageSizeChange = (pageSize: number) => {
+    setHistoryPageSize(pageSize)
+    window.requestAnimationFrame(() => rootRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+  }
 
   const handleDelete = (task: typeof tasks[0]) => {
     setConfirmDialog({
@@ -285,10 +308,10 @@ export default function TaskGrid() {
     <div 
       ref={rootRef}
       data-task-grid-root
-      className="relative min-h-[50vh]"
+      className="relative min-h-[50vh] scroll-mt-24"
     >
       <div ref={gridRef} className="grid grid-cols-1 gap-4 pb-10 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3">
-        {filteredTasks.map((task) => (
+        {visibleTasks.map((task) => (
           <div key={task.id} className="task-card-wrapper" data-task-id={task.id}>
             <TaskCard
               task={task}
@@ -314,6 +337,15 @@ export default function TaskGrid() {
           </div>
         ))}
       </div>
+      <Pagination
+        page={historyPage}
+        pageSize={historyPageSize}
+        totalItems={filteredTasks.length}
+        onPageChange={handlePageChange}
+        pageSizeOptions={HISTORY_PAGE_SIZE_OPTIONS}
+        onPageSizeChange={handlePageSizeChange}
+        ariaLabel="历史记录分页"
+      />
       {selectionBox && (
         <div
           className="fixed bg-blue-500/20 border border-blue-500/50 pointer-events-none z-[30]"

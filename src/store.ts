@@ -54,7 +54,7 @@ import { validateMaskMatchesImage } from './lib/canvasImage'
 import { orderInputImagesForMask } from './lib/mask'
 import { getChangedParams, normalizeParamsForSettings } from './lib/paramCompatibility'
 import { prepareReferenceImageAndMaskPayload } from './lib/referenceImagePayload'
-import { getTaskHistoryCategory } from './lib/taskHistory'
+import { getTaskHistoryCategory, HISTORY_PAGE_SIZE, normalizeHistoryPageSize } from './lib/taskHistory'
 import { isAmazonListingMainSlot } from './lib/listingPlanner'
 import { sliceImageDataUrlVertically, type APlusSliceFormat } from './lib/imageSlicing'
 import { upscaleImageDataUrlForAPlus, type APlusUpscaleFormat } from './lib/imageUpscaling'
@@ -680,6 +680,7 @@ export function getPersistedState(state: AppState) {
     supportPromptDismissed: state.supportPromptDismissed,
     supportPromptOpen: state.supportPromptOpen,
     supportPromptSkippedForImportedData: state.supportPromptSkippedForImportedData,
+    historyPageSize: state.historyPageSize,
     adminAccess: state.adminAccess,
   }
 }
@@ -766,6 +767,7 @@ export function mergePersistedState(persistedState: unknown, currentState: AppSt
     supportPromptDismissed: Boolean(persisted.supportPromptDismissed),
     supportPromptOpen: Boolean(persisted.supportPromptOpen),
     supportPromptSkippedForImportedData: Boolean(persisted.supportPromptSkippedForImportedData),
+    historyPageSize: normalizeHistoryPageSize(persisted.historyPageSize),
     adminAccess: normalizeAdminAccess(persisted.adminAccess),
     isAdminAuthenticated: false,
     prompt: galleryInputDraft?.prompt ?? '',
@@ -888,6 +890,10 @@ interface AppState {
   setFilterWorkflow: (workflow: HistoryWorkflowFilter) => void
   filterAspect: HistoryAspectFilter
   setFilterAspect: (aspect: HistoryAspectFilter) => void
+  historyPage: number
+  setHistoryPage: (page: number) => void
+  historyPageSize: number
+  setHistoryPageSize: (pageSize: number) => void
   pendingTaskCategory: PendingTaskCategory | null
   setPendingTaskCategory: (category: PendingTaskCategory | null) => void
 
@@ -1485,12 +1491,17 @@ export const useStore = create<AppState>()(
 
       // Tasks
       tasks: [],
-      setTasks: (tasks) => set(() => ({
-        tasks,
-        ...(countSuccessfulOutputImages(tasks) <= SUPPORT_PROMPT_IMAGE_THRESHOLD
-          ? { supportPromptSkippedForImportedData: false }
-          : {}),
-      })),
+      setTasks: (tasks) => set((state) => {
+        const existingTaskIds = new Set(state.tasks.map((task) => task.id))
+        const hasNewTask = tasks.some((task) => !existingTaskIds.has(task.id))
+        return {
+          tasks,
+          ...(hasNewTask ? { historyPage: 1 } : {}),
+          ...(countSuccessfulOutputImages(tasks) <= SUPPORT_PROMPT_IMAGE_THRESHOLD
+            ? { supportPromptSkippedForImportedData: false }
+            : {}),
+        }
+      }),
       streamPreviews: {},
       streamPreviewSlots: {},
       setTaskStreamPreview: (taskId, image, requestIndex = 0) => set((s) => {
@@ -1517,17 +1528,24 @@ export const useStore = create<AppState>()(
 
       // Search & Filter
       searchQuery: '',
-      setSearchQuery: (searchQuery) => set({ searchQuery }),
+      setSearchQuery: (searchQuery) => set({ searchQuery, historyPage: 1 }),
       filterStatus: 'all',
-      setFilterStatus: (filterStatus) => set({ filterStatus }),
+      setFilterStatus: (filterStatus) => set({ filterStatus, historyPage: 1 }),
       filterFavorite: false,
-      setFilterFavorite: (filterFavorite) => set({ filterFavorite }),
+      setFilterFavorite: (filterFavorite) => set({ filterFavorite, historyPage: 1 }),
       filterProductTitle: '',
-      setFilterProductTitle: (filterProductTitle) => set({ filterProductTitle }),
+      setFilterProductTitle: (filterProductTitle) => set({ filterProductTitle, historyPage: 1 }),
       filterWorkflow: 'all',
-      setFilterWorkflow: (filterWorkflow) => set({ filterWorkflow }),
+      setFilterWorkflow: (filterWorkflow) => set({ filterWorkflow, historyPage: 1 }),
       filterAspect: 'all',
-      setFilterAspect: (filterAspect) => set({ filterAspect }),
+      setFilterAspect: (filterAspect) => set({ filterAspect, historyPage: 1 }),
+      historyPage: 1,
+      setHistoryPage: (page) => set({ historyPage: Math.max(1, Math.trunc(page) || 1) }),
+      historyPageSize: HISTORY_PAGE_SIZE,
+      setHistoryPageSize: (historyPageSize) => set({
+        historyPageSize: normalizeHistoryPageSize(historyPageSize),
+        historyPage: 1,
+      }),
       pendingTaskCategory: null,
       setPendingTaskCategory: (pendingTaskCategory) => set({ pendingTaskCategory }),
 

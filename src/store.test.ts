@@ -111,6 +111,60 @@ import { cleanStaleAgentInputDrafts, clearData, convertOutputToAPlusFormat, crea
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
 
+describe('history pagination state', () => {
+  it('resets to the first page when history filters change', () => {
+    const state = useStore.getState()
+    const setters = [
+      () => state.setSearchQuery('lamp'),
+      () => state.setFilterStatus('done'),
+      () => state.setFilterFavorite(true),
+      () => state.setFilterProductTitle('Desk Lamp'),
+      () => state.setFilterWorkflow('amazon-listing'),
+      () => state.setFilterAspect('landscape'),
+    ]
+
+    for (const applyFilter of setters) {
+      useStore.setState({ historyPage: 4 })
+      applyFilter()
+      expect(useStore.getState().historyPage).toBe(1)
+    }
+
+    useStore.setState({
+      searchQuery: '',
+      filterStatus: 'all',
+      filterFavorite: false,
+      filterProductTitle: '',
+      filterWorkflow: 'all',
+      filterAspect: 'all',
+      historyPage: 1,
+    })
+  })
+
+  it('normalizes invalid page values', () => {
+    useStore.getState().setHistoryPage(-3)
+    expect(useStore.getState().historyPage).toBe(1)
+    useStore.getState().setHistoryPage(2.9)
+    expect(useStore.getState().historyPage).toBe(2)
+    useStore.setState({ historyPage: 1 })
+  })
+
+  it('persists an allowed page size, resets the page when changed, and rejects unsupported sizes', () => {
+    useStore.setState({ historyPage: 4, historyPageSize: 12 })
+    useStore.getState().setHistoryPageSize(24)
+    expect(useStore.getState()).toMatchObject({ historyPage: 1, historyPageSize: 24 })
+    expect(getPersistedState(useStore.getState()).historyPageSize).toBe(24)
+
+    const restored = mergePersistedState({ historyPageSize: 48 }, useStore.getState())
+    expect(restored.historyPageSize).toBe(48)
+    const invalid = mergePersistedState({ historyPageSize: 17 }, useStore.getState())
+    expect(invalid.historyPageSize).toBe(12)
+
+    useStore.getState().setHistoryPageSize(17)
+    expect(useStore.getState().historyPageSize).toBe(12)
+    useStore.setState({ historyPage: 1, historyPageSize: 12 })
+  })
+})
+
 describe('error toast messages', () => {
   it('drops long error detail after the failure title', () => {
     expect(getErrorToastMessage('Agent 请求失败：接口拒绝了很长的提示词内容')).toBe('Agent 请求失败')
@@ -212,6 +266,20 @@ function importFile(data: ExportData): File {
   const buffer = zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength)
   return { arrayBuffer: async () => buffer } as File
 }
+
+describe('history pagination task updates', () => {
+  it('returns to the first page for new tasks without resetting for existing task updates', () => {
+    const existing = task({ id: 'existing-task' })
+    useStore.setState({ tasks: [existing], historyPage: 3 })
+
+    useStore.getState().setTasks([{ ...existing, status: 'running' }])
+    expect(useStore.getState().historyPage).toBe(3)
+
+    useStore.getState().setTasks([task({ id: 'new-task' }), existing])
+    expect(useStore.getState().historyPage).toBe(1)
+    useStore.setState({ tasks: [], historyPage: 1 })
+  })
+})
 
 async function waitForCondition(predicate: () => boolean, attempts = 25) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {

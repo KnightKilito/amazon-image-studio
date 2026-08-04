@@ -2,6 +2,15 @@ import type { HistoryAspectFilter, HistoryWorkflowFilter, TaskAspect, TaskRecord
 
 export const ALL_PRODUCT_FILTER = ''
 export const UNCATEGORIZED_PRODUCT_FILTER = '__uncategorized_product__'
+export const HISTORY_PAGE_SIZE = 12
+export const HISTORY_PAGE_SIZE_OPTIONS = [6, 12, 24, 48] as const
+
+export function normalizeHistoryPageSize(value: unknown) {
+  const size = Number(value)
+  return HISTORY_PAGE_SIZE_OPTIONS.includes(size as typeof HISTORY_PAGE_SIZE_OPTIONS[number])
+    ? size
+    : HISTORY_PAGE_SIZE
+}
 
 const SIZE_PATTERN = /^\s*(\d+)\s*[xX×]\s*(\d+)\s*$/
 const PRODUCT_TITLE_PATTERNS = [
@@ -215,4 +224,10 @@ export function matchesTaskHistoryFilters(task: TaskRecord, filters: TaskHistory
   ].join(' ').toLowerCase()
 
   return searchable.includes(query)
+}
+
+export function getFilteredTaskHistory(tasks: TaskRecord[], filters: TaskHistoryFilters) {
+  return [...tasks]
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .filter((task) => matchesTaskHistoryFilters(task, filters))
 }

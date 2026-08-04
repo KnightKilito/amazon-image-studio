@@ -60,3 +60,9 @@ export async function saveAdminSettings(token: string, adminAccess: Partial<Admi
     body: JSON.stringify({ adminAccess }),
   })
 }
+
+export async function saveAdminSettingsAndLogout(token: string, adminAccess: AdminAccessSettings) {
+  const result = await saveAdminSettings(token, adminAccess)
+  await logoutAdmin(token).catch(() => {})
+  return result
+}

@@ -525,6 +525,89 @@ function createAPlusPayloadFromSpecs(specs: ReturnType<typeof getAPlusModuleSpec
 }
 
 describe('callAmazonPlannerApi', () => {
+  it('streams Responses planner text and reports request progress', async () => {
+    const payloadText = JSON.stringify(createApiPayload('Streamed Responses tumbler'))
+    const splitAt = Math.floor(payloadText.length / 2)
+    const streamBody = [
+      `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: payloadText.slice(0, splitAt) })}`,
+      '',
+      `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: payloadText.slice(splitAt) })}`,
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n')
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(streamBody, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const attempts: unknown[] = []
+    const statuses: string[] = []
+    const deltas: string[] = []
+
+    const result = await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: DEFAULT_AMAZON_PROMPT_DRAFT,
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+        streamImages: true,
+      }),
+      onAttemptStart: (attempt) => attempts.push(attempt),
+      onStatusChange: (status) => statuses.push(status),
+      onTextDelta: (delta) => deltas.push(delta),
+    })
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
+    expect(body.stream).toBe(true)
+    expect(attempts).toEqual([{ label: 'AI 策划', apiMode: 'responses', streaming: true }])
+    expect(statuses).toEqual(['waiting', 'streaming', 'streaming', 'parsing'])
+    expect(deltas.join('')).toBe(payloadText)
+    expect(result.parsed.title).toBe('Streamed Responses tumbler')
+    expect(result.plans).toHaveLength(7)
+  })
+
+  it('streams Chat Completions planner deltas without inserting separators', async () => {
+    const payloadText = JSON.stringify(createApiPayload('Streamed Chat tumbler'))
+    const first = payloadText.slice(0, 11)
+    const second = payloadText.slice(11)
+    const streamBody = [
+      `data: ${JSON.stringify({ choices: [{ delta: { role: 'assistant', content: first } }] })}`,
+      '',
+      `data: ${JSON.stringify({ choices: [{ delta: { content: second } }] })}`,
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n')
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(streamBody, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const deltas: string[] = []
+
+    const result = await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: DEFAULT_AMAZON_PROMPT_DRAFT,
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'chat',
+        model: DEFAULT_CHAT_MODEL,
+        streamImages: true,
+      }),
+      onTextDelta: (delta) => deltas.push(delta),
+    })
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
+    expect(body.stream).toBe(true)
+    expect(deltas).toEqual([first, second])
+    expect(result.parsed.title).toBe('Streamed Chat tumbler')
+    expect(result.plans).toHaveLength(7)
+  })
+
   it('plans a product-specific AI visual direction when AI style mode is selected', async () => {
     const apiPayload = { ...createApiPayload(), aiVisualStyle: AI_VISUAL_STYLE_PAYLOAD }
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({

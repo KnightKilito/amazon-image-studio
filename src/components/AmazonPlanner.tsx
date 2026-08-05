@@ -40,7 +40,7 @@ import {
   type AmazonPlannerMode,
   type AmazonStyleDensityMode,
 } from '../lib/listingPlanner'
-import { callAmazonPlannerApi, type PlannerApiResult } from '../lib/listingPlannerApi'
+import { callAmazonPlannerApi, type PlannerApiResult, type PlannerAttemptInfo, type PlannerRequestStatus } from '../lib/listingPlannerApi'
 import { deleteAmazonPlannerSession, getAllAmazonPlannerSessions, putAmazonPlannerSession } from '../lib/db'
 import { prepareReferenceImagePayload, type PlannerReferenceImagePayload } from '../lib/referenceImagePayload'
 import {
@@ -64,6 +64,7 @@ import type { AmazonAiVisualStyle, AmazonPlannerSession, AmazonVisualStyleMode, 
 import { normalizePremiumAPlusGroups } from '../lib/premiumAPlusLayout'
 import StyleReferenceEditorModal from './StyleReferenceEditorModal'
 import PremiumAPlusLayoutEditor from './PremiumAPlusLayoutEditor'
+import PlannerRunDetailsModal, { type PlannerRunStatus } from './PlannerRunDetailsModal'
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, EditIcon, EyeIcon, HistoryIcon, PhotoIcon, PlusIcon, RefreshIcon, TrashIcon } from './icons'
 
 const FIELD_CLASS = 'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-100 dark:placeholder:text-gray-500'
@@ -432,6 +433,22 @@ export default function AmazonPlanner() {
   const [showPlannerHistory, setShowPlannerHistory] = useState(false)
   const [isPlanning, setIsPlanning] = useState(false)
   const [plannerError, setPlannerError] = useState('')
+  const [showPlannerRunDetails, setShowPlannerRunDetails] = useState(false)
+  const [plannerRun, setPlannerRun] = useState<{
+    startedAt: number | null
+    finishedAt: number | null
+    status: PlannerRunStatus
+    attempt: PlannerAttemptInfo | null
+    responseText: string
+    error: string
+  }>({
+    startedAt: null,
+    finishedAt: null,
+    status: 'preparing',
+    attempt: null,
+    responseText: '',
+    error: '',
+  })
   const [isPreparingReferencePayload, setIsPreparingReferencePayload] = useState(false)
   const [referencePayloadNotice, setReferencePayloadNotice] = useState('')
   const [actionProgress, setActionProgress] = useState<PlannerActionProgressMap>({})
@@ -1347,6 +1364,14 @@ export default function AmazonPlanner() {
     plannerAbortControllerRef.current = controller
     setIsPlanning(true)
     setPlannerError('')
+    setPlannerRun({
+      startedAt: Date.now(),
+      finishedAt: null,
+      status: 'preparing',
+      attempt: null,
+      responseText: '',
+      error: '',
+    })
     try {
       const referencePayload = await prepareReferencePayloadForRequest(inputImages.map((image) => image.dataUrl), controller.signal)
       const result = await callAmazonPlannerApi({
@@ -1361,8 +1386,32 @@ export default function AmazonPlanner() {
         aPlusGenerationTier: resolutionTier,
         visualStyleMode,
         signal: controller.signal,
+        onAttemptStart: (attempt) => {
+          if (plannerAbortControllerRef.current !== controller) return
+          setPlannerRun((current) => ({
+            ...current,
+            status: 'waiting',
+            attempt,
+            responseText: '',
+            error: '',
+          }))
+        },
+        onStatusChange: (status: PlannerRequestStatus) => {
+          if (plannerAbortControllerRef.current !== controller) return
+          setPlannerRun((current) => ({ ...current, status }))
+        },
+        onTextDelta: (delta) => {
+          if (plannerAbortControllerRef.current !== controller) return
+          setPlannerRun((current) => ({ ...current, responseText: current.responseText + delta }))
+        },
       })
       if (controller.signal.aborted) return
+      setPlannerRun((current) => ({
+        ...current,
+        finishedAt: Date.now(),
+        status: 'success',
+        responseText: result.rawResponseText || current.responseText,
+      }))
       applyPlannerResult(result, plannerMode === 'aplus' ? 'A+ AI 策划' : 'AI 策划')
       if (plannerAbortControllerRef.current === controller) {
         plannerAbortControllerRef.current = null
@@ -1370,7 +1419,9 @@ export default function AmazonPlanner() {
       }
     } catch (err) {
       if (controller.signal.aborted || isAbortError(err)) return
-      setPlannerError(getPlannerFailureDetail(err))
+      const detail = getPlannerFailureDetail(err)
+      setPlannerError(detail)
+      setPlannerRun((current) => ({ ...current, finishedAt: Date.now(), status: 'error', error: detail }))
       showToast('AI 策划失败，请查看详情', 'error')
     } finally {
       if (plannerAbortControllerRef.current === controller) {
@@ -1386,6 +1437,7 @@ export default function AmazonPlanner() {
     controller.abort()
     plannerAbortControllerRef.current = null
     setIsPlanning(false)
+    setPlannerRun((current) => ({ ...current, finishedAt: Date.now(), status: 'stopped' }))
     showToast('AI 策划已停止', 'info')
   }
 
@@ -2106,10 +2158,11 @@ export default function AmazonPlanner() {
               <div className={`flex flex-wrap items-center gap-2 rounded-xl transition sm:justify-end ${getGuideFocusClass(guideState.target === 'planner-action')}`}>
                 <button
                   type="button"
-                  onClick={createAiPlan}
-                  disabled={isPlanning || Boolean(plannerProfileValidation)}
-                  className={`inline-flex h-10 items-center rounded-xl px-4 text-sm font-semibold text-white transition ${isPlanning ? 'cursor-wait bg-gray-400' : plannerProfileValidation ? 'cursor-not-allowed bg-gray-300 dark:bg-white/[0.12]' : 'bg-blue-600 hover:bg-blue-500'} ${guideState.target === 'planner-action' ? 'ring-2 ring-blue-500/25 ring-offset-2 ring-offset-white dark:ring-offset-gray-950' : ''}`}
+                  onClick={() => isPlanning ? setShowPlannerRunDetails(true) : void createAiPlan()}
+                  disabled={!isPlanning && Boolean(plannerProfileValidation)}
+                  className={`inline-flex h-10 items-center gap-1.5 rounded-xl px-4 text-sm font-semibold text-white transition ${isPlanning ? 'bg-blue-600 hover:bg-blue-500' : plannerProfileValidation ? 'cursor-not-allowed bg-gray-300 dark:bg-white/[0.12]' : 'bg-blue-600 hover:bg-blue-500'} ${guideState.target === 'planner-action' ? 'ring-2 ring-blue-500/25 ring-offset-2 ring-offset-white dark:ring-offset-gray-950' : ''}`}
                 >
+                  {isPlanning && <EyeIcon className="h-4 w-4" />}
                   {isPlanning ? '策划中...' : plannerMode === 'aplus' ? 'AI策划A+' : 'AI策划'}
                 </button>
                 {isPlanning && (
@@ -2120,6 +2173,16 @@ export default function AmazonPlanner() {
                   >
                     <CloseIcon className="h-4 w-4" />
                     停止
+                  </button>
+                )}
+                {!isPlanning && plannerRun.startedAt && (
+                  <button
+                    type="button"
+                    onClick={() => setShowPlannerRunDetails(true)}
+                    className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 text-sm font-medium text-gray-600 transition hover:bg-gray-50 hover:text-gray-900 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-white/[0.06] dark:hover:text-white"
+                  >
+                    <EyeIcon className="h-4 w-4" />
+                    查看返回
                   </button>
                 )}
                 {(listingText.trim() || imagePlans.length > 0 || aPlusPlans.length > 0) && (
@@ -3141,6 +3204,22 @@ export default function AmazonPlanner() {
         </div>
       </div>
     </section>
+    {showPlannerRunDetails && plannerRun.startedAt && plannerProfile && (
+      <PlannerRunDetailsModal
+        status={plannerRun.status}
+        startedAt={plannerRun.startedAt}
+        finishedAt={plannerRun.finishedAt}
+        profileName={plannerProfile.name}
+        model={plannerProfile.model}
+        apiMode={plannerRun.attempt?.apiMode ?? plannerProfile.apiMode}
+        attempt={plannerRun.attempt}
+        responseText={plannerRun.responseText}
+        error={plannerRun.error}
+        running={isPlanning}
+        onClose={() => setShowPlannerRunDetails(false)}
+        onStop={stopAiPlan}
+      />
+    )}
     </>
   )
 }

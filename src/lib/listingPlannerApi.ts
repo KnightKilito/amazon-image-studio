@@ -74,6 +74,15 @@ export interface PlannerApiResult {
   plans: AmazonImagePlan[]
   aPlusPlans: AmazonAPlusPlan[]
   aPlusType?: APlusContentType
+  rawResponseText?: string
+}
+
+export type PlannerRequestStatus = 'waiting' | 'streaming' | 'parsing'
+
+export interface PlannerAttemptInfo {
+  label: string
+  apiMode: ApiMode
+  streaming: boolean
 }
 
 const PRODUCT_SCHEMA = {
@@ -334,7 +343,27 @@ function getPlannerTextFromEvent(event: Record<string, unknown>): string {
   return ''
 }
 
-async function readPlannerTextFromSseResponse(response: Response): Promise<string> {
+function getChatCompletionDelta(event: Record<string, unknown>): string {
+  const choices = Array.isArray(event.choices) ? event.choices : []
+  const chunks: string[] = []
+  for (const choice of choices) {
+    if (!isRecordValue(choice) || !isRecordValue(choice.delta)) continue
+    const content = choice.delta.content
+    if (typeof content === 'string') {
+      chunks.push(content)
+      continue
+    }
+    if (!Array.isArray(content)) continue
+    for (const part of content) {
+      if (!isRecordValue(part)) continue
+      const text = getStringValue(part, 'text')
+      if (text) chunks.push(text)
+    }
+  }
+  return chunks.join('')
+}
+
+async function readPlannerTextFromSseResponse(response: Response, onTextDelta?: (delta: string) => void): Promise<string> {
   let completedText = ''
   let outputItemText = ''
   let doneText = ''
@@ -343,7 +372,16 @@ async function readPlannerTextFromSseResponse(response: Response): Promise<strin
   await readJsonServerSentEvents(response, (event) => {
     const type = getStringValue(event, 'type')
     if (type === 'response.output_text.delta') {
-      deltaText += getStringValue(event, 'delta') ?? ''
+      const delta = getStringValue(event, 'delta') ?? ''
+      deltaText += delta
+      if (delta) onTextDelta?.(delta)
+      return
+    }
+
+    const chatDelta = getChatCompletionDelta(event)
+    if (chatDelta) {
+      deltaText += chatDelta
+      onTextDelta?.(chatDelta)
       return
     }
 
@@ -359,7 +397,7 @@ async function readPlannerTextFromSseResponse(response: Response): Promise<strin
   return completedText.trim() || outputItemText.trim() || doneText.trim() || deltaText.trim()
 }
 
-async function readPlannerTextFromSseText(rawText: string): Promise<string> {
+async function readPlannerTextFromSseText(rawText: string, onTextDelta?: (delta: string) => void): Promise<string> {
   let completedText = ''
   let outputItemText = ''
   let doneText = ''
@@ -368,7 +406,16 @@ async function readPlannerTextFromSseText(rawText: string): Promise<string> {
   await readJsonServerSentEventText(rawText, (event) => {
     const type = getStringValue(event, 'type')
     if (type === 'response.output_text.delta') {
-      deltaText += getStringValue(event, 'delta') ?? ''
+      const delta = getStringValue(event, 'delta') ?? ''
+      deltaText += delta
+      if (delta) onTextDelta?.(delta)
+      return
+    }
+
+    const chatDelta = getChatCompletionDelta(event)
+    if (chatDelta) {
+      deltaText += chatDelta
+      onTextDelta?.(chatDelta)
       return
     }
 
@@ -411,9 +458,9 @@ class PlannerEmptyTextError extends Error {
   }
 }
 
-async function readPlannerResponseText(response: Response): Promise<string> {
+async function readPlannerResponseText(response: Response, onTextDelta?: (delta: string) => void): Promise<string> {
   if (isEventStreamResponse(response)) {
-    const text = await readPlannerTextFromSseResponse(response)
+    const text = await readPlannerTextFromSseResponse(response, onTextDelta)
     if (!text) throw new PlannerEmptyTextError('AI 策划流式接口未返回文本内容')
     return text
   }
@@ -422,7 +469,7 @@ async function readPlannerResponseText(response: Response): Promise<string> {
   if (!rawText.trim()) throw new Error('AI 策划接口返回空内容')
 
   if (looksLikeServerSentEvents(rawText)) {
-    const text = await readPlannerTextFromSseText(rawText)
+    const text = await readPlannerTextFromSseText(rawText, onTextDelta)
     if (!text) throw new PlannerEmptyTextError('AI 策划流式接口未返回文本内容')
     return text
   }
@@ -940,6 +987,9 @@ export async function callAmazonPlannerApi(options: {
   aPlusGenerationTier?: SizeTier
   visualStyleMode?: AmazonVisualStyleMode
   signal?: AbortSignal
+  onAttemptStart?: (attempt: PlannerAttemptInfo) => void
+  onStatusChange?: (status: PlannerRequestStatus) => void
+  onTextDelta?: (delta: string) => void
 }): Promise<PlannerApiResult> {
   const model = options.model?.trim() || options.profile.model.trim() || (options.profile.apiMode === 'chat' ? DEFAULT_CHAT_MODEL : DEFAULT_RESPONSES_MODEL)
   const mode = options.mode ?? 'listing'
@@ -959,6 +1009,7 @@ export async function callAmazonPlannerApi(options: {
     forceTextOnly: boolean,
     apiMode: ApiMode = options.profile.apiMode,
     compact = false,
+    attemptLabel = 'AI 策划',
   ): Promise<PlannerApiResult> => {
     const useChatCompletions = apiMode === 'chat'
     const useTextOnly = isDeepSeekPlannerProfile || forceTextOnly
@@ -976,6 +1027,9 @@ export async function callAmazonPlannerApi(options: {
     const referenceImageDataUrls = useTextOnly
       ? []
       : options.referenceImageDataUrls ?? []
+    const streaming = Boolean(options.profile.streamImages)
+    options.onAttemptStart?.({ label: attemptLabel, apiMode, streaming })
+    options.onStatusChange?.('waiting')
     const response = await fetch(
       useChatCompletions
         ? buildApiUrl(options.profile.baseUrl, 'chat/completions', proxyConfig, useApiProxy, { prefixV1: false })
@@ -1009,7 +1063,7 @@ export async function callAmazonPlannerApi(options: {
               },
             ],
             response_format: { type: 'json_object' },
-            stream: false,
+            stream: streaming,
           }
         : {
             model,
@@ -1030,7 +1084,7 @@ export async function callAmazonPlannerApi(options: {
                 schema,
               },
             },
-            stream: false,
+            stream: streaming,
           },
       ),
       },
@@ -1040,17 +1094,22 @@ export async function callAmazonPlannerApi(options: {
       const message = await getApiErrorMessage(response)
       throw new PlannerHttpError(response.status, message)
     }
-    const text = await readPlannerResponseText(response)
+    const text = await readPlannerResponseText(response, (delta) => {
+      options.onStatusChange?.('streaming')
+      options.onTextDelta?.(delta)
+    })
+    options.onStatusChange?.('parsing')
     const payload = parsePlannerPayload(text)
-    return mode === 'aplus'
+    const result = mode === 'aplus'
       ? normalizeAPlusPlannerApiPayload(payload, aPlusType, aPlusGenerationTier, aPlusModuleSpecs, visualStyleMode)
       : normalizeListingPlannerApiPayload(payload, listingImageCount, visualStyleMode)
+    return { ...result, rawResponseText: text }
   }
 
   const canRetryWithoutReferences = !isDeepSeekPlannerProfile && Boolean(options.referenceImageDataUrls?.length)
   const errors: Array<{ label: string; error: unknown }> = []
   try {
-    return await performPlannerRequest(false)
+    return await performPlannerRequest(false, options.profile.apiMode, false, canRetryWithoutReferences ? '带参考图策划' : 'AI 策划')
   } catch (err) {
     errors.push({ label: canRetryWithoutReferences ? 'Reference image attempt' : 'Planner attempt', error: err })
     if (options.signal?.aborted || !shouldRetryPlannerWithoutReferenceImages(err)) throw err
@@ -1059,7 +1118,7 @@ export async function callAmazonPlannerApi(options: {
 
   if (canRetryWithoutReferences) {
     try {
-      return await performPlannerRequest(true)
+      return await performPlannerRequest(true, options.profile.apiMode, false, '纯文本重试')
     } catch (retryErr) {
       errors.push({ label: 'Text-only retry', error: retryErr })
       if (options.signal?.aborted || !shouldRetryPlannerWithoutReferenceImages(retryErr)) {
@@ -1070,7 +1129,7 @@ export async function callAmazonPlannerApi(options: {
 
   if (options.profile.apiMode !== 'chat') {
     try {
-      return await performPlannerRequest(true, 'chat', true)
+      return await performPlannerRequest(true, 'chat', true, 'Chat Completions 精简重试')
     } catch (chatErr) {
       errors.push({ label: 'Chat Completions compact retry', error: chatErr })
       if (options.signal?.aborted) throw chatErr
@@ -1079,7 +1138,7 @@ export async function callAmazonPlannerApi(options: {
 
   if (options.profile.apiMode === 'chat') {
     try {
-      return await performPlannerRequest(true, 'chat', true)
+      return await performPlannerRequest(true, 'chat', true, '精简纯文本重试')
     } catch (compactErr) {
       errors.push({ label: 'Compact text-only retry', error: compactErr })
       if (options.signal?.aborted) throw compactErr

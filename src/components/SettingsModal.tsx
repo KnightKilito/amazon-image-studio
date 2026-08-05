@@ -1804,11 +1804,16 @@ export default function SettingsModal() {
                       </button>
                     </div>
                     <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                      开启后请求以流式传输，并非所有服务商和网关都支持此功能。官方接口在流式模式下不发送心跳，需要配合请求中间步骤图像来维持连接，避免超时断开。官方接口仅支持单图流式传输，因此数量大于 1 时会将多图生成拆分为并发单图。
+                      {activeProfile.apiMode === 'images'
+                        ? '开启后生图请求以流式传输。官方接口不发送心跳，需要配合请求中间步骤图像维持连接；多图生成会拆分为并发单图。'
+                        : activeProfile.apiMode === 'chat'
+                          ? '开启后 Chat Completions 文本请求以 SSE 流式传输，AI 策划会实时接收并显示返回内容。并非所有服务商和网关都支持流式透传。'
+                          : '开启后 Responses API 请求以 SSE 流式传输，AI 策划会实时接收并显示文本；Agent 生图仍可使用下方的中间步骤图像。并非所有服务商和网关都支持流式透传。'}
                     </div>
                   </div>
+                  {activeProfile.apiMode !== 'chat' && (
                   <label className={`block ${activeProfile.streamImages ? '' : 'opacity-60'}`}>
-                    <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">请求中间步骤图像数</span>
+                    <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">生图中间步骤图像数</span>
                     <Select
                       value={normalizeStreamPartialImages(activeProfile.streamPartialImages)}
                       onChange={(value) => updateActiveProfile({ streamPartialImages: normalizeStreamPartialImages(value) }, true)}
@@ -1825,6 +1830,7 @@ export default function SettingsModal() {
                       对应 <code className="rounded bg-gray-100 px-1 py-0.5 dark:bg-white/[0.06]">partial_images</code> 参数（0-3）。建议设为 2 或 3 以避免长时间生成时连接超时断开。实际返回的每张中间图像会产生少量额外计费。设为 0 时不请求中间步骤图像，连接可能因无数据传输而被断开。
                     </div>
                   </label>
+                  )}
                 </div>
               )}
 

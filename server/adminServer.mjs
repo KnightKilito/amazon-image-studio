@@ -1,8 +1,8 @@
 import crypto from 'node:crypto'
 import http from 'node:http'
-import https from 'node:https'
 import mysql from 'mysql2/promise'
 import { loadAdminConfig } from './config.mjs'
+import { streamApiProxyResponse } from './apiProxyStream.mjs'
 
 const appConfig = loadAdminConfig()
 const DB_NAME = appConfig.mysql.database
@@ -249,57 +249,29 @@ async function readRequestBody(req) {
   return Buffer.concat(chunks)
 }
 
-function requestUpstream(target, options, body) {
-  const client = target.protocol === 'http:' ? http : https
-  return new Promise((resolve, reject) => {
-    const upstreamReq = client.request(target, options, (upstreamRes) => {
-      const chunks = []
-      upstreamRes.on('data', (chunk) => chunks.push(chunk))
-      upstreamRes.on('end', () => {
-        resolve({
-          status: upstreamRes.statusCode ?? 502,
-          headers: upstreamRes.headers,
-          body: Buffer.concat(chunks),
-        })
-      })
-    })
-    upstreamReq.on('error', reject)
-    upstreamReq.setTimeout(300000, () => {
-      upstreamReq.destroy(new Error('API proxy upstream timeout'))
-    })
-    if (body && body.length > 0) upstreamReq.write(body)
-    upstreamReq.end()
-  })
-}
-
 async function handleApiProxy(req, res, target) {
   try {
     console.log(`API proxy ${req.method} ${target.href}`)
     const requestBody = await readRequestBody(req)
-    const upstream = await requestUpstream(target, {
+    const upstream = await streamApiProxyResponse({
+      target,
       method: req.method,
       headers: getProxyHeaders(req, target),
-    }, requestBody)
-
-    const headers = {}
-    for (const [key, value] of Object.entries(upstream.headers)) {
-      if (value === undefined) continue
-      if (['content-length', 'transfer-encoding', 'connection'].includes(key.toLowerCase())) continue
-      headers[key] = Array.isArray(value) ? value.join(', ') : value
-    }
-    headers['cache-control'] = 'no-store'
-
-    headers['content-length'] = String(upstream.body.byteLength)
+      body: requestBody,
+      downstreamRequest: req,
+      downstreamResponse: res,
+    })
     if (upstream.status < 200 || upstream.status >= 300) {
-      const preview = upstream.body.toString('utf8', 0, Math.min(upstream.body.byteLength, 500)).replace(/\s+/g, ' ').trim()
-      console.warn(`API proxy upstream ${upstream.status} ${target.href}${preview ? `: ${preview}` : ''}`)
+      console.warn(`API proxy upstream ${upstream.status} ${target.href}${upstream.preview ? `: ${upstream.preview}` : ''}`)
     }
-    res.writeHead(upstream.status, headers)
-    res.end(upstream.body)
   } catch (error) {
     const cause = error instanceof Error && error.cause instanceof Error ? `: ${error.cause.message}` : ''
     console.error(`API proxy failed ${req.method} ${target.href}`, error)
-    sendJson(res, 502, { error: `${error instanceof Error ? error.message : String(error)}${cause}` })
+    if (!res.headersSent) {
+      sendJson(res, 502, { error: `${error instanceof Error ? error.message : String(error)}${cause}` })
+    } else if (!res.destroyed) {
+      res.destroy(error instanceof Error ? error : undefined)
+    }
   }
 }
 

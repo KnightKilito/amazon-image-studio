@@ -2,12 +2,12 @@
 id: changelog
 title: 版本日志
 navTitle: 版本日志
-description: 当前版本 v0.2.1，以及根据 Git 提交历史整理的主要功能更新。
+description: 当前版本 v0.2.2，以及根据 Git 提交历史整理的主要功能更新。
 eyebrow: 发布记录
 icon: history
 order: 40
 tags:
-  - v0.2.1
+  - v0.2.2
   - 发布记录
   - 更新摘要
 ---

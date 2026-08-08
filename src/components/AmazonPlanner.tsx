@@ -2796,16 +2796,16 @@ export default function AmazonPlanner() {
                       {guideState.message}
                     </div>
                   )}
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="rounded-md bg-blue-600 px-2 py-0.5 text-[11px] font-bold text-white">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0 sm:flex-1">
+                      <div className="flex min-w-0 items-start gap-2">
+                        <span className="shrink-0 rounded-md bg-blue-600 px-2 py-0.5 text-[11px] font-bold text-white">
                           {actionSlot ?? (plannerMode === 'aplus' ? 'A+' : '当前')}
                         </span>
-                        <span className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
+                        <span className="min-w-0 flex-1 break-words text-sm font-semibold text-gray-900 dark:text-gray-100">
                           {actionLabel ?? (plannerMode === 'aplus' ? '请选择 A+ 模块' : '当前图片方案')}
                         </span>
-                        <span className="rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">
+                        <span className="shrink-0 rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">
                           {actionPositionLabel}
                         </span>
                       </div>
@@ -2824,7 +2824,7 @@ export default function AmazonPlanner() {
                         </div>
                       )}
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
                       <button
                         type="button"
                         onClick={() => stepVisiblePlan(-1)}

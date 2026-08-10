@@ -4,7 +4,7 @@ export type ApiMode = 'images' | 'responses' | 'chat'
 export type PlannerConnectionMode = 'separate' | 'reuse-image'
 export type AppMode = 'gallery' | 'agent'
 export type AppPage = 'home' | 'editor'
-export type TaskWorkflow = 'amazon-listing' | 'amazon-aplus' | 'gallery' | 'agent' | 'unknown'
+export type TaskWorkflow = 'amazon-listing' | 'amazon-aplus' | 'gallery' | 'image-edit' | 'agent' | 'unknown'
 export type TaskAspect = 'square' | 'landscape' | 'portrait'
 export type HistoryWorkflowFilter = 'all' | TaskWorkflow
 export type HistoryAspectFilter = 'all' | TaskAspect
@@ -170,6 +170,36 @@ export interface MaskDraft {
   updatedAt: number
 }
 
+export type ImageEditorAnnotationKind = 'brush' | 'rectangle' | 'ellipse' | 'arrow'
+
+export interface ImageEditorAnnotationPoint {
+  /** Coordinate normalized against the source image width/height. */
+  x: number
+  y: number
+}
+
+export interface ImageEditorAnnotation {
+  id: string
+  kind: ImageEditorAnnotationKind
+  color: string
+  /** Stroke width normalized against the source image short edge. */
+  width: number
+  points: ImageEditorAnnotationPoint[]
+}
+
+export interface ImageEditorCanvasDraft {
+  sourceImageId: string | null
+  annotations: ImageEditorAnnotation[]
+  updatedAt: number
+}
+
+export interface TaskImageEditContext {
+  sourceImageId: string
+  visualGuideImageId?: string | null
+  referenceImageIds: string[]
+  userInstruction: string
+}
+
 // ===== 任务记录 =====
 
 export type TaskStatus = 'running' | 'done' | 'error'
@@ -238,6 +268,8 @@ export interface TaskRecord {
   agentBatchCallId?: string
   /** Agent 图像工具实际动作 */
   agentToolAction?: 'generate' | 'edit' | 'auto' | string
+  /** 图片编辑任务中的输入角色与原始用户要求。 */
+  imageEditContext?: TaskImageEditContext
   derivation?: {
     type: 'premium-aplus-vertical-slices' | 'premium-aplus-horizontal-slices' | 'mobile-aplus-vertical-slices'
     sourceTaskId: string

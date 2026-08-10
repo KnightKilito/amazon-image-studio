@@ -423,7 +423,7 @@ function normalizeProviderDraft(input: unknown, provider: ApiProvider, customPro
 
   return {
     baseUrl: provider === 'fal'
-      ? baseUrl?.trim().replace(/\/+$/, '') || DEFAULT_FAL_BASE_URL
+      ? baseUrl === undefined ? DEFAULT_FAL_BASE_URL : baseUrl.trim().replace(/\/+$/, '')
       : baseUrl,
     model,
     apiMode,
@@ -686,7 +686,7 @@ export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfil
     id: typeof record.id === 'string' && record.id.trim() ? record.id : defaults.id,
     name: typeof record.name === 'string' && record.name.trim() ? record.name : defaults.name,
     provider,
-    baseUrl: provider === 'fal' ? rawBaseUrl.trim().replace(/\/+$/, '') || DEFAULT_FAL_BASE_URL : rawBaseUrl,
+    baseUrl: provider === 'fal' ? rawBaseUrl.trim().replace(/\/+$/, '') : rawBaseUrl,
     apiKey: typeof record.apiKey === 'string' ? record.apiKey : defaults.apiKey,
     model: typeof record.model === 'string' && record.model.trim() ? record.model : defaults.model,
     timeout: typeof record.timeout === 'number' && Number.isFinite(record.timeout) ? record.timeout : defaults.timeout,

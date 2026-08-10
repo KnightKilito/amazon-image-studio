@@ -21,6 +21,7 @@ import {
   normalizeSettings,
   normalizeApiProfile,
   switchApiProfileProvider,
+  validateApiProfile,
 } from './apiProfiles'
 
 describe('mergeImportedSettings', () => {
@@ -51,6 +52,18 @@ describe('mergeImportedSettings', () => {
       motherImageSupport: 'auto',
       maxMotherSlices: 2,
     })
+  })
+
+  it('uses provider defaults only when API URL is missing and preserves an explicit clear', () => {
+    expect(normalizeApiProfile({ provider: 'openai' }).baseUrl).toBe(DEFAULT_SETTINGS.baseUrl)
+    expect(normalizeApiProfile({ provider: 'openai', baseUrl: '' }).baseUrl).toBe('')
+    expect(normalizeApiProfile({ provider: 'fal' }).baseUrl).toBe(DEFAULT_FAL_BASE_URL)
+    expect(normalizeApiProfile({ provider: 'fal', baseUrl: '' }).baseUrl).toBe('')
+  })
+
+  it('reports a missing API URL before a missing API Key', () => {
+    expect(validateApiProfile(createDefaultOpenAIProfile({ baseUrl: '', apiKey: '' }))).toBe('缺少 API URL')
+    expect(validateApiProfile(createDefaultOpenAIProfile({ apiKey: '' }))).toBe('缺少 API Key')
   })
 
   it('creates separate default profiles for image generation and AI planning', () => {

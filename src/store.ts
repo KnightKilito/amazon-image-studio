@@ -13,10 +13,13 @@ import type {
   AppPage,
   HistoryAspectFilter,
   HistoryWorkflowFilter,
+  ImageEditorAnnotation,
+  ImageEditorCanvasDraft,
   TaskParams,
   InputImage,
   MaskDraft,
   TaskRecord,
+  TaskImageEditContext,
   ExportData,
   ResponsesApiResponse,
   ResponsesOutputItem,
@@ -52,10 +55,12 @@ import { IMAGE_FETCH_CORS_HINT } from './lib/imageApiShared'
 import { getFalErrorMessage, getFalQueuedImageResult } from './lib/falAiImageApi'
 import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
 import { validateMaskMatchesImage } from './lib/canvasImage'
+import { buildImageEditPrompt, createImageEditorVisualGuideDataUrl } from './lib/imageEditorAnnotations'
 import { orderInputImagesForMask } from './lib/mask'
 import { getChangedParams, normalizeParamsForSettings } from './lib/paramCompatibility'
 import { prepareReferenceImageAndMaskPayload } from './lib/referenceImagePayload'
 import { getTaskHistoryCategory, HISTORY_PAGE_SIZE, normalizeHistoryPageSize } from './lib/taskHistory'
+import { getTaskDisplayPrompt } from './lib/taskPromptDisplay'
 import { isAmazonListingMainSlot } from './lib/listingPlanner'
 import { sliceImageDataUrlVertically, type APlusSliceFormat } from './lib/imageSlicing'
 import { upscaleImageDataUrlForAPlus, type APlusUpscaleFormat } from './lib/imageUpscaling'
@@ -102,6 +107,11 @@ const DEFAULT_ADMIN_ACCESS = {
   referenceImageUploadLimit: DEFAULT_REFERENCE_IMAGE_UPLOAD_LIMIT,
   modelIds: [],
 } satisfies AdminAccessSettings
+const DEFAULT_IMAGE_EDITOR_CANVAS_DRAFT: ImageEditorCanvasDraft = {
+  sourceImageId: null,
+  annotations: [],
+  updatedAt: 0,
+}
 type ToastType = 'info' | 'success' | 'error'
 type GuestUnifiedApiUrlKind = 'planner' | 'image'
 let adminAccessSaveChain: Promise<void> = Promise.resolve()
@@ -198,8 +208,30 @@ function limitReferenceImagesForRetry<T>(
   inputImageIds: string[],
   category: TaskRecord['category'],
   limit: number,
+  imageEditContext?: TaskImageEditContext,
 ): T[] {
   if (items.length <= limit) return items
+
+  if (imageEditContext) {
+    const sourceIndex = inputImageIds.indexOf(imageEditContext.sourceImageId)
+    const guideIndex = imageEditContext.visualGuideImageId
+      ? inputImageIds.indexOf(imageEditContext.visualGuideImageId)
+      : -1
+    const styleReferenceImageId = category?.styleReferenceImageId?.trim()
+    const styleIndex = styleReferenceImageId ? inputImageIds.indexOf(styleReferenceImageId) : -1
+    const selectedIndexes: number[] = []
+    const addIndex = (index: number) => {
+      if (index >= 0 && index < items.length && !selectedIndexes.includes(index) && selectedIndexes.length < limit) {
+        selectedIndexes.push(index)
+      }
+    }
+    addIndex(sourceIndex >= 0 ? sourceIndex : 0)
+    addIndex(guideIndex)
+    addIndex(styleIndex)
+    for (let index = 0; index < items.length && selectedIndexes.length < limit; index += 1) addIndex(index)
+    const keep = new Set(selectedIndexes)
+    return items.filter((_, index) => keep.has(index))
+  }
 
   const styleReferenceImageId = category?.styleReferenceImageId?.trim()
   const styleReferenceIndex = styleReferenceImageId ? inputImageIds.indexOf(styleReferenceImageId) : -1
@@ -673,6 +705,9 @@ export function getPersistedState(state: AppState) {
             : null,
         }
       : null,
+    editorCanvasDraft: settings.persistInputOnRestart
+      ? state.editorCanvasDraft
+      : { ...DEFAULT_IMAGE_EDITOR_CANVAS_DRAFT },
     agentConversations: state.agentConversations,
     activeAgentConversationId: state.activeAgentConversationId,
     agentInputDrafts: getPersistableAgentInputDrafts(state),
@@ -762,6 +797,9 @@ export function mergePersistedState(persistedState: unknown, currentState: AppSt
     appPage: 'home',
     editorActiveImageId: null,
     editorActiveTaskId: null,
+    editorCanvasDraft: settings.persistInputOnRestart
+      ? normalizeImageEditorCanvasDraft(persisted.editorCanvasDraft)
+      : { ...DEFAULT_IMAGE_EDITOR_CANVAS_DRAFT },
     galleryInputDraft: galleryInputDraft && !isEmptyAgentInputDraft(galleryInputDraft) ? galleryInputDraft : null,
     agentConversations,
     activeAgentConversationId,
@@ -816,6 +854,9 @@ interface AppState {
   setEditorActiveImageId: (id: string | null) => void
   editorActiveTaskId: string | null
   setEditorActiveTaskId: (id: string | null) => void
+  editorCanvasDraft: ImageEditorCanvasDraft
+  setEditorCanvasDraft: (patch: Partial<ImageEditorCanvasDraft>) => void
+  resetEditorCanvasDraft: (sourceImageId?: string | null) => void
 
   // 设置
   settings: AppSettings
@@ -963,6 +1004,7 @@ interface AppState {
 
 function isImageReferencedByState(state: AppState, imageId: string) {
   if (state.inputImages.some((img) => img.id === imageId)) return true
+  if (state.editorCanvasDraft.sourceImageId === imageId) return true
   if (state.styleReferenceImage?.id === imageId) return true
   if (state.settings.customStyleReferences?.some((style) => style.imageId === imageId)) return true
   if (state.galleryInputDraft?.inputImages.some((img) => img.id === imageId)) return true
@@ -1027,6 +1069,43 @@ function normalizeMaskDraft(value: unknown): MaskDraft | null {
     targetImageId: value.targetImageId,
     maskDataUrl: value.maskDataUrl,
     updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : Date.now(),
+  }
+}
+
+function normalizeImageEditorAnnotation(value: unknown): ImageEditorAnnotation | null {
+  if (!isRecord(value) || typeof value.id !== 'string') return null
+  if (value.kind !== 'brush' && value.kind !== 'rectangle' && value.kind !== 'ellipse' && value.kind !== 'arrow') return null
+  if (!Array.isArray(value.points)) return null
+  const points = value.points
+    .map((point) => {
+      if (!isRecord(point) || typeof point.x !== 'number' || typeof point.y !== 'number') return null
+      if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return null
+      return {
+        x: Math.min(1, Math.max(0, point.x)),
+        y: Math.min(1, Math.max(0, point.y)),
+      }
+    })
+    .filter((point): point is { x: number; y: number } => point != null)
+  if (points.length < 2) return null
+  return {
+    id: value.id,
+    kind: value.kind,
+    color: typeof value.color === 'string' && value.color.trim() ? value.color : '#ef4444',
+    width: typeof value.width === 'number' && Number.isFinite(value.width)
+      ? Math.min(0.1, Math.max(0.001, value.width))
+      : 0.0065,
+    points,
+  }
+}
+
+export function normalizeImageEditorCanvasDraft(value: unknown): ImageEditorCanvasDraft {
+  const draft = isRecord(value) ? value : {}
+  return {
+    sourceImageId: typeof draft.sourceImageId === 'string' && draft.sourceImageId ? draft.sourceImageId : null,
+    annotations: Array.isArray(draft.annotations)
+      ? draft.annotations.map(normalizeImageEditorAnnotation).filter((item): item is ImageEditorAnnotation => item != null)
+      : [],
+    updatedAt: typeof draft.updatedAt === 'number' && Number.isFinite(draft.updatedAt) ? draft.updatedAt : 0,
   }
 }
 
@@ -1207,6 +1286,21 @@ export const useStore = create<AppState>()(
       setEditorActiveImageId: (editorActiveImageId) => set({ editorActiveImageId }),
       editorActiveTaskId: null,
       setEditorActiveTaskId: (editorActiveTaskId) => set({ editorActiveTaskId }),
+      editorCanvasDraft: { ...DEFAULT_IMAGE_EDITOR_CANVAS_DRAFT },
+      setEditorCanvasDraft: (patch) => set((state) => ({
+        editorCanvasDraft: normalizeImageEditorCanvasDraft({
+          ...state.editorCanvasDraft,
+          ...patch,
+          updatedAt: Date.now(),
+        }),
+      })),
+      resetEditorCanvasDraft: (sourceImageId = null) => set({
+        editorCanvasDraft: {
+          ...DEFAULT_IMAGE_EDITOR_CANVAS_DRAFT,
+          sourceImageId,
+          updatedAt: Date.now(),
+        },
+      }),
 
       // Settings
       settings: { ...DEFAULT_SETTINGS },
@@ -2059,6 +2153,7 @@ export async function initStore() {
   for (const t of tasks) {
     addTaskReferencedImageIds(referencedIds, t)
   }
+  addEditorCanvasDraftReferencedImageIds(referencedIds, state.editorCanvasDraft)
 
   // 只枚举 key 清理孤立图片，避免启动时把所有 4K 原图读进内存。
   const imageIds = await getAllImageIds()
@@ -2071,6 +2166,10 @@ export async function initStore() {
     }
   }
   scheduleThumbnailBackfill(referencedImageIds)
+  const editorSourceImageId = useStore.getState().editorCanvasDraft.sourceImageId
+  if (editorSourceImageId && !imageIds.includes(editorSourceImageId)) {
+    useStore.getState().resetEditorCanvasDraft()
+  }
 
   const restoredInputImages: InputImage[] = []
   for (const img of persistedInputImages) {
@@ -2217,10 +2316,41 @@ export async function initStore() {
   }
 }
 
+interface ExplicitTaskInput {
+  prompt: string
+  inputImages: InputImage[]
+  styleReferenceImage: InputImage | null
+  maskDraft: MaskDraft | null
+  params: TaskParams
+  category: NonNullable<TaskRecord['category']>
+  imageEditContext?: TaskImageEditContext
+}
+
+interface SubmitTaskOptions {
+  allowFullMask?: boolean
+  useCurrentApiProfileWhenReusedMissing?: boolean
+  explicitInput?: ExplicitTaskInput
+}
+
 /** 提交新任务 */
-export async function submitTask(options: { allowFullMask?: boolean; useCurrentApiProfileWhenReusedMissing?: boolean } = {}): Promise<boolean> {
-  const { settings, prompt, inputImages, styleReferenceImage, maskDraft, params, reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, pendingTaskCategory, showToast, setConfirmDialog, adminAccess, isAdminAuthenticated } =
-    useStore.getState()
+export async function submitTask(options: SubmitTaskOptions = {}): Promise<boolean> {
+  const state = useStore.getState()
+  const {
+    settings,
+    reusedTaskApiProfileId,
+    reusedTaskApiProfileName,
+    reusedTaskApiProfileMissing,
+    pendingTaskCategory,
+    showToast,
+    setConfirmDialog,
+    adminAccess,
+    isAdminAuthenticated,
+  } = state
+  const prompt = options.explicitInput?.prompt ?? state.prompt
+  const inputImages = options.explicitInput?.inputImages ?? state.inputImages
+  const styleReferenceImage = options.explicitInput ? options.explicitInput.styleReferenceImage : state.styleReferenceImage
+  const maskDraft = options.explicitInput ? options.explicitInput.maskDraft : state.maskDraft
+  const params = options.explicitInput?.params ?? state.params
 
   const normalizedSettings = normalizeSettings(settings)
   let activeProfile = applyGuestUnifiedApiUrl(getActiveApiProfile(settings), 'image', adminAccess, isAdminAuthenticated)
@@ -2272,7 +2402,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     showToast('请输入提示词', 'error')
     return false
   }
-  const category = resolvePendingTaskCategory(pendingTaskCategory, trimmedPrompt)
+  const category = options.explicitInput?.category ?? resolvePendingTaskCategory(pendingTaskCategory, trimmedPrompt)
   const motherPlanContext = category.aPlusPlanContext?.groupKind === 'continuous-canvas'
     ? category.aPlusPlanContext
     : null
@@ -2291,6 +2421,15 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     }
   }
 
+  const referenceImageUploadLimit = getReferenceImageUploadLimit(adminAccess)
+  if (inputImages.length > referenceImageUploadLimit) {
+    const guideHint = options.explicitInput?.imageEditContext?.visualGuideImageId
+      ? '；标注导引图额外占用一张输入图'
+      : ''
+    showToast(`实际输入图片不能超过 ${referenceImageUploadLimit} 张${guideHint}，请减少参考素材后再提交。`, 'error')
+    return false
+  }
+
   let orderedInputImages = inputImages
   let maskImageId: string | null = null
   let maskTargetImageId: string | null = null
@@ -2306,7 +2445,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
           confirmText: '继续提交',
           tone: 'warning',
           action: () => {
-            void submitTask({ allowFullMask: true })
+            void submitTask({ ...options, allowFullMask: true })
           },
         })
         return false
@@ -2324,9 +2463,11 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
   }
 
   if (styleReferenceImage && !orderedInputImages.some((img) => img.id === styleReferenceImage.id)) {
-    const referenceImageUploadLimit = getReferenceImageUploadLimit(adminAccess)
     if (orderedInputImages.length + 1 > referenceImageUploadLimit) {
-      showToast(`已选择风格参考图，实际参考图数量不能超过 ${referenceImageUploadLimit} 张；请删除一张产品参考图后再提交。`, 'error')
+      const guideHint = options.explicitInput?.imageEditContext?.visualGuideImageId
+        ? '标注导引图额外占用一张输入图；'
+        : ''
+      showToast(`已选择风格参考图，${guideHint}实际参考图数量不能超过 ${referenceImageUploadLimit} 张；请删除一张参考素材后再提交。`, 'error')
       return false
     }
     const dataUrl = styleReferenceImage.dataUrl || await ensureImageCached(styleReferenceImage.id)
@@ -2375,6 +2516,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     finishedAt: null,
     elapsed: null,
     category: taskCategory,
+    imageEditContext: options.explicitInput?.imageEditContext,
   }
 
   const latestTasks = useStore.getState().tasks
@@ -2385,7 +2527,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
   await putTask(task)
   useStore.getState().showToast('任务已提交', 'success')
 
-  if (settings.clearInputAfterSubmit) {
+  if (settings.clearInputAfterSubmit && !options.explicitInput) {
     useStore.getState().setPrompt('')
     useStore.getState().clearInputImages()
     useStore.getState().clearStyleReferenceImage()
@@ -2396,6 +2538,89 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
   // 异步调用 API
   executeTask(taskId)
   return true
+}
+
+export async function submitImageEditorTask(options: { allowFullMask?: boolean; useCurrentApiProfileWhenReusedMissing?: boolean } = {}): Promise<boolean> {
+  const state = useStore.getState()
+  const instruction = state.prompt.trim()
+  if (!instruction) {
+    state.showToast('请输入编辑要求', 'error')
+    return false
+  }
+
+  const sourceImageId = state.editorCanvasDraft.sourceImageId
+  const sourceImage = sourceImageId ? state.inputImages.find((image) => image.id === sourceImageId) : null
+  if (!sourceImageId || !sourceImage) {
+    state.showToast('请先选择一张输入图片作为当前编辑主图', 'error')
+    return false
+  }
+  if (state.maskDraft && state.maskDraft.targetImageId !== sourceImageId) {
+    state.showToast('当前遮罩不属于编辑主图，请重新绘制遮罩', 'error')
+    return false
+  }
+
+  const sourceDataUrl = sourceImage.dataUrl || await ensureImageCached(sourceImageId)
+  if (!sourceDataUrl) {
+    state.showToast('当前编辑主图已不存在，请重新选择', 'error')
+    return false
+  }
+  const referenceImages = state.inputImages.filter((image) => image.id !== sourceImageId)
+  const hasVisualGuide = state.editorCanvasDraft.annotations.length > 0
+  const hasStyleReference = Boolean(
+    state.styleReferenceImage &&
+    state.styleReferenceImage.id !== sourceImageId &&
+    !referenceImages.some((image) => image.id === state.styleReferenceImage?.id),
+  )
+  const actualInputCount = 1 + (hasVisualGuide ? 1 : 0) + referenceImages.length + (hasStyleReference ? 1 : 0)
+  const referenceImageUploadLimit = getReferenceImageUploadLimit(state.adminAccess)
+  if (actualInputCount > referenceImageUploadLimit) {
+    state.showToast(
+      `实际输入图片不能超过 ${referenceImageUploadLimit} 张${hasVisualGuide ? '；标注导引图额外占用一张输入图' : ''}，请减少参考素材后再提交。`,
+      'error',
+    )
+    return false
+  }
+
+  let visualGuide: InputImage | null = null
+  try {
+    if (hasVisualGuide) {
+      const guideDataUrl = await createImageEditorVisualGuideDataUrl(sourceDataUrl, state.editorCanvasDraft.annotations)
+      if (guideDataUrl) visualGuide = await createInputImageFromDataUrl(guideDataUrl, 'derived')
+    }
+    const orderedInputImages = [
+      { id: sourceImageId, dataUrl: sourceDataUrl },
+      ...(visualGuide ? [visualGuide] : []),
+      ...referenceImages,
+    ]
+    const submitted = await submitTask({
+      ...options,
+      explicitInput: {
+        prompt: buildImageEditPrompt({
+          instruction,
+          hasVisualGuide: Boolean(visualGuide),
+          referenceCount: referenceImages.length,
+          hasStyleReference,
+        }),
+        inputImages: orderedInputImages,
+        styleReferenceImage: hasStyleReference ? state.styleReferenceImage : null,
+        maskDraft: state.maskDraft,
+        params: state.params,
+        category: { workflow: 'image-edit' },
+        imageEditContext: {
+          sourceImageId,
+          visualGuideImageId: visualGuide?.id ?? null,
+          referenceImageIds: referenceImages.map((image) => image.id),
+          userInstruction: instruction,
+        },
+      },
+    })
+    if (!submitted && visualGuide) await deleteImageIfUnreferenced(visualGuide.id)
+    return submitted
+  } catch (error) {
+    if (visualGuide) await deleteImageIfUnreferenced(visualGuide.id)
+    state.showToast(error instanceof Error ? error.message : String(error), 'error')
+    return false
+  }
 }
 
 function getActiveAgentConversation(): AgentConversation {
@@ -2654,6 +2879,10 @@ function addTaskReferencedImageIds(target: Set<string>, task: TaskRecord) {
   if (task.derivation?.sourceImageId) target.add(task.derivation.sourceImageId)
 }
 
+function addEditorCanvasDraftReferencedImageIds(target: Set<string>, draft = useStore.getState().editorCanvasDraft) {
+  if (draft.sourceImageId) target.add(draft.sourceImageId)
+}
+
 async function deleteUnreferencedImageIds(imageIds: Iterable<string>) {
   const candidates = Array.from(new Set(Array.from(imageIds).filter(Boolean)))
   if (candidates.length === 0) return
@@ -2663,6 +2892,7 @@ async function deleteUnreferencedImageIds(imageIds: Iterable<string>) {
   for (const task of tasks) addTaskReferencedImageIds(stillUsed, task)
   addAgentReferencedImageIds(stillUsed)
   addInputDraftReferencedImageIds(stillUsed, galleryInputDraft)
+  addEditorCanvasDraftReferencedImageIds(stillUsed)
   for (const img of inputImages) stillUsed.add(img.id)
   if (styleReferenceImage) stillUsed.add(styleReferenceImage.id)
   addSettingsReferencedImageIds(stillUsed, useStore.getState().settings)
@@ -3916,7 +4146,7 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
     }
     const preparedPayload = await prepareReferenceImageAndMaskPayload(inputDataUrls, maskDataUrl)
     const apiInputDataUrls = options.referenceImageLimit && !maskDataUrl
-      ? limitReferenceImagesForRetry(preparedPayload.dataUrls, task.inputImageIds, task.category, options.referenceImageLimit)
+      ? limitReferenceImagesForRetry(preparedPayload.dataUrls, task.inputImageIds, task.category, options.referenceImageLimit, task.imageEditContext)
       : preparedPayload.dataUrls
     const apiMaskDataUrl = preparedPayload.maskDataUrl
     const result = await callImageApi({
@@ -4051,7 +4281,7 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
       useStore.getState().setDetailTaskId(taskId)
       useStore.getState().setConfirmDialog({
         title: '参考图数量受限',
-        message: `当前生图接口最多支持 ${referenceImageLimit} 张参考图，本次任务实际需要发送 ${latestTask.inputImageIds.length} 张。\n\n是否只上传前 ${referenceImageLimit} 张继续生图？如果本任务带风格参考图，会优先保留风格参考图，并使用前 ${Math.max(0, referenceImageLimit - 1)} 张产品参考图。\n\n取消后不会继续请求，你可以切换生图 API 中转站后再重试。`,
+        message: `当前生图接口最多支持 ${referenceImageLimit} 张参考图，本次任务实际需要发送 ${latestTask.inputImageIds.length} 张。${latestTask.imageEditContext?.visualGuideImageId ? '\n\n标注导引图额外占用一张输入图；继续时会优先保留主图和导引图。' : ''}\n\n是否只上传前 ${referenceImageLimit} 张继续生图？如果本任务带风格参考图，也会优先保留风格参考图。\n\n取消后不会继续请求，你可以切换生图 API 中转站后再重试。`,
         confirmText: `只传 ${referenceImageLimit} 张继续`,
         cancelText: '取消，不继续',
         tone: 'warning',
@@ -4393,11 +4623,18 @@ export async function retryTask(task: TaskRecord) {
     createdAt: Date.now(),
     finishedAt: null,
     elapsed: null,
-    category: createNextSubmitTaskCategory(task),
+    category: task.imageEditContext ? task.category ?? { workflow: 'image-edit' } : createNextSubmitTaskCategory(task),
+    imageEditContext: task.imageEditContext ? {
+      ...task.imageEditContext,
+      referenceImageIds: [...task.imageEditContext.referenceImageIds],
+    } : undefined,
   }
 
   const latestTasks = useStore.getState().tasks
   useStore.getState().setTasks([newTask, ...latestTasks])
+  if (useStore.getState().appPage === 'editor' && task.imageEditContext) {
+    useStore.getState().setEditorActiveTaskId(taskId)
+  }
   await putTask(newTask)
 
   executeTask(taskId)
@@ -4428,8 +4665,10 @@ export async function reuseConfig(task: TaskRecord) {
   // 恢复输入图片
   const imgs: InputImage[] = []
   const hiddenStyleReferenceImageId = task.category?.styleReferenceImageId?.trim()
+  const visualGuideImageId = task.imageEditContext?.visualGuideImageId ?? null
   let styleReferenceImage: InputImage | null = null
   for (const imgId of task.inputImageIds) {
+    if (imgId === visualGuideImageId) continue
     const dataUrl = await ensureImageCached(imgId)
     if (hiddenStyleReferenceImageId && imgId === hiddenStyleReferenceImageId) {
       if (dataUrl) styleReferenceImage = { id: imgId, dataUrl }
@@ -4445,7 +4684,7 @@ export async function reuseConfig(task: TaskRecord) {
   } else {
     clearStyleReferenceImage()
   }
-  setPrompt(task.prompt)
+  setPrompt(getTaskDisplayPrompt(task))
   setPendingTaskCategory({
     mode: 'next-submit',
     category: createNextSubmitTaskCategory(task),
@@ -4516,7 +4755,7 @@ export async function editOutputs(task: TaskRecord, selectedOutputImageId?: stri
 }
 
 export async function openImageEditor(imageId: string) {
-  const { showToast, setParams, setPendingTaskCategory, setAppPage, setEditorActiveImageId, setEditorActiveTaskId, clearStyleReferenceImage, clearMaskDraft } = useStore.getState()
+  const { showToast, setParams, setPendingTaskCategory, setAppPage, setEditorActiveImageId, setEditorActiveTaskId, resetEditorCanvasDraft, clearStyleReferenceImage, clearMaskDraft } = useStore.getState()
   const dataUrl = await ensureImageCached(imageId)
   if (!dataUrl) {
     showToast('鏃犳硶璇诲彇鍥剧墖锛岃绋嶅悗閲嶈瘯', 'error')
@@ -4535,6 +4774,7 @@ export async function openImageEditor(imageId: string) {
   setPendingTaskCategory(null)
   setEditorActiveImageId(imageId)
   setEditorActiveTaskId(null)
+  resetEditorCanvasDraft(imageId)
   setAppPage('editor')
   navigateToAppPage('editor')
   showToast('宸插湪鍥剧墖缂栬緫椤典腑鎵撳紑鍥剧墖', 'success')
@@ -4698,6 +4938,7 @@ export async function removeMultipleTasks(taskIds: string[]) {
   }
   addAgentReferencedImageIds(stillUsed)
   addInputDraftReferencedImageIds(stillUsed, galleryInputDraft)
+  addEditorCanvasDraftReferencedImageIds(stillUsed)
   for (const img of inputImages) stillUsed.add(img.id)
   if (styleReferenceImage) stillUsed.add(styleReferenceImage.id)
   addSettingsReferencedImageIds(stillUsed, useStore.getState().settings)
@@ -4742,6 +4983,7 @@ export async function removeTask(task: TaskRecord) {
   }
   addAgentReferencedImageIds(stillUsed)
   addInputDraftReferencedImageIds(stillUsed, galleryInputDraft)
+  addEditorCanvasDraftReferencedImageIds(stillUsed)
   for (const img of inputImages) stillUsed.add(img.id)
   if (styleReferenceImage) stillUsed.add(styleReferenceImage.id)
   addSettingsReferencedImageIds(stillUsed, useStore.getState().settings)
@@ -4768,7 +5010,7 @@ export interface ClearOptions {
 
 /** 清空数据 */
 export async function clearData(options: ClearOptions = { clearConfig: true, clearTasks: true }) {
-  const { setTasks, clearInputImages, clearMaskDraft, setSettings, setParams, showToast } = useStore.getState()
+  const { setTasks, clearInputImages, clearMaskDraft, resetEditorCanvasDraft, setSettings, setParams, showToast } = useStore.getState()
 
   if (options.clearTasks) {
     await dbClearTasks()
@@ -4786,6 +5028,7 @@ export async function clearData(options: ClearOptions = { clearConfig: true, cle
     })
     clearInputImages()
     clearMaskDraft()
+    resetEditorCanvasDraft()
   }
 
   if (options.clearConfig) {
@@ -5166,7 +5409,14 @@ export async function addTaskOutputsToInputImages(task: TaskRecord) {
 export async function createInputImageFromFile(file: File): Promise<InputImage | null> {
   if (!file.type.startsWith('image/')) return null
   const dataUrl = await fileToDataUrl(file)
-  const id = await storeImage(dataUrl, 'upload')
+  return createInputImageFromDataUrl(dataUrl, 'upload')
+}
+
+export async function createInputImageFromDataUrl(
+  dataUrl: string,
+  source: 'upload' | 'generated' | 'derived' | 'mask' | 'preset' | 'style-custom' = 'upload',
+): Promise<InputImage> {
+  const id = await storeImage(dataUrl, source)
   cacheImage(id, dataUrl)
   return { id, dataUrl }
 }

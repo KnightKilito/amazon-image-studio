@@ -10,7 +10,7 @@ import { copyImageSourceToClipboard, copyTextToClipboard, getClipboardFailureMes
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { downloadImageIds, downloadImageIdsAsZip } from '../lib/downloadImages'
-import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
+import { getTaskDisplayPrompt, isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { getAspectLabel, getTaskHistoryCategory, getWorkflowLabel } from '../lib/taskHistory'
 import { getAPlusUpscalePlan, type APlusUpscaleFormat } from '../lib/imageUpscaling'
 import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, LinkIcon, TrashIcon } from './icons'
@@ -228,6 +228,7 @@ export default function DetailModal() {
 
   const isAgentTask = task.sourceMode === 'agent' || Boolean(task.agentConversationId || task.agentRoundId)
   const showPendingPrompt = isAgentTaskPromptPending(task)
+  const displayPrompt = getTaskDisplayPrompt(task)
   const isAgentEditTool = task.status === 'done' && String(task.agentToolAction ?? '').toLowerCase() === 'edit'
   const showReferenceSection = allInputImageIds.length > 0 || isAgentEditTool
 
@@ -393,9 +394,9 @@ export default function DetailModal() {
   }
 
   const handleCopyPrompt = async () => {
-    if (!task.prompt) return
+    if (!displayPrompt) return
     try {
-      await copyTextToClipboard(task.prompt)
+      await copyTextToClipboard(displayPrompt)
       showToast('提示词已复制', 'success')
     } catch (err) {
       showToast(getClipboardFailureMessage('复制提示词失败', err), 'error')
@@ -870,7 +871,7 @@ export default function DetailModal() {
               <h3 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
                 输入内容
               </h3>
-              {task.prompt && !showPendingPrompt && (
+              {displayPrompt && !showPendingPrompt && (
                 <button
                   onClick={handleCopyPrompt}
                   className="p-1 rounded text-gray-400 hover:bg-gray-100 dark:text-gray-500 dark:hover:bg-white/[0.06] transition"
@@ -901,7 +902,7 @@ export default function DetailModal() {
               </div>
             ) : (
               <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed whitespace-pre-wrap mb-4">
-                {task.prompt || '(无提示词)'}
+                {displayPrompt || '(无提示词)'}
               </p>
             )}
             {showRevisedPrompt && currentRevisedPrompt && (

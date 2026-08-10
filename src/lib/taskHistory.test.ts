@@ -70,6 +70,29 @@ describe('task history categories', () => {
     expect(category.workflow).toBe('amazon-listing')
   })
 
+  it('classifies image-edit tasks and searches their original user instruction', () => {
+    const record = task({
+      prompt: '内部扩展提示词，不应作为历史卡片主文本',
+      category: { workflow: 'image-edit' },
+      imageEditContext: {
+        sourceImageId: 'source-image',
+        visualGuideImageId: 'guide-image',
+        referenceImageIds: [],
+        userInstruction: '把杯子改成海军蓝',
+      },
+    })
+
+    expect(getTaskHistoryCategory(record).workflow).toBe('image-edit')
+    expect(matchesTaskHistoryFilters(record, {
+      searchQuery: '海军蓝',
+      filterStatus: 'all',
+      filterFavorite: false,
+      filterProductTitle: '',
+      filterWorkflow: 'image-edit',
+      filterAspect: 'all',
+    })).toBe(true)
+  })
+
   it('keeps tasks without product title under the uncategorized product filter', () => {
     expect(matchesTaskHistoryFilters(task({
       prompt: 'A regular creative prompt',

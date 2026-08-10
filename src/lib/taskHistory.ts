@@ -1,4 +1,5 @@
 import type { HistoryAspectFilter, HistoryWorkflowFilter, TaskAspect, TaskRecord, TaskWorkflow } from '../types'
+import { getTaskDisplayPrompt } from './taskPromptDisplay'
 
 export const ALL_PRODUCT_FILTER = ''
 export const UNCATEGORIZED_PRODUCT_FILTER = '__uncategorized_product__'
@@ -113,6 +114,7 @@ export function getTaskAspect(task: TaskRecord): TaskAspect {
 
 function inferWorkflow(task: TaskRecord): TaskWorkflow {
   if (task.category?.workflow) return task.category.workflow
+  if (task.imageEditContext) return 'image-edit'
   if (task.sourceMode === 'agent' || task.agentConversationId || task.agentRoundId) return 'agent'
 
   const prompt = task.prompt || ''
@@ -126,12 +128,13 @@ function inferWorkflow(task: TaskRecord): TaskWorkflow {
 }
 
 export function getTaskHistoryCategory(task: TaskRecord): TaskHistoryCategory {
+  const displayPrompt = getTaskDisplayPrompt(task)
   const hasExplicitProductTitle = Boolean(
     task.category && Object.prototype.hasOwnProperty.call(task.category, 'productTitle'),
   )
   const explicitProductTitle = cleanInferredProductTitle(task.category?.productTitle ?? '')
   return {
-    productTitle: hasExplicitProductTitle ? explicitProductTitle : inferProductTitleFromPrompt(task.prompt || ''),
+    productTitle: hasExplicitProductTitle ? explicitProductTitle : inferProductTitleFromPrompt(displayPrompt || ''),
     workflow: inferWorkflow(task),
     aspect: getTaskAspect(task),
     amazonSlot: normalizeText(task.category?.amazonSlot ?? ''),
@@ -149,6 +152,8 @@ export function getWorkflowLabel(workflow: TaskWorkflow) {
       return 'Agent'
     case 'gallery':
       return '普通生图'
+    case 'image-edit':
+      return '图片编辑'
     default:
       return '未知来源'
   }
@@ -213,7 +218,7 @@ export function matchesTaskHistoryFilters(task: TaskRecord, filters: TaskHistory
   if (!query) return true
 
   const searchable = [
-    task.prompt,
+    getTaskDisplayPrompt(task),
     JSON.stringify(task.params),
     JSON.stringify(task.actualParams ?? {}),
     category.productTitle,

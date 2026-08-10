@@ -14,6 +14,7 @@ import { downloadImageIds } from '../lib/downloadImages'
 import type { APlusOutputConversionTarget } from '../store'
 import type { APlusSliceFormat } from '../lib/imageSlicing'
 import InputBar from './InputBar'
+import ImageAnnotationCanvas from './ImageAnnotationCanvas'
 import ImageSliceDialog from './ImageSliceDialog'
 import Select from './Select'
 import TaskGrid from './TaskGrid'
@@ -89,11 +90,17 @@ export default function ImageEditorWorkspace() {
   const adminAccess = useStore((s) => s.adminAccess)
   const editorActiveImageId = useStore((s) => s.editorActiveImageId)
   const editorActiveTaskId = useStore((s) => s.editorActiveTaskId)
+  const editorCanvasDraft = useStore((s) => s.editorCanvasDraft)
   const setEditorActiveImageId = useStore((s) => s.setEditorActiveImageId)
   const setEditorActiveTaskId = useStore((s) => s.setEditorActiveTaskId)
+  const setEditorCanvasDraft = useStore((s) => s.setEditorCanvasDraft)
   const addInputImage = useStore((s) => s.addInputImage)
+  const setInputImages = useStore((s) => s.setInputImages)
+  const maskDraft = useStore((s) => s.maskDraft)
+  const clearMaskDraft = useStore((s) => s.clearMaskDraft)
   const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
+  const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const showToast = useStore((s) => s.showToast)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -112,8 +119,10 @@ export default function ImageEditorWorkspace() {
   const outputImageIds = activeTask?.outputImages ?? []
   const currentImageId = editorActiveImageId ?? inputImages[0]?.id ?? styleReferenceImage?.id ?? outputImageIds[0] ?? null
   const currentInputImage = inputImages.find((image) => image.id === currentImageId)
+  const currentPreviewImage = currentInputImage
     ?? (styleReferenceImage?.id === currentImageId ? styleReferenceImage : undefined)
-  const currentSourceIsInput = Boolean(currentInputImage)
+  const mainSourceImageId = editorCanvasDraft.sourceImageId
+  const currentSourceIsInput = Boolean(currentInputImage && currentImageId === mainSourceImageId)
   const imageLimit = Math.max(1, adminAccess.referenceImageUploadLimit)
   const imageCount = inputImages.length + (styleReferenceImage ? 1 : 0)
   const canUpload = imageCount < imageLimit
@@ -129,7 +138,7 @@ export default function ImageEditorWorkspace() {
     }
 
     let cancelled = false
-    const nextSource = currentInputImage?.dataUrl
+    const nextSource = currentPreviewImage?.dataUrl
     void (nextSource ? Promise.resolve(nextSource) : ensureImageCached(currentImageId)).then(async (dataUrl) => {
       if (cancelled) return
       setPreviewSrc(dataUrl ?? '')
@@ -147,13 +156,19 @@ export default function ImageEditorWorkspace() {
     return () => {
       cancelled = true
     }
-  }, [currentImageId, currentInputImage?.dataUrl])
+  }, [currentImageId, currentPreviewImage?.dataUrl])
 
   useEffect(() => {
     if (!editorActiveImageId && inputImages[0]) {
       setEditorActiveImageId(inputImages[0].id)
     }
   }, [editorActiveImageId, inputImages, setEditorActiveImageId])
+
+  useEffect(() => {
+    if (!mainSourceImageId && inputImages[0]) {
+      setEditorCanvasDraft({ sourceImageId: inputImages[0].id, annotations: [] })
+    }
+  }, [inputImages, mainSourceImageId, setEditorCanvasDraft])
 
   useEffect(() => {
     if (!activeTask || activeTask.status !== 'done' || activeTask.outputImages.length === 0) return
@@ -179,6 +194,9 @@ export default function ImageEditorWorkspace() {
         if (!image) continue
         addInputImage(image)
         if (!editorActiveImageId) setEditorActiveImageId(image.id)
+        if (!useStore.getState().editorCanvasDraft.sourceImageId) {
+          useStore.getState().setEditorCanvasDraft({ sourceImageId: image.id, annotations: [] })
+        }
         inserted += 1
       } catch (error) {
         showToast(error instanceof Error ? error.message : '上传图片失败', 'error')
@@ -205,6 +223,32 @@ export default function ImageEditorWorkspace() {
       return
     }
     setMaskEditorImageId(currentImageId)
+  }
+
+  const applyMainSource = (imageId: string) => {
+    const nextSource = inputImages.find((image) => image.id === imageId)
+    if (!nextSource) return
+    const reordered = [nextSource, ...inputImages.filter((image) => image.id !== imageId)]
+    setInputImages(reordered)
+    if (maskDraft && maskDraft.targetImageId !== imageId) clearMaskDraft()
+    setEditorCanvasDraft({ sourceImageId: imageId, annotations: [] })
+    setEditorActiveImageId(imageId)
+  }
+
+  const handlePromoteInput = (imageId: string) => {
+    if (imageId === mainSourceImageId) return
+    if (editorCanvasDraft.annotations.length === 0) {
+      applyMainSource(imageId)
+      return
+    }
+    setConfirmDialog({
+      title: '切换当前编辑主图？',
+      message: '切换主图会清空当前画布标注；不匹配新主图的遮罩也会一并清除。',
+      confirmText: '切换主图',
+      cancelText: '取消',
+      tone: 'warning',
+      action: () => applyMainSource(imageId),
+    })
   }
 
   const handleLocalUpscale = async () => {
@@ -295,7 +339,7 @@ export default function ImageEditorWorkspace() {
                 key={image.id}
                 imageId={image.id}
                 dataUrl={image.dataUrl}
-                label={`输入 ${index + 1}`}
+                label={image.id === mainSourceImageId ? '当前主图' : `参考素材 ${index + 1}`}
                 active={currentImageId === image.id}
                 onClick={() => setEditorActiveImageId(image.id)}
               />
@@ -324,21 +368,33 @@ export default function ImageEditorWorkspace() {
           </div>
         </aside>
 
-        <section className="relative order-1 flex min-h-[42vh] min-w-0 items-center justify-center overflow-hidden rounded-2xl border border-gray-200/80 bg-[#eef1f5] p-3 shadow-sm dark:border-white/[0.08] dark:bg-gray-900/70 lg:order-2 lg:min-h-0 lg:p-6">
+        <section className="relative order-1 flex min-h-[42vh] min-w-0 items-center justify-center overflow-hidden rounded-2xl border border-gray-200/80 bg-[#eef1f5] shadow-sm dark:border-white/[0.08] dark:bg-gray-900/70 lg:order-2 lg:min-h-0">
           {previewSrc ? (
-            <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-xl bg-[radial-gradient(circle_at_center,_rgba(255,255,255,0.92),_rgba(226,230,237,0.85))] p-3 dark:bg-[radial-gradient(circle_at_center,_rgba(55,65,81,0.8),_rgba(17,24,39,0.9))] sm:p-6">
-              <img
+            <div className="flex h-full w-full items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,_rgba(255,255,255,0.92),_rgba(226,230,237,0.85))] dark:bg-[radial-gradient(circle_at_center,_rgba(55,65,81,0.8),_rgba(17,24,39,0.9))]">
+              <ImageAnnotationCanvas
+                imageId={currentImageId!}
+                annotationSourceImageId={mainSourceImageId}
                 src={previewSrc}
-                alt="当前编辑图片"
-                draggable={false}
-                data-image-id={currentImageId ?? undefined}
-                data-output-image-ids={outputImageIds.join(',')}
-                className="max-h-full max-w-full object-contain drop-shadow-xl"
+                annotations={currentImageId === mainSourceImageId ? editorCanvasDraft.annotations : []}
+                editable={currentImageId === mainSourceImageId && Boolean(currentInputImage)}
+                outputImageIds={outputImageIds}
+                onAnnotationsChange={(annotations) => setEditorCanvasDraft({ annotations })}
+                onDimensionsChange={setDimensions}
               />
               {dimensions.width > 0 && (
                 <span className="absolute bottom-5 left-5 rounded-lg bg-black/55 px-2 py-1 text-[11px] text-white">
                   {dimensions.width} × {dimensions.height}
                 </span>
+              )}
+              {currentImageId !== mainSourceImageId && (
+                <div className="absolute left-5 top-5 flex items-center gap-2 rounded-xl bg-black/60 p-1 pl-2 text-[11px] text-white shadow-lg backdrop-blur-sm">
+                  <span>素材预览 · 画布工具仅用于当前主图</span>
+                  {currentInputImage && (
+                    <button type="button" onClick={() => handlePromoteInput(currentInputImage.id)} className="rounded-lg bg-white/15 px-2 py-1 font-semibold transition hover:bg-white/25">
+                      设为当前主图
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           ) : (
@@ -393,7 +449,7 @@ export default function ImageEditorWorkspace() {
             <ToolButton onClick={handleOpenMask} disabled={!currentImageId || !currentSourceIsInput} title="在当前输入图片上绘制局部重绘遮罩">
               打开遮罩编辑
             </ToolButton>
-            <ToolButton onClick={() => { if (currentImageId) void openImageEditor(currentImageId) }} disabled={!currentImageId || currentSourceIsInput}>
+            <ToolButton onClick={() => { if (currentImageId) void openImageEditor(currentImageId) }} disabled={!currentImageId || Boolean(currentInputImage)}>
               将当前结果作为输入继续编辑
             </ToolButton>
             <div className="grid grid-cols-2 gap-2">

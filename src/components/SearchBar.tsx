@@ -133,6 +133,7 @@ export default function SearchBar() {
               { label: 'Listing 图', value: 'amazon-listing' },
               { label: 'A+ 图', value: 'amazon-aplus' },
               { label: '普通生图', value: 'gallery' },
+              { label: '图片编辑', value: 'image-edit' },
               { label: 'Agent', value: 'agent' },
             ]}
             className="px-3 py-2.5 rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-white/[0.06] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition"

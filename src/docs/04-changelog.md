@@ -2,18 +2,24 @@
 id: changelog
 title: 版本日志
 navTitle: 版本日志
-description: 当前版本 v0.2.2，以及根据 Git 提交历史整理的主要功能更新。
+description: 当前版本 v0.3.0，以及根据 Git 提交历史整理的主要功能更新。
 eyebrow: 发布记录
 icon: history
 order: 40
 tags:
-  - v0.2.2
+  - v0.3.0
   - 发布记录
   - 更新摘要
 ---
 
+## 当前版本：v0.3.0
 
-## 当前版本：v0.2.2
+发布日期：2026-08-10
+
+- 新增图片编辑页。
+- 生图和策划的配置分开。
+
+## v0.2.2
 
 发布日期：2026-08-05
 
@@ -52,3 +58,7 @@ tags:
 - 改善同源 API 代理、浏览器直连模式和策划接口的兼容降级。
 
 > 完整提交记录请查看仓库根目录的 `CHANGELOG.md`。
+
+
+
+> 本项目以 [MIT License](LICENSE) 发布，基于 [CookSleep/gpt_image_playground](https://github.com/CookSleep/gpt_image_playground) 和 [Ali-Aria/amazon-image-studio](https://github.com/Ali-Aria/amazon-image-studio) 修改。源码不包含任何 API Key、模型服务或免费调用额度。

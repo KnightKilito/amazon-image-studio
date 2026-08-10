@@ -71,6 +71,20 @@ vi.mock('./lib/api', () => ({
     revisedPrompts: [],
   })),
 }))
+vi.mock('./lib/canvasImage', async () => {
+  const actual = await vi.importActual<typeof import('./lib/canvasImage')>('./lib/canvasImage')
+  return {
+    ...actual,
+    validateMaskMatchesImage: vi.fn(async () => 'partial'),
+  }
+})
+vi.mock('./lib/imageEditorAnnotations', async () => {
+  const actual = await vi.importActual<typeof import('./lib/imageEditorAnnotations')>('./lib/imageEditorAnnotations')
+  return {
+    ...actual,
+    createImageEditorVisualGuideDataUrl: vi.fn(async () => 'data:image/png;base64,visual-guide'),
+  }
+})
 vi.mock('./lib/imageUpscaling', () => ({
   upscaleImageDataUrlForAPlus: vi.fn(async (dataUrl: string) => ({
     dataUrl: `${dataUrl}-upscaled`,
@@ -115,10 +129,12 @@ vi.mock('./lib/agentApi', () => ({
     }
   }),
 }))
-import { clearAmazonPlannerSessions, clearImages, clearTasks, getAllAmazonPlannerSessions, getImage, putAmazonPlannerSession, putImage } from './lib/db'
+import { clearAmazonPlannerSessions, clearImages, clearTasks, getAllAmazonPlannerSessions, getAllImages, getImage, putAmazonPlannerSession, putImage } from './lib/db'
 import { callImageApi } from './lib/api'
+import { createImageEditorVisualGuideDataUrl } from './lib/imageEditorAnnotations'
+import { getTaskDisplayPrompt } from './lib/taskPromptDisplay'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
-import { addTaskOutputsToInputImages, cleanStaleAgentInputDrafts, clearData, convertOutputToAPlusFormat, createAPlusBatchUpscaleTask, createAPlusSliceTaskFromImage, createAPlusUpscaleTaskFromImage, editOutputs, exportData, generatePlannerStyleReferenceImage, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, openImageEditor, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
+import { addTaskOutputsToInputImages, cleanStaleAgentInputDrafts, clearData, convertOutputToAPlusFormat, createAPlusBatchUpscaleTask, createAPlusSliceTaskFromImage, createAPlusUpscaleTaskFromImage, editOutputs, exportData, generatePlannerStyleReferenceImage, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, openImageEditor, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitImageEditorTask, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -310,11 +326,16 @@ describe('mask draft lifecycle in store actions', () => {
       actualParamsList: [],
       revisedPrompts: [],
     })
+    vi.mocked(createImageEditorVisualGuideDataUrl).mockReset()
+    vi.mocked(createImageEditorVisualGuideDataUrl).mockResolvedValue('data:image/png;base64,visual-guide')
     useStore.setState({
       settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key' },
       prompt: 'prompt',
       inputImages: [],
       styleReferenceImage: null,
+      editorCanvasDraft: { sourceImageId: null, annotations: [], updatedAt: 0 },
+      editorActiveImageId: null,
+      editorActiveTaskId: null,
       maskDraft: null,
       maskEditorImageId: null,
       params: { ...DEFAULT_PARAMS },
@@ -326,6 +347,7 @@ describe('mask draft lifecycle in store actions', () => {
       showSettings: false,
       toast: null,
       confirmDialog: null,
+      adminAccess: { ...useStore.getState().adminAccess, referenceImageUploadLimit: 16 },
       showToast: vi.fn(),
       setConfirmDialog: vi.fn(),
     })
@@ -384,6 +406,11 @@ describe('mask draft lifecycle in store actions', () => {
       appPage: 'home',
       editorActiveImageId: null,
       editorActiveTaskId: 'old-task',
+      editorCanvasDraft: {
+        sourceImageId: imageA.id,
+        annotations: [{ id: 'old-mark', kind: 'rectangle', color: '#ef4444', width: 0.0065, points: [{ x: 0.1, y: 0.1 }, { x: 0.3, y: 0.3 }] }],
+        updatedAt: 1,
+      },
       prompt: 'old prompt',
       inputImages: [imageA],
       styleReferenceImage: imageA,
@@ -401,12 +428,200 @@ describe('mask draft lifecycle in store actions', () => {
     expect(state.appPage).toBe('editor')
     expect(state.editorActiveImageId).toBe(imageB.id)
     expect(state.editorActiveTaskId).toBeNull()
+    expect(state.editorCanvasDraft.sourceImageId).toBe(imageB.id)
+    expect(state.editorCanvasDraft.annotations).toEqual([])
     expect(state.prompt).toBe('')
     expect(state.inputImages).toEqual([imageB])
     expect(state.styleReferenceImage).toBeNull()
     expect(state.maskDraft).toBeNull()
     expect(state.maskEditorImageId).toBeNull()
     expect(state.pendingTaskCategory).toBeNull()
+  })
+
+  it('submits annotated editor inputs in source, guide, reference, and style order', async () => {
+    const styleImage = { id: 'editor-style', dataUrl: 'data:image/png;base64,editor-style' }
+    await Promise.all([putImage(imageA), putImage(imageB), putImage(styleImage)])
+    useStore.setState({
+      appPage: 'editor',
+      prompt: '把箭头指向的产品改成蓝色',
+      inputImages: [imageA, imageB],
+      styleReferenceImage: styleImage,
+      editorCanvasDraft: {
+        sourceImageId: imageA.id,
+        annotations: [{ id: 'arrow-1', kind: 'arrow', color: '#ef4444', width: 0.0065, points: [{ x: 0.1, y: 0.1 }, { x: 0.7, y: 0.7 }] }],
+        updatedAt: 1,
+      },
+    })
+
+    expect(await submitImageEditorTask()).toBe(true)
+
+    const submittedTask = useStore.getState().tasks[0]
+    expect(submittedTask.category?.workflow).toBe('image-edit')
+    expect(submittedTask.inputImageIds[0]).toBe(imageA.id)
+    expect(submittedTask.inputImageIds[2]).toBe(imageB.id)
+    expect(submittedTask.inputImageIds[3]).toBe(styleImage.id)
+    expect(submittedTask.imageEditContext).toEqual({
+      sourceImageId: imageA.id,
+      visualGuideImageId: submittedTask.inputImageIds[1],
+      referenceImageIds: [imageB.id],
+      userInstruction: '把箭头指向的产品改成蓝色',
+    })
+    expect(submittedTask.prompt).toContain('图2是“视觉定位图”')
+    expect(submittedTask.prompt).toContain('图3是参考图1')
+    expect(submittedTask.prompt).toContain('图4是风格参考图')
+    expect(getTaskDisplayPrompt(submittedTask)).toBe('把箭头指向的产品改成蓝色')
+    expect(useStore.getState().editorActiveTaskId).toBe(submittedTask.id)
+
+    await waitForCondition(() => vi.mocked(callImageApi).mock.calls.length >= 1)
+    expect(vi.mocked(callImageApi).mock.calls[0]?.[0].inputImageDataUrls).toEqual([
+      imageA.dataUrl,
+      'data:image/png;base64,visual-guide',
+      imageB.dataUrl,
+      styleImage.dataUrl,
+    ])
+  })
+
+  it('submits editor input without creating a guide when annotations are empty', async () => {
+    await Promise.all([putImage(imageA), putImage(imageB)])
+    useStore.setState({
+      prompt: '只替换产品颜色',
+      inputImages: [imageA, imageB],
+      editorCanvasDraft: { sourceImageId: imageA.id, annotations: [], updatedAt: 1 },
+    })
+
+    expect(await submitImageEditorTask()).toBe(true)
+
+    const submittedTask = useStore.getState().tasks[0]
+    expect(createImageEditorVisualGuideDataUrl).not.toHaveBeenCalled()
+    expect(submittedTask.inputImageIds).toEqual([imageA.id, imageB.id])
+    expect(submittedTask.imageEditContext?.visualGuideImageId).toBeNull()
+    expect(submittedTask.prompt).not.toContain('视觉定位图')
+  })
+
+  it('keeps the masked editor source first when annotations are also present', async () => {
+    await Promise.all([putImage(imageA), putImage(imageB)])
+    useStore.setState({
+      prompt: '只重绘遮罩和方框共同指定的区域',
+      inputImages: [imageB, imageA],
+      editorCanvasDraft: {
+        sourceImageId: imageA.id,
+        annotations: [{ id: 'rect-1', kind: 'rectangle', color: '#2563eb', width: 0.0065, points: [{ x: 0.2, y: 0.2 }, { x: 0.6, y: 0.6 }] }],
+        updatedAt: 1,
+      },
+      maskDraft: {
+        targetImageId: imageA.id,
+        maskDataUrl: 'data:image/png;base64,editor-mask',
+        updatedAt: 1,
+      },
+    })
+
+    expect(await submitImageEditorTask()).toBe(true)
+
+    const submittedTask = useStore.getState().tasks[0]
+    expect(submittedTask.inputImageIds[0]).toBe(imageA.id)
+    expect(submittedTask.inputImageIds[1]).toBe(submittedTask.imageEditContext?.visualGuideImageId)
+    expect(submittedTask.inputImageIds[2]).toBe(imageB.id)
+    expect(submittedTask.maskTargetImageId).toBe(imageA.id)
+    expect(submittedTask.maskImageId).toBeTruthy()
+  })
+
+  it('counts a visual guide against the editor input limit before generating it', async () => {
+    await Promise.all([putImage(imageA), putImage(imageB)])
+    useStore.setState({
+      prompt: '编辑图片',
+      inputImages: [imageA, imageB],
+      editorCanvasDraft: {
+        sourceImageId: imageA.id,
+        annotations: [{ id: 'rect-limit', kind: 'rectangle', color: '#ef4444', width: 0.0065, points: [{ x: 0.1, y: 0.1 }, { x: 0.4, y: 0.4 }] }],
+        updatedAt: 1,
+      },
+      adminAccess: { ...useStore.getState().adminAccess, referenceImageUploadLimit: 2 },
+    })
+
+    expect(await submitImageEditorTask()).toBe(false)
+    expect(createImageEditorVisualGuideDataUrl).not.toHaveBeenCalled()
+    expect(useStore.getState().showToast).toHaveBeenCalledWith(expect.stringContaining('标注导引图额外占用一张输入图'), 'error')
+  })
+
+  it('deletes a transient guide when profile validation blocks task creation', async () => {
+    await clearImages()
+    await putImage(imageA)
+    const invalidProfile = createDefaultOpenAIProfile({ id: 'invalid-editor-profile', apiKey: '', apiMode: 'images' })
+    useStore.setState({
+      settings: normalizeSettings({ ...DEFAULT_SETTINGS, profiles: [invalidProfile], activeProfileId: invalidProfile.id }),
+      prompt: '编辑图片',
+      inputImages: [imageA],
+      editorCanvasDraft: {
+        sourceImageId: imageA.id,
+        annotations: [{ id: 'rect-cleanup', kind: 'rectangle', color: '#ef4444', width: 0.0065, points: [{ x: 0.1, y: 0.1 }, { x: 0.4, y: 0.4 }] }],
+        updatedAt: 1,
+      },
+    })
+
+    expect(await submitImageEditorTask()).toBe(false)
+    expect(useStore.getState().tasks).toHaveLength(0)
+    expect((await getAllImages()).some((image) => image.dataUrl === 'data:image/png;base64,visual-guide')).toBe(false)
+  })
+
+  it('preserves image-edit metadata and input references when retrying', async () => {
+    const failedTask = task({
+      prompt: '内部编辑提示词',
+      status: 'error',
+      inputImageIds: ['retry-source', 'retry-guide', 'retry-reference'],
+      category: { workflow: 'image-edit' },
+      imageEditContext: {
+        sourceImageId: 'retry-source',
+        visualGuideImageId: 'retry-guide',
+        referenceImageIds: ['retry-reference'],
+        userInstruction: '用户编辑要求',
+      },
+    })
+
+    await retryTask(failedTask)
+
+    const retriedTask = useStore.getState().tasks[0]
+    expect(retriedTask.inputImageIds).toEqual(failedTask.inputImageIds)
+    expect(retriedTask.category?.workflow).toBe('image-edit')
+    expect(retriedTask.imageEditContext).toEqual(failedTask.imageEditContext)
+    expect(retriedTask.imageEditContext).not.toBe(failedTask.imageEditContext)
+  })
+
+  it('keeps or drops the canvas draft on restart according to the existing persistence setting', () => {
+    const draft = {
+      sourceImageId: imageA.id,
+      annotations: [{ id: 'persisted-mark', kind: 'ellipse' as const, color: '#16a34a', width: 0.0065, points: [{ x: 0.2, y: 0.2 }, { x: 0.8, y: 0.8 }] }],
+      updatedAt: 12,
+    }
+    useStore.setState({
+      editorCanvasDraft: draft,
+      settings: { ...useStore.getState().settings, persistInputOnRestart: true },
+    })
+    expect(getPersistedState(useStore.getState()).editorCanvasDraft).toEqual(draft)
+
+    useStore.setState({ settings: { ...useStore.getState().settings, persistInputOnRestart: false } })
+    expect(getPersistedState(useStore.getState()).editorCanvasDraft).toEqual({ sourceImageId: null, annotations: [], updatedAt: 0 })
+  })
+
+  it('deletes a visual guide through the existing task reference cleanup', async () => {
+    const source = { id: 'cleanup-source', dataUrl: 'data:image/png;base64,cleanup-source' }
+    const guide = { id: 'cleanup-guide', dataUrl: 'data:image/png;base64,cleanup-guide' }
+    await Promise.all([putImage(source), putImage(guide)])
+    const editTask = task({
+      id: 'cleanup-image-edit-task',
+      inputImageIds: [source.id, guide.id],
+      category: { workflow: 'image-edit' },
+      imageEditContext: {
+        sourceImageId: source.id,
+        visualGuideImageId: guide.id,
+        referenceImageIds: [],
+        userInstruction: '清理测试',
+      },
+    })
+    useStore.setState({ tasks: [editTask], inputImages: [], editorCanvasDraft: { sourceImageId: null, annotations: [], updatedAt: 0 } })
+
+    await removeTask(editTask)
+
+    expect(await getImage(guide.id)).toBeUndefined()
   })
 
   it('creates a derived A+ upscale task from an uploaded editor image', async () => {

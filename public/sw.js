@@ -1,4 +1,4 @@
-const CACHE_NAME = 'amazon-image-studio-v0.2.2'
+const CACHE_NAME = 'amazon-image-studio-v0.3.0'
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './pwa-icon.svg']
 
 self.addEventListener('install', (event) => {

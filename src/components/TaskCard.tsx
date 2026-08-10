@@ -5,7 +5,7 @@ import { useStore, ensureImageThumbnailCached, subscribeImageThumbnail, updateTa
 import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_FAL_MODEL } from '../lib/apiProfiles'
-import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
+import { getTaskDisplayPrompt, isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { CodeIcon } from './icons'
 import ViewportTooltip from './ViewportTooltip'
 
@@ -341,6 +341,7 @@ export default function TaskCard({
   const nDisplay = getParamDisplay(task, 'n')
   const isAgentTask = task.sourceMode === 'agent' || Boolean(task.agentConversationId || task.agentRoundId)
   const showPendingPrompt = isAgentTaskPromptPending(task)
+  const displayPrompt = getTaskDisplayPrompt(task)
   const showN = !isAgentTask && (task.params.n > 1 || nDisplay.isMismatch)
 
   const defaultModelForProvider = task.apiProvider === 'fal' ? DEFAULT_FAL_MODEL : DEFAULT_IMAGES_MODEL
@@ -578,7 +579,7 @@ export default function TaskCard({
               </div>
             ) : (
               <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed line-clamp-3">
-                {task.prompt || '(无提示词)'}
+                {displayPrompt || '(无提示词)'}
               </p>
             )}
           </div>

@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState, useMemo, useLayoutEffect, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore, submitTask, submitAgentMessage, stopAgentResponse, addImageFromFile, createInputImageFromFile, deleteImageIfUnreferenced, updateTaskInStore, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds } from '../store'
+import { useStore, submitTask, submitImageEditorTask, submitAgentMessage, stopAgentResponse, addImageFromFile, createInputImageFromFile, deleteImageIfUnreferenced, updateTaskInStore, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds } from '../store'
 import { DEFAULT_PARAMS } from '../types'
 import { getActiveApiProfile, normalizeSettings } from '../lib/apiProfiles'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
@@ -630,10 +630,12 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
   const submitCurrentMode = useCallback(() => {
     if (appMode === 'agent') {
       void submitAgentMessage()
+    } else if (isEditorLayout) {
+      void submitImageEditorTask()
     } else {
       void submitTask()
     }
-  }, [appMode])
+  }, [appMode, isEditorLayout])
   const stopActiveAgentResponse = useCallback(() => {
     stopAgentResponse(activeAgentConversationId)
   }, [activeAgentConversationId])

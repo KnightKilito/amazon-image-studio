@@ -56,6 +56,33 @@ const DEFAULT_COPY_IMPORT_URL_OPTIONS = {
 
 type CopyImportUrlOptions = typeof DEFAULT_COPY_IMPORT_URL_OPTIONS
 
+function ApiKeyVisibilityButton({ visible, onToggle }: { visible: boolean, onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onToggle}
+      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-gray-400 transition-colors hover:text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 dark:hover:text-gray-200"
+      aria-label={visible ? '隐藏 API Key' : '显示 API Key'}
+      title={visible ? '隐藏 API Key' : '显示 API Key'}
+    >
+      {visible ? (
+        <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8z" />
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+      ) : (
+        <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+          <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+          <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+          <line x1="1" y1="1" x2="23" y2="23" />
+        </svg>
+      )}
+    </button>
+  )
+}
+
 function readCopyImportUrlOptions(): CopyImportUrlOptions {
   if (typeof window === 'undefined') return DEFAULT_COPY_IMPORT_URL_OPTIONS
 
@@ -310,7 +337,7 @@ export default function SettingsModal() {
   const [openProfileManageMenu, setOpenProfileManageMenu] = useState<ProfilePurpose | null>(null)
   const [timeoutInput, setTimeoutInput] = useState(String(getActiveApiProfile(settings).timeout))
   const [profileTimeoutInputs, setProfileTimeoutInputs] = useState<Record<string, string>>({})
-  const [showApiKey, setShowApiKey] = useState(false)
+  const [visibleApiKeyProfileIds, setVisibleApiKeyProfileIds] = useState<Set<string>>(() => new Set())
   const [showProfileMenu, setShowProfileMenu] = useState(false)
   const [profileMenuMaxHeight, setProfileMenuMaxHeight] = useState(DEFAULT_DROPDOWN_MAX_HEIGHT)
   const [showCustomProviderImport, setShowCustomProviderImport] = useState(false)
@@ -348,6 +375,15 @@ export default function SettingsModal() {
   const [showModelOptions, setShowModelOptions] = useState(false)
   const modelInputWrapRef = useRef<HTMLDivElement>(null)
 
+  const toggleApiKeyVisibility = (profileId: string) => {
+    setVisibleApiKeyProfileIds((current) => {
+      const next = new Set(current)
+      if (next.has(profileId)) next.delete(profileId)
+      else next.add(profileId)
+      return next
+    })
+  }
+
   useEffect(() => {
     if (activeTab === 'about') setActiveTab('api')
   }, [activeTab])
@@ -375,6 +411,8 @@ export default function SettingsModal() {
   const plannerConnectionProfile = plannerProfile && draft.plannerConnectionMode === 'reuse-image'
     ? { ...plannerProfile, baseUrl: imageProfile.baseUrl, apiKey: imageProfile.apiKey }
     : plannerProfile
+  const imageProfileValidation = validateApiProfile(imageProfile)
+  const plannerProfileValidation = plannerConnectionProfile ? validateApiProfile(plannerConnectionProfile) : '未选择配置'
   const activeProfile = draft.profiles.find((profile) => profile.id === editingProfileId)
     ?? (profilePurpose === 'planner' ? plannerProfile : imageProfile)
     ?? getActiveApiProfile(draft)
@@ -589,9 +627,12 @@ export default function SettingsModal() {
 
   const commitSettings = (nextDraft: AppSettings) => {
     const normalizedProfiles: ApiProfile[] = nextDraft.profiles.map((profile) => {
-      const normalizedBaseUrl = profile.provider === 'fal'
-        ? profile.baseUrl.trim().replace(/\/+$/, '') || DEFAULT_FAL_BASE_URL
-        : normalizeBaseUrl(profile.baseUrl.trim() || DEFAULT_SETTINGS.baseUrl)
+      const trimmedBaseUrl = profile.baseUrl.trim()
+      const normalizedBaseUrl = trimmedBaseUrl
+        ? profile.provider === 'fal'
+          ? trimmedBaseUrl.replace(/\/+$/, '')
+          : normalizeBaseUrl(trimmedBaseUrl)
+        : ''
       const defaultModel = profile.provider === 'fal' ? DEFAULT_FAL_MODEL : getDefaultModelForMode(profile.apiMode)
       return {
         ...profile,
@@ -649,9 +690,9 @@ export default function SettingsModal() {
     url.hash = ''
 
     if (profile.provider === 'openai') {
-      const baseUrl = profile.baseUrl.trim() || DEFAULT_SETTINGS.baseUrl
+      const baseUrl = profile.baseUrl.trim()
       const maskApiAddress = !canViewApiUrl || (options.useNewApiAddress && !options.includeApiKey)
-      url.searchParams.set('apiUrl', maskApiAddress ? '{address}' : normalizeBaseUrl(baseUrl))
+      url.searchParams.set('apiUrl', maskApiAddress ? '{address}' : baseUrl ? normalizeBaseUrl(baseUrl) : '')
       if (options.includeApiKey && profile.apiKey.trim()) {
         url.searchParams.set('apiKey', profile.apiKey.trim())
       } else if (!options.includeApiKey && options.useNewApiKey) {
@@ -961,15 +1002,27 @@ export default function SettingsModal() {
     const visibleApiUrl = unifiedUrl || apiUrl
     const urlLocked = Boolean(unifiedUrl) || isReusingImageConnection || !canEditApiUrl
     const profileValidation = validateApiProfile({ ...profile, baseUrl: apiUrl, apiKey })
+    const apiKeyVisible = visibleApiKeyProfileIds.has(profile.id)
 
     return (
       <div className="mt-4 space-y-3 border-t border-black/[0.06] pt-4 dark:border-white/[0.08]">
         <label className="block">
           <span className="mb-1.5 block text-xs font-medium text-gray-600 dark:text-gray-300">{isPlanner ? '策划接口' : '图片服务'}</span>
-          <div className="flex min-h-10 items-center justify-between rounded-xl bg-white/70 px-3 text-sm text-gray-700 dark:bg-gray-950/30 dark:text-gray-200">
-            <span>{isPlanner ? getApiModeLabel(profile.apiMode) : getApiProviderLabel(draft, profile.provider)}</span>
-            <span className="text-xs text-gray-400">{profile.provider === 'openai' ? 'OpenAI 兼容接口' : getApiProviderLabel(draft, profile.provider)}</span>
-          </div>
+          {isPlanner ? (
+            <div className="flex min-h-10 items-center justify-between rounded-xl bg-white/70 px-3 text-sm text-gray-700 dark:bg-gray-950/30 dark:text-gray-200">
+              <span>{getApiModeLabel(profile.apiMode)}</span>
+              <span className="text-xs text-gray-400">{profile.provider === 'openai' ? 'OpenAI 兼容接口' : getApiProviderLabel(draft, profile.provider)}</span>
+            </div>
+          ) : (
+            <Select
+              value={profile.provider}
+              onChange={(value) => handleProviderTypeChangeForProfile(profile, purpose, value)}
+              onReorder={handleProviderReorder}
+              options={providerOptions}
+              disabled={!canEditApiProvider && !canCreateCustomProvider}
+              className="w-full rounded-xl bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:ring-2 focus:ring-blue-200 dark:bg-gray-950/30 dark:text-gray-200 dark:focus:ring-blue-500/20"
+            />
+          )}
         </label>
 
         {canViewApiUrl && (
@@ -986,21 +1039,29 @@ export default function SettingsModal() {
           </label>
         )}
 
-        <label className="block">
+        <div className="block">
           <div className="mb-1.5 flex items-center justify-between">
             <span className="text-xs font-medium text-gray-600 dark:text-gray-300">API Key</span>
             {isReusingImageConnection && <span className="text-[11px] text-blue-600 dark:text-blue-300">复用图片配置</span>}
           </div>
-          <input
-            value={isReusingImageConnection ? '••••••••••••••••' : apiKey}
-            onChange={(event) => updateProfileById(profile.id, { apiKey: event.target.value })}
-            onBlur={(event) => updateProfileById(profile.id, { apiKey: event.target.value }, true)}
-            disabled={isReusingImageConnection}
-            type={showApiKey && !isReusingImageConnection ? 'text' : 'password'}
-            placeholder="sk-..."
-            className={`w-full rounded-xl bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:ring-2 focus:ring-blue-200 dark:bg-gray-950/30 dark:text-gray-200 dark:focus:ring-blue-500/20 ${isReusingImageConnection ? 'cursor-not-allowed opacity-60' : ''}`}
-          />
-        </label>
+          <div className="relative">
+            <input
+              value={isReusingImageConnection ? '••••••••••••••••' : apiKey}
+              onChange={(event) => updateProfileById(profile.id, { apiKey: event.target.value })}
+              onBlur={(event) => updateProfileById(profile.id, { apiKey: event.target.value }, true)}
+              disabled={isReusingImageConnection}
+              type={apiKeyVisible && !isReusingImageConnection ? 'text' : 'password'}
+              autoComplete="off"
+              spellCheck={false}
+              aria-label={`${isPlanner ? 'AI 策划' : '图片生成'} API Key`}
+              placeholder="sk-..."
+              className={`w-full select-text rounded-xl bg-white/70 px-3 py-2.5 pr-10 text-sm text-gray-700 outline-none transition focus:ring-2 focus:ring-blue-200 dark:bg-gray-950/30 dark:text-gray-200 dark:focus:ring-blue-500/20 ${isReusingImageConnection ? 'cursor-not-allowed opacity-60' : ''}`}
+            />
+            {!isReusingImageConnection && (
+              <ApiKeyVisibilityButton visible={apiKeyVisible} onToggle={() => toggleApiKeyVisibility(profile.id)} />
+            )}
+          </div>
+        </div>
 
         {isPlanner && profile.provider === 'openai' && (
           <label className="block">
@@ -1532,7 +1593,10 @@ export default function SettingsModal() {
     commitSettings(nextDraft)
   }
 
-  const handleProviderTypeChange = (value: string | number) => {
+  const handleProviderTypeChangeForProfile = (targetProfile: ApiProfile, purpose: ProfilePurpose, value: string | number) => {
+    setProfilePurpose(purpose)
+    setEditingProfileId(targetProfile.id)
+
     if (value === ADD_CUSTOM_PROVIDER_VALUE) {
       if (!canCreateCustomProvider) {
         showToast('游客暂不能创建自定义服务商', 'error')
@@ -1552,7 +1616,15 @@ export default function SettingsModal() {
 
     const provider = String(value) as ApiProfile['provider']
     const customProvider = draft.customProviders.find((item) => item.id === provider)
-    updateActiveProfile(switchApiProfileProvider(activeProfile, provider, customProvider), true)
+    const nextProfile = switchApiProfileProvider(targetProfile, provider, customProvider)
+    commitSettings({
+      ...draft,
+      profiles: draft.profiles.map((profile) => profile.id === targetProfile.id ? nextProfile : profile),
+    })
+  }
+
+  const handleProviderTypeChange = (value: string | number) => {
+    handleProviderTypeChangeForProfile(activeProfile, profilePurpose, value)
   }
 
   const updateCustomProviderForm = (patch: Partial<CustomProviderForm>) => {
@@ -2099,7 +2171,7 @@ export default function SettingsModal() {
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-sm font-semibold text-emerald-950 dark:text-emerald-100">图片生成</span>
-                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${imageProfile && validateApiProfile(imageProfile) ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-200' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200'}`}>{imageProfile && validateApiProfile(imageProfile) ? '缺少 API Key' : '已配置'}</span>
+                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${imageProfileValidation ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-200' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200'}`}>{imageProfileValidation ?? '已配置'}</span>
                         </div>
                         <p className="mt-0.5 text-xs text-emerald-800/70 dark:text-emerald-200/70">生成主图、A+ 图片和普通图片编辑时使用。</p>
                       </div>
@@ -2127,7 +2199,7 @@ export default function SettingsModal() {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-semibold text-blue-950 dark:text-blue-100">AI 策划</span>
-                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${plannerConnectionProfile && validateApiProfile(plannerConnectionProfile) ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-200' : 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-200'}`}>{plannerConnectionProfile && validateApiProfile(plannerConnectionProfile) ? '缺少 API Key' : '已配置'}</span>
+                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${plannerProfileValidation ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-200' : 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-200'}`}>{plannerProfileValidation ?? '已配置'}</span>
                       </div>
                       <p className="mt-0.5 text-xs text-blue-800/70 dark:text-blue-200/70">读取 Listing 和商品信息，生成主图与 A+ 图片方案。</p>
                     </div>
@@ -2290,30 +2362,16 @@ export default function SettingsModal() {
                     value={activeProfile.apiKey}
                     onChange={(e) => updateActiveProfile({ apiKey: e.target.value })}
                     onBlur={(e) => commitActiveProfilePatch({ apiKey: e.target.value })}
-                    type={showApiKey ? 'text' : 'password'}
+                    type={visibleApiKeyProfileIds.has(activeProfile.id) ? 'text' : 'password'}
+                    autoComplete="off"
+                    spellCheck={false}
                     placeholder={activeProfile.provider === 'fal' ? 'FAL_KEY' : 'sk-...'}
-                    className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 pr-10 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                    className="w-full select-text rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 pr-10 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowApiKey((v) => !v)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 transition-colors"
-                    tabIndex={-1}
-                  >
-                    {showApiKey ? (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                        <circle cx="12" cy="12" r="3" />
-                      </svg>
-                    ) : (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
-                        <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
-                        <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
-                        <line x1="1" y1="1" x2="23" y2="23" />
-                      </svg>
-                    )}
-                  </button>
+                  <ApiKeyVisibilityButton
+                    visible={visibleApiKeyProfileIds.has(activeProfile.id)}
+                    onToggle={() => toggleApiKeyVisibility(activeProfile.id)}
+                  />
                 </div>
                 <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
                   支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiKey=</code>

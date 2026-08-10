@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { initStore } from './store'
 import { useStore } from './store'
+import { getAppPageFromLocation } from './lib/appNavigation'
 import { buildSettingsFromUrlParams, clearUrlSettingParams, hasUrlSettingParams } from './lib/urlSettings'
 import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'
 import Header from './components/Header'
@@ -15,10 +16,13 @@ import ConfirmDialog from './components/ConfirmDialog'
 import Toast from './components/Toast'
 import MaskEditorModal from './components/MaskEditorModal'
 import ImageContextMenu from './components/ImageContextMenu'
+import ImageEditorWorkspace from './components/ImageEditorWorkspace'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
 
 export default function App() {
   const setSettings = useStore((s) => s.setSettings)
+  const appPage = useStore((s) => s.appPage)
+  const setAppPage = useStore((s) => s.setAppPage)
   useDockerApiUrlMigrationNotice()
   useGlobalClickSuppression()
 
@@ -42,6 +46,13 @@ export default function App() {
   }, [setSettings])
 
   useEffect(() => {
+    const syncPageFromLocation = () => setAppPage(getAppPageFromLocation())
+    syncPageFromLocation()
+    window.addEventListener('hashchange', syncPageFromLocation)
+    return () => window.removeEventListener('hashchange', syncPageFromLocation)
+  }, [setAppPage])
+
+  useEffect(() => {
     const preventPageImageDrag = (e: DragEvent) => {
       if ((e.target as HTMLElement | null)?.closest('img')) {
         e.preventDefault()
@@ -55,14 +66,20 @@ export default function App() {
   return (
     <>
       <Header />
-      <main data-home-main data-drag-select-surface className="home-main-with-dock pb-48 lg:pb-10">
-        <div className="safe-area-x max-w-7xl mx-auto lg:!px-6">
-          <AmazonPlanner />
-          <SearchBar />
-          <TaskGrid />
-        </div>
-      </main>
-      <InputBar />
+      {appPage === 'editor' ? (
+        <ImageEditorWorkspace />
+      ) : (
+        <>
+          <main data-home-main data-drag-select-surface className="home-main-with-dock pb-48 lg:pb-10">
+            <div className="safe-area-x max-w-7xl mx-auto lg:!px-6">
+              <AmazonPlanner />
+              <SearchBar />
+              <TaskGrid />
+            </div>
+          </main>
+          <InputBar />
+        </>
+      )}
       <DetailModal />
       <Lightbox />
       <SettingsModal />

@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { useStore } from '../store'
 import { useTooltip } from '../hooks/useTooltip'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
+import { navigateToAppPage } from '../lib/appNavigation'
 import { loginAdmin, readAdminToken, saveAdminSettingsAndLogout, saveAdminToken } from '../lib/adminApi'
 import ViewportTooltip from './ViewportTooltip'
 import { HelpCircleIcon, InstallIcon, SettingsIcon } from './icons'
@@ -330,6 +331,8 @@ export default function Header() {
   const setShowSettings = useStore((s) => s.setShowSettings)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const isAdminAuthenticated = useStore((s) => s.isAdminAuthenticated)
+  const appPage = useStore((s) => s.appPage)
+  const setAppPage = useStore((s) => s.setAppPage)
   const [showHelp, setShowHelp] = useState(false)
   const [showAdmin, setShowAdmin] = useState(false)
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
@@ -401,11 +404,39 @@ export default function Header() {
     <>
       <header data-no-drag-select className="safe-area-top fixed top-0 left-0 right-0 z-40 border-b border-gray-200 bg-white/80 backdrop-blur dark:border-white/[0.08] dark:bg-gray-950/80">
         <div className="safe-area-x safe-header-inner mx-auto flex max-w-7xl items-center justify-between">
-          <h1 className="min-w-0 pr-3">
+          <div className="flex min-w-0 items-center gap-3">
+          <h1 className="min-w-0 shrink-0 pr-1">
             <span className="text-[17px] font-bold tracking-tight text-gray-800 transition-colors hover:text-gray-600 dark:text-gray-100 dark:hover:text-gray-300 sm:text-lg">
               亚马逊图片工作台
             </span>
           </h1>
+          <nav aria-label="主导航" className="flex min-w-0 items-center gap-1 overflow-x-auto py-1">
+            {([
+              { page: 'home' as const, label: '首页' },
+              { page: 'editor' as const, label: '图片编辑' },
+            ]).map(({ page, label }) => {
+              const active = appPage === page
+              return (
+                <button
+                  key={page}
+                  type="button"
+                  data-app-page={page}
+                  aria-current={active ? 'page' : undefined}
+                  onClick={() => {
+                    setAppPage(page)
+                    navigateToAppPage(page)
+                  }}
+                  className={`shrink-0 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors sm:px-3.5 sm:text-sm ${active
+                    ? 'bg-gray-900 text-white shadow-sm dark:bg-white dark:text-gray-900'
+                    : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.06] dark:hover:text-gray-200'
+                    }`}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </nav>
+          </div>
           <div className="flex shrink-0 items-center gap-1">
             {!isPwaInstalled && (
               <div

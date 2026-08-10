@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import type { TaskRecord } from '../types'
-import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, convertOutputToAPlusFormat, createPremiumAPlusSliceTask, createAPlusUpscaleTask, createAPlusBatchUpscaleTask, getSuggestedAPlusOutputConversionSliceCount, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask } from '../store'
+import { useStore, getCachedImage, ensureImageCached, reuseConfig, openImageEditor, convertOutputToAPlusFormat, createPremiumAPlusSliceTask, createAPlusUpscaleTask, createAPlusBatchUpscaleTask, getSuggestedAPlusOutputConversionSliceCount, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { useTooltip } from '../hooks/useTooltip'
@@ -289,9 +289,11 @@ export default function DetailModal() {
     setDetailTaskId(null)
   }
 
-  const handleEdit = () => {
-    editOutputs(task, currentOutputImageId || undefined)
-    setDetailTaskId(null)
+  const handleEdit = async () => {
+    const imageId = currentOutputImageId || task.outputImages?.[0]
+    if (!imageId) return
+    const opened = await openImageEditor(imageId)
+    if (opened) setDetailTaskId(null)
   }
 
   const handleConvertToPremiumAPlus = async () => {

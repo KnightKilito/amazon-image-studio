@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback, useState, useMemo, useLayoutEffect, type ReactNode } from 'react'
+import { useRef, useEffect, useCallback, useState, useMemo, useLayoutEffect, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore, submitTask, submitAgentMessage, stopAgentResponse, addImageFromFile, createInputImageFromFile, deleteImageIfUnreferenced, updateTaskInStore, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds } from '../store'
 import { DEFAULT_PARAMS } from '../types'
@@ -387,7 +387,12 @@ function AtImageOptionThumb({ option }: { option: AtImageOption }) {
   )
 }
 
-export default function InputBar() {
+interface InputBarProps {
+  layout?: 'home' | 'editor'
+}
+
+export default function InputBar({ layout = 'home' }: InputBarProps) {
+  const isEditorLayout = layout === 'editor'
   const prompt = useStore((s) => s.prompt)
   const appMode = useStore((s) => s.appMode)
   const setPrompt = useStore((s) => s.setPrompt)
@@ -517,6 +522,8 @@ export default function InputBar() {
   const imagesRef = useRef<HTMLDivElement>(null)
   const paramsPanelRef = useRef<HTMLDivElement>(null)
   const prevHeightRef = useRef(42)
+  const editorPromptHeightRef = useRef(220)
+  const editorResizeRef = useRef<{ pointerId: number; startY: number; startHeight: number } | null>(null)
 
   const [isDragging, setIsDragging] = useState(false)
   const [isSingleLine, setIsSingleLine] = useState(true)
@@ -524,6 +531,8 @@ export default function InputBar() {
   const [attachHover, setAttachHover] = useState(false)
   const [imageHintId, setImageHintId] = useState<string | null>(null)
   const [mobileCollapsed, setMobileCollapsed] = useState(false)
+  const [editorPromptHeight, setEditorPromptHeight] = useState(220)
+  const [isEditorPromptResizing, setIsEditorPromptResizing] = useState(false)
   const [showSizePicker, setShowSizePicker] = useState(false)
   const [showMobileUploadMenu, setShowMobileUploadMenu] = useState(false)
   const [maskPreviewUrl, setMaskPreviewUrl] = useState('')
@@ -563,6 +572,7 @@ export default function InputBar() {
   }, [])
 
   useLayoutEffect(() => {
+    if (isEditorLayout) return
     const bar = cardRef.current?.closest<HTMLElement>('[data-input-bar]')
     if (!bar) return
 
@@ -583,7 +593,7 @@ export default function InputBar() {
       visualViewport?.removeEventListener('scroll', updateInputBarClearance)
       document.documentElement.style.removeProperty('--input-bar-clearance')
     }
-  }, [updateInputBarClearance])
+  }, [isEditorLayout, updateInputBarClearance])
   const imageHintTimerRef = useRef<number | null>(null)
   const [outputCompressionInput, setOutputCompressionInput] = useState(
     params.output_compression == null ? '' : String(params.output_compression),
@@ -1331,7 +1341,9 @@ export default function InputBar() {
     const minH = Math.max(42, placeholderH)
 
     const desired = Math.max(scrollH, minH)
-    const targetH = isDesktopDock ? maxH : desired > maxH ? maxH : desired
+    const targetH = isEditorLayout
+      ? editorPromptHeightRef.current
+      : isDesktopDock ? maxH : desired > maxH ? maxH : desired
 
     // 判断是否只有一行
     setIsSingleLine(desired <= minH)
@@ -1346,7 +1358,44 @@ export default function InputBar() {
     el.style.overflowY = desired > maxH ? 'auto' : 'hidden'
 
     prevHeightRef.current = targetH
-  }, [])
+  }, [isEditorLayout])
+
+  useEffect(() => {
+    if (!isEditorLayout) return
+    editorPromptHeightRef.current = editorPromptHeight
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = `${editorPromptHeight}px`
+    el.style.overflowY = 'auto'
+    prevHeightRef.current = editorPromptHeight
+  }, [editorPromptHeight, isEditorLayout])
+
+  const handleEditorPromptResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!isEditorLayout) return
+    event.preventDefault()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    editorResizeRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startHeight: editorPromptHeightRef.current,
+    }
+    setIsEditorPromptResizing(true)
+  }
+
+  const handleEditorPromptResizeMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const resize = editorResizeRef.current
+    if (!resize || resize.pointerId !== event.pointerId) return
+    const nextHeight = Math.min(560, Math.max(140, resize.startHeight + event.clientY - resize.startY))
+    editorPromptHeightRef.current = nextHeight
+    setEditorPromptHeight(nextHeight)
+  }
+
+  const handleEditorPromptResizeEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (editorResizeRef.current?.pointerId !== event.pointerId) return
+    editorResizeRef.current = null
+    setIsEditorPromptResizing(false)
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+  }
 
   // 将 prompt 同步渲染到 contentEditable（含胶囊 tag）
   useEffect(() => {
@@ -2140,8 +2189,10 @@ export default function InputBar() {
         />
       )}
 
-      <div data-input-bar className="home-input-dock pointer-events-none fixed bottom-4 left-1/2 z-30 w-full max-w-4xl -translate-x-1/2 px-3 transition-all duration-300 sm:bottom-6 sm:px-4 lg:bottom-6 lg:left-auto lg:top-20 lg:flex lg:max-w-none lg:translate-x-0 lg:flex-col lg:px-0">
-        {selectedTaskIds.length > 0 && (
+      <div data-input-bar className={isEditorLayout
+        ? 'pointer-events-auto h-full min-h-0 w-full'
+        : 'home-input-dock pointer-events-none fixed bottom-4 left-1/2 z-30 w-full max-w-4xl -translate-x-1/2 px-3 transition-all duration-300 sm:bottom-6 sm:px-4 lg:bottom-6 lg:left-auto lg:top-20 lg:flex lg:max-w-none lg:translate-x-0 lg:flex-col lg:px-0'}>
+        {!isEditorLayout && selectedTaskIds.length > 0 && (
           <div className="mb-3 flex justify-center lg:justify-end">
             <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-lg rounded-full flex items-center p-1 border border-gray-200/50 dark:border-white/10 pointer-events-auto">
               <button
@@ -2319,7 +2370,10 @@ export default function InputBar() {
                 syncMentionTagSelection(el)
               }}
               aria-label={promptPlaceholder}
-              className="col-start-1 row-start-1 min-h-[42px] w-full overflow-hidden ios-rounded-scroll-fix whitespace-pre-wrap break-words rounded-2xl border border-gray-200/60 bg-white/50 pl-4 pr-10 py-3 text-sm leading-relaxed shadow-sm outline-none transition-[border-color,box-shadow] duration-200 focus:ring-1 focus:ring-blue-300/40 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:focus:ring-blue-500/30 lg:h-full"
+              className={`col-start-1 row-start-1 w-full ios-rounded-scroll-fix whitespace-pre-wrap break-words rounded-2xl border border-gray-200/60 bg-white/50 pl-4 pr-10 py-3 text-sm leading-relaxed shadow-sm outline-none transition-[border-color,box-shadow] duration-200 focus:ring-1 focus:ring-blue-300/40 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:focus:ring-blue-500/30 ${isEditorLayout
+                ? 'min-h-[140px] max-h-[560px] overflow-y-auto'
+                : 'min-h-[42px] overflow-hidden lg:h-full'
+                }`}
             />
             {prompt.length === 0 && (
               <div className="prompt-placeholder col-start-1 row-start-1 pointer-events-none pl-4 pr-10 py-3 text-sm leading-relaxed text-gray-400 dark:text-gray-500">
@@ -2341,6 +2395,25 @@ export default function InputBar() {
           </div>
 
           {/* 参数 + 按钮 */}
+          {isEditorLayout && (
+            <div
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="调整提示词框高度"
+              title="拖动调整提示词框高度"
+              onPointerDown={handleEditorPromptResizeStart}
+              onPointerMove={handleEditorPromptResizeMove}
+              onPointerUp={handleEditorPromptResizeEnd}
+              onPointerCancel={handleEditorPromptResizeEnd}
+              className={`flex h-4 cursor-ns-resize touch-none select-none items-center justify-center rounded-lg transition-colors ${isEditorPromptResizing
+                ? 'bg-blue-50 dark:bg-blue-500/10'
+                : 'hover:bg-gray-100 dark:hover:bg-white/[0.05]'
+                }`}
+            >
+              <span className={`h-1 w-12 rounded-full transition-colors ${isEditorPromptResizing ? 'bg-blue-400' : 'bg-gray-300 dark:bg-white/20'}`} />
+            </div>
+          )}
+
           <div ref={paramsPanelRef} className="mt-3 lg:mt-auto">
             {/* 桌面端布局 */}
             <div className="hidden items-end justify-between gap-3 sm:flex lg:flex-col lg:items-stretch">

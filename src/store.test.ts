@@ -82,6 +82,18 @@ vi.mock('./lib/imageUpscaling', () => ({
     needsUpscale: true,
   })),
 }))
+vi.mock('./lib/imageSlicing', () => ({
+  sliceImageDataUrlVertically: vi.fn(async (_dataUrl: string, sliceCount: number, format: 'premium' | 'mobile') => ({
+    width: 120,
+    height: 240,
+    validation: null,
+    slices: Array.from({ length: sliceCount }, (_, index) => ({
+      dataUrl: `data:image/png;base64,${format}-slice-${index + 1}`,
+      width: 120,
+      height: 120,
+    })),
+  })),
+}))
 vi.mock('./lib/agentApi', () => ({
   callAgentConversationTitleApi: vi.fn(async () => '标题'),
   callAgentResponsesApi: vi.fn(() => new Promise(() => {})),
@@ -106,7 +118,7 @@ vi.mock('./lib/agentApi', () => ({
 import { clearAmazonPlannerSessions, clearImages, clearTasks, getAllAmazonPlannerSessions, getImage, putAmazonPlannerSession, putImage } from './lib/db'
 import { callImageApi } from './lib/api'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
-import { cleanStaleAgentInputDrafts, clearData, convertOutputToAPlusFormat, createAPlusBatchUpscaleTask, editOutputs, exportData, generatePlannerStyleReferenceImage, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
+import { addTaskOutputsToInputImages, cleanStaleAgentInputDrafts, clearData, convertOutputToAPlusFormat, createAPlusBatchUpscaleTask, createAPlusSliceTaskFromImage, createAPlusUpscaleTaskFromImage, editOutputs, exportData, generatePlannerStyleReferenceImage, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, openImageEditor, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -364,6 +376,91 @@ describe('mask draft lifecycle in store actions', () => {
     expect(state.params.quality).toBe('high')
     expect(state.params.output_format).toBe('png')
     expect(state.params.output_compression).toBeNull()
+  })
+
+  it('opens a source image in the editor and resets transient edit state', async () => {
+    await putImage(imageB)
+    useStore.setState({
+      appPage: 'home',
+      editorActiveImageId: null,
+      editorActiveTaskId: 'old-task',
+      prompt: 'old prompt',
+      inputImages: [imageA],
+      styleReferenceImage: imageA,
+      maskDraft: {
+        targetImageId: imageA.id,
+        maskDataUrl: 'data:image/png;base64,mask',
+        updatedAt: 1,
+      },
+      maskEditorImageId: imageA.id,
+    })
+
+    expect(await openImageEditor(imageB.id)).toBe(true)
+
+    const state = useStore.getState()
+    expect(state.appPage).toBe('editor')
+    expect(state.editorActiveImageId).toBe(imageB.id)
+    expect(state.editorActiveTaskId).toBeNull()
+    expect(state.prompt).toBe('')
+    expect(state.inputImages).toEqual([imageB])
+    expect(state.styleReferenceImage).toBeNull()
+    expect(state.maskDraft).toBeNull()
+    expect(state.maskEditorImageId).toBeNull()
+    expect(state.pendingTaskCategory).toBeNull()
+  })
+
+  it('creates a derived A+ upscale task from an uploaded editor image', async () => {
+    await putImage(imageB)
+    useStore.setState({ tasks: [], appPage: 'editor' })
+
+    const derivedTask = await createAPlusUpscaleTaskFromImage(imageB.id, 'mobile')
+
+    expect(derivedTask.inputImageIds).toEqual([imageB.id])
+    expect(derivedTask.outputImages).toHaveLength(1)
+    expect(derivedTask.params).toMatchObject({
+      size: '600x450',
+      output_format: 'png',
+      quality: 'high',
+      output_compression: null,
+    })
+    expect(derivedTask.category).toMatchObject({
+      workflow: 'amazon-aplus',
+      aPlusType: 'mobile',
+    })
+    expect(useStore.getState().tasks[0]?.id).toBe(derivedTask.id)
+  })
+
+  it('keeps the source image reference on a derived A+ slice task', async () => {
+    await putImage(imageB)
+    useStore.setState({ tasks: [], appPage: 'editor' })
+
+    const derivedTask = await createAPlusSliceTaskFromImage(imageB.id, 2, 'premium')
+
+    expect(derivedTask.inputImageIds).toEqual([imageB.id])
+    expect(derivedTask.derivation).toMatchObject({
+      type: 'premium-aplus-vertical-slices',
+      sourceImageId: imageB.id,
+      sliceCount: 2,
+    })
+    expect(useStore.getState().tasks[0]?.id).toBe(derivedTask.id)
+  })
+
+  it('adds every output image from a history task as editor material', async () => {
+    await putImage(imageA)
+    await putImage(imageB)
+    const previousAdminAccess = useStore.getState().adminAccess
+    useStore.setState({
+      inputImages: [],
+      styleReferenceImage: null,
+      adminAccess: { ...useStore.getState().adminAccess, referenceImageUploadLimit: 2 },
+    })
+
+    const result = await addTaskOutputsToInputImages(task({ outputImages: [imageA.id, imageB.id] }))
+
+    expect(result.addedImageIds).toEqual([imageA.id, imageB.id])
+    expect(result.skippedCount).toBe(0)
+    expect(useStore.getState().inputImages.map((image) => image.id)).toEqual([imageA.id, imageB.id])
+    useStore.setState({ adminAccess: previousAdminAccess })
   })
 
   it('clears an invalid mask draft when submit cannot find the mask target image', async () => {

@@ -13,6 +13,7 @@ interface Props {
   task: TaskRecord
   onReuse: () => void
   onEditOutputs: () => void
+  onUseAsMaterials?: () => void
   onDelete: () => void
   onClick: (e: React.MouseEvent | React.TouchEvent) => void
   isSelected?: boolean
@@ -83,6 +84,7 @@ export default function TaskCard({
   task,
   onReuse,
   onEditOutputs,
+  onUseAsMaterials,
   onDelete,
   onClick,
   isSelected,
@@ -736,6 +738,19 @@ export default function TaskCard({
                   />
                 </svg>
               </TaskActionButton>
+              {onUseAsMaterials && (
+                <TaskActionButton
+                  tooltip="将全部结果作为素材"
+                  onClick={onUseAsMaterials}
+                  className="p-1.5 rounded-md hover:bg-violet-50 dark:hover:bg-violet-950/30 text-gray-400 hover:text-violet-500 transition"
+                  disabled={!task.outputImages?.length}
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M7 7.5h10A2.5 2.5 0 0119.5 10v7A2.5 2.5 0 0117 19.5H7A2.5 2.5 0 014.5 17v-7A2.5 2.5 0 017 7.5Z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M7 4.5h8A2.5 2.5 0 0117.5 7M8 12h8M12 8v8" />
+                  </svg>
+                </TaskActionButton>
+              )}
               <TaskActionButton
                 tooltip="删除记录"
                 onClick={onDelete}

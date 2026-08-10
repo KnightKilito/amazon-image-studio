@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { useStore, addImageFromUrl, ensureImageCached } from '../store'
+import { useStore, addImageFromUrl, ensureImageCached, openImageEditor } from '../store'
 import { copyImageSourceToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { downloadImageIds, formatExportFileTime } from '../lib/downloadImages'
 import { suppressGlobalClicks } from '../lib/clickSuppression'
@@ -181,12 +181,32 @@ export default function ImageContextMenu() {
     }
   }
 
+  const handleOpenEditor = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const imageId = menuInfo.imageId
+    const src = menuInfo.src
+    setMenuInfo(null)
+    try {
+      if (imageId) {
+        await openImageEditor(imageId)
+        return
+      }
+      await addImageFromUrl(src)
+      const latestInputs = useStore.getState().inputImages
+      const latestInput = latestInputs[latestInputs.length - 1]
+      if (latestInput) await openImageEditor(latestInput.id)
+    } catch (err) {
+      console.error(err)
+      showToast(`无法打开图片编辑：${err instanceof Error ? err.message : String(err)}`, 'error')
+    }
+  }
+
   // 保证菜单在视口内
   let left = menuInfo.x
   let top = menuInfo.y
   const MENU_WIDTH = 120
   const showDownloadAll = menuInfo.outputImageIds.length > 1
-  const MENU_HEIGHT = showDownloadAll ? 160 : 128
+  const MENU_HEIGHT = showDownloadAll ? 196 : 164
 
   if (left + MENU_WIDTH > window.innerWidth) {
     left -= MENU_WIDTH
@@ -225,6 +245,13 @@ export default function ImageContextMenu() {
           下载全部
         </button>
       )}
+      <button
+        onClick={handleOpenEditor}
+        className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 flex items-center gap-2 transition-colors"
+      >
+        <EditIcon className="w-4 h-4 flex-shrink-0" />
+        图片编辑
+      </button>
       <button
         onClick={handleEdit}
         className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 flex items-center gap-2 transition-colors"

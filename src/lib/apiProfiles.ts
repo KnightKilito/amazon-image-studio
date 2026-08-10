@@ -13,6 +13,7 @@ import type {
   CustomProviderSubmitMapping,
   CustomProviderTemplate,
   ReferenceImageEditAction,
+  PlannerConnectionMode,
   StyleReferenceEditState,
 } from '../types'
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES } from '../types'
@@ -745,6 +746,7 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown, options
     ? record.activeProfileId
     : profiles[0].id
   const amazonPlannerProfileId = resolveAmazonPlannerProfileId(profiles, record.amazonPlannerProfileId)
+  const plannerConnectionMode: PlannerConnectionMode = record.plannerConnectionMode === 'reuse-image' ? 'reuse-image' : 'separate'
   const active = profiles.find((p) => p.id === activeProfileId) ?? profiles[0]
 
   return {
@@ -772,6 +774,7 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown, options
     profiles,
     activeProfileId,
     amazonPlannerProfileId,
+    plannerConnectionMode,
     customStyleReferences: normalizeCustomStyleReferences(record.customStyleReferences),
   }
 }
@@ -854,25 +857,44 @@ export function importCustomProviderDefinitionFromJson(jsonText: string, existin
 export function getActiveApiProfile(settings: Partial<AppSettings> | unknown): ApiProfile {
   const record = settings && typeof settings === 'object' ? settings as Record<string, unknown> : {}
   const normalized = normalizeSettings(settings)
-  const profile = normalized.profiles.find((p) => p.id === normalized.activeProfileId) ?? normalized.profiles[0] ?? createDefaultOpenAIProfile()
+  const requestedProfile = normalized.profiles.find((p) => p.id === normalized.activeProfileId)
+  const profile = (requestedProfile && canApiProfileGenerateImages(requestedProfile)
+    ? requestedProfile
+    : normalized.profiles.find((candidate) => canApiProfileGenerateImages(candidate)))
+    ?? requestedProfile
+    ?? normalized.profiles[0]
+    ?? createDefaultOpenAIProfile()
+  const useLegacyTopLevelFields = !Array.isArray(record.profiles) || record.activeProfileId === profile.id
 
   return {
     ...profile,
-    baseUrl: typeof record.baseUrl === 'string' ? record.baseUrl : profile.baseUrl,
-    apiKey: typeof record.apiKey === 'string' ? record.apiKey : profile.apiKey,
-    model: typeof record.model === 'string' && record.model.trim() ? record.model : profile.model,
-    timeout: typeof record.timeout === 'number' && Number.isFinite(record.timeout) ? record.timeout : profile.timeout,
-    apiMode: record.apiMode === 'images' || record.apiMode === 'responses' || record.apiMode === 'chat' ? record.apiMode : profile.apiMode,
-    codexCli: typeof record.codexCli === 'boolean' ? record.codexCli : profile.codexCli,
-    apiProxy: typeof record.apiProxy === 'boolean' ? record.apiProxy : profile.apiProxy,
-    streamImages: typeof record.streamImages === 'boolean' ? record.streamImages : profile.streamImages,
-    streamPartialImages: normalizeStreamPartialImages(record.streamPartialImages, profile.streamPartialImages),
+    baseUrl: useLegacyTopLevelFields && typeof record.baseUrl === 'string' ? record.baseUrl : profile.baseUrl,
+    apiKey: useLegacyTopLevelFields && typeof record.apiKey === 'string' ? record.apiKey : profile.apiKey,
+    model: useLegacyTopLevelFields && typeof record.model === 'string' && record.model.trim() ? record.model : profile.model,
+    timeout: useLegacyTopLevelFields && typeof record.timeout === 'number' && Number.isFinite(record.timeout) ? record.timeout : profile.timeout,
+    apiMode: useLegacyTopLevelFields && (record.apiMode === 'images' || record.apiMode === 'responses' || record.apiMode === 'chat') ? record.apiMode : profile.apiMode,
+    codexCli: useLegacyTopLevelFields && typeof record.codexCli === 'boolean' ? record.codexCli : profile.codexCli,
+    apiProxy: useLegacyTopLevelFields && typeof record.apiProxy === 'boolean' ? record.apiProxy : profile.apiProxy,
+    streamImages: useLegacyTopLevelFields && typeof record.streamImages === 'boolean' ? record.streamImages : profile.streamImages,
+    streamPartialImages: useLegacyTopLevelFields ? normalizeStreamPartialImages(record.streamPartialImages, profile.streamPartialImages) : profile.streamPartialImages,
   }
 }
 
 export function getAmazonPlannerProfile(settings: Partial<AppSettings> | unknown): ApiProfile | null {
   const normalized = normalizeSettings(settings)
-  return normalized.profiles.find((profile) => profile.id === normalized.amazonPlannerProfileId && isAmazonPlannerProfile(profile)) ?? null
+  const planner = normalized.profiles.find((profile) => profile.id === normalized.amazonPlannerProfileId && isAmazonPlannerProfile(profile))
+  if (!planner) return null
+  if (normalized.plannerConnectionMode !== 'reuse-image') return planner
+
+  const imageProfile = getActiveApiProfile(normalized)
+  return {
+    ...planner,
+    baseUrl: imageProfile.baseUrl,
+    apiKey: imageProfile.apiKey,
+    timeout: imageProfile.timeout,
+    apiProxy: imageProfile.apiProxy,
+    codexCli: imageProfile.codexCli,
+  }
 }
 
 export function validateApiProfile(profile: ApiProfile): string | null {
@@ -1087,4 +1109,5 @@ export const DEFAULT_SETTINGS: AppSettings = normalizeSettings({
   profiles: createDefaultProfilePair(),
   activeProfileId: DEFAULT_OPENAI_PROFILE_ID,
   amazonPlannerProfileId: DEFAULT_AMAZON_PLANNER_PROFILE_ID,
+  plannerConnectionMode: 'separate',
 })

@@ -1,7 +1,9 @@
 // ===== 设置 =====
 
 export type ApiMode = 'images' | 'responses' | 'chat'
+export type PlannerConnectionMode = 'separate' | 'reuse-image'
 export type AppMode = 'gallery' | 'agent'
+export type AppPage = 'home' | 'editor'
 export type TaskWorkflow = 'amazon-listing' | 'amazon-aplus' | 'gallery' | 'agent' | 'unknown'
 export type TaskAspect = 'square' | 'landscape' | 'portrait'
 export type HistoryWorkflowFilter = 'all' | TaskWorkflow
@@ -121,6 +123,7 @@ export interface AppSettings {
   profiles: ApiProfile[]
   activeProfileId: string
   amazonPlannerProfileId: string
+  plannerConnectionMode: PlannerConnectionMode
   customStyleReferences: CustomStyleReference[]
 }
 

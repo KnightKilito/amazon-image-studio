@@ -10,6 +10,7 @@ import type {
   ApiProfile,
   AppSettings,
   AppMode,
+  AppPage,
   HistoryAspectFilter,
   HistoryWorkflowFilter,
   TaskParams,
@@ -21,7 +22,7 @@ import type {
   ResponsesOutputItem,
 } from './types'
 import { AMAZON_GENERATION_DEFAULTS, DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_PARAMS, DEFAULT_REFERENCE_IMAGE_UPLOAD_LIMIT } from './types'
-import { canApiProfileGenerateImages, DEFAULT_SETTINGS, getActiveApiProfile, getCustomProviderDefinition, mergeImportedSettings, normalizeSettings, validateApiProfile } from './lib/apiProfiles'
+import { canApiProfileGenerateImages, DEFAULT_SETTINGS, getActiveApiProfile, getAmazonPlannerProfile, getCustomProviderDefinition, mergeImportedSettings, normalizeSettings, validateApiProfile } from './lib/apiProfiles'
 import { dismissAllTooltips } from './lib/tooltipDismiss'
 import { remapImageMentionsForOrder, replaceImageMentionsForApi } from './lib/promptImageMentions'
 import {
@@ -60,6 +61,7 @@ import { sliceImageDataUrlVertically, type APlusSliceFormat } from './lib/imageS
 import { upscaleImageDataUrlForAPlus, type APlusUpscaleFormat } from './lib/imageUpscaling'
 import { getMobileMotherImageSize, getPremiumMotherImageSize, MAX_PREMIUM_MOTHER_SLICES, MIN_PREMIUM_MOTHER_SLICES } from './lib/premiumAPlusLayout'
 import { fetchAdminSettings, readAdminToken, saveAdminSettings } from './lib/adminApi'
+import { navigateToAppPage } from './lib/appNavigation'
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 
 // ===== Image cache =====
@@ -757,6 +759,9 @@ export function mergePersistedState(persistedState: unknown, currentState: AppSt
     settings,
     params,
     appMode,
+    appPage: 'home',
+    editorActiveImageId: null,
+    editorActiveTaskId: null,
     galleryInputDraft: galleryInputDraft && !isEmptyAgentInputDraft(galleryInputDraft) ? galleryInputDraft : null,
     agentConversations,
     activeAgentConversationId,
@@ -805,6 +810,12 @@ interface AppState {
   // 模式
   appMode: AppMode
   setAppMode: (mode: AppMode) => void
+  appPage: AppPage
+  setAppPage: (page: AppPage) => void
+  editorActiveImageId: string | null
+  setEditorActiveImageId: (id: string | null) => void
+  editorActiveTaskId: string | null
+  setEditorActiveTaskId: (id: string | null) => void
 
   // 设置
   settings: AppSettings
@@ -1190,6 +1201,12 @@ export const useStore = create<AppState>()(
           ...(state.appMode === 'agent' ? restoreGalleryInputDraftState(galleryInputDraft) : {}),
         }))
       },
+      appPage: 'home',
+      setAppPage: (appPage) => set({ appPage }),
+      editorActiveImageId: null,
+      setEditorActiveImageId: (editorActiveImageId) => set({ editorActiveImageId }),
+      editorActiveTaskId: null,
+      setEditorActiveTaskId: (editorActiveTaskId) => set({ editorActiveTaskId }),
 
       // Settings
       settings: { ...DEFAULT_SETTINGS },
@@ -1763,7 +1780,7 @@ function createSettingsForApiProfile(settings: AppSettings, profile: ApiProfile)
     apiMode: profile.apiMode,
     codexCli: profile.codexCli,
     apiProxy: profile.apiProxy,
-    profiles: normalized.profiles.map((item) => item.id === profile.id ? profile : item),
+    profiles: [profile],
     activeProfileId: profile.id,
   })
 }
@@ -2362,6 +2379,9 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
 
   const latestTasks = useStore.getState().tasks
   useStore.getState().setTasks([task, ...latestTasks])
+  if (useStore.getState().appPage === 'editor') {
+    useStore.getState().setEditorActiveTaskId(taskId)
+  }
   await putTask(task)
   useStore.getState().showToast('任务已提交', 'success')
 
@@ -3012,9 +3032,9 @@ export async function submitAgentMessage() {
   const state = useStore.getState()
   const { settings, prompt, inputImages, maskDraft, params, showToast } = state
   const normalizedSettings = normalizeSettings(settings)
-  const activeProfile = getActiveApiProfile(normalizedSettings)
+  const activeProfile = getAmazonPlannerProfile(normalizedSettings)
 
-  if (activeProfile.provider !== 'openai' || activeProfile.apiMode !== 'responses') {
+  if (!activeProfile || activeProfile.provider !== 'openai' || activeProfile.apiMode !== 'responses') {
     state.setAppMode('agent')
     return
   }
@@ -3162,9 +3182,9 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
   const state = useStore.getState()
   const { settings, params, showToast } = state
   const normalizedSettings = normalizeSettings(settings)
-  const activeProfile = getActiveApiProfile(normalizedSettings)
+  const activeProfile = getAmazonPlannerProfile(normalizedSettings)
 
-  if (activeProfile.provider !== 'openai' || activeProfile.apiMode !== 'responses') {
+  if (!activeProfile || activeProfile.provider !== 'openai' || activeProfile.apiMode !== 'responses') {
     state.setAppMode('agent')
     return
   }
@@ -4169,7 +4189,7 @@ export async function createPremiumAPlusSliceTask(
       },
       actualParams: { size: sliceSize, output_format: 'png' },
       actualParamsByImage,
-      inputImageIds: [],
+      inputImageIds: [sourceImageId],
       maskTargetImageId: null,
       maskImageId: null,
       outputImages: storedSliceIds,
@@ -4208,6 +4228,38 @@ export async function createPremiumAPlusSliceTask(
 }
 
 /** 使用浏览器 Canvas 将 A+ 图片等比放大，并保存为新任务。 */
+function createEditorSourceTask(sourceImageId: string): TaskRecord {
+  const now = Date.now()
+  return {
+    id: `editor-source-${sourceImageId}`,
+    prompt: '',
+    params: { ...DEFAULT_PARAMS },
+    inputImageIds: [sourceImageId],
+    maskTargetImageId: null,
+    maskImageId: null,
+    outputImages: [sourceImageId],
+    status: 'done',
+    error: null,
+    createdAt: now,
+    finishedAt: now,
+    elapsed: 0,
+    category: { workflow: 'gallery' },
+  }
+}
+
+function findSourceTaskForImage(sourceImageId: string) {
+  return useStore.getState().tasks.find((task) => task.outputImages.includes(sourceImageId))
+    ?? createEditorSourceTask(sourceImageId)
+}
+
+export function createAPlusSliceTaskFromImage(
+  sourceImageId: string,
+  sliceCount: number,
+  format: APlusSliceFormat = 'premium',
+) {
+  return createPremiumAPlusSliceTask(findSourceTaskForImage(sourceImageId), sourceImageId, sliceCount, format)
+}
+
 export async function createAPlusUpscaleTask(
   sourceTask: TaskRecord,
   sourceImageId: string,
@@ -4217,6 +4269,13 @@ export async function createAPlusUpscaleTask(
 }
 
 /** 批量等比放大同一 A+ 任务中的输出图片，并保存到同一条新任务。 */
+export function createAPlusUpscaleTaskFromImage(
+  sourceImageId: string,
+  format: APlusUpscaleFormat,
+) {
+  return createAPlusUpscaleTask(findSourceTaskForImage(sourceImageId), sourceImageId, format)
+}
+
 export async function createAPlusBatchUpscaleTask(
   sourceTask: TaskRecord,
   sourceImageIds: string[],
@@ -4456,6 +4515,32 @@ export async function editOutputs(task: TaskRecord, selectedOutputImageId?: stri
   showToast('已准备编辑输出图', 'success')
 }
 
+export async function openImageEditor(imageId: string) {
+  const { showToast, setParams, setPendingTaskCategory, setAppPage, setEditorActiveImageId, setEditorActiveTaskId, clearStyleReferenceImage, clearMaskDraft } = useStore.getState()
+  const dataUrl = await ensureImageCached(imageId)
+  if (!dataUrl) {
+    showToast('鏃犳硶璇诲彇鍥剧墖锛岃绋嶅悗閲嶈瘯', 'error')
+    return false
+  }
+
+  useStore.setState((state) => syncActiveInputDraft(state, {
+    prompt: '',
+    inputImages: [{ id: imageId, dataUrl }],
+    maskDraft: null,
+    maskEditorImageId: null,
+  }))
+  clearStyleReferenceImage()
+  clearMaskDraft()
+  setParams(AMAZON_GENERATION_DEFAULTS)
+  setPendingTaskCategory(null)
+  setEditorActiveImageId(imageId)
+  setEditorActiveTaskId(null)
+  setAppPage('editor')
+  navigateToAppPage('editor')
+  showToast('宸插湪鍥剧墖缂栬緫椤典腑鎵撳紑鍥剧墖', 'success')
+  return true
+}
+
 export type APlusOutputConversionTarget = 'premium' | 'mobile'
 
 function getAPlusOutputConversionTargetLabel(target: APlusOutputConversionTarget) {
@@ -4565,6 +4650,25 @@ export async function convertOutputToAPlusFormat(
 }
 
 /** 删除多条任务 */
+export async function prepareAPlusConversionFromImage(
+  sourceImageId: string,
+  target: APlusOutputConversionTarget,
+  explicitSliceCount?: number,
+) {
+  const prepared = await convertOutputToAPlusFormat(
+    findSourceTaskForImage(sourceImageId),
+    sourceImageId,
+    target,
+    explicitSliceCount,
+  )
+  if (prepared) {
+    useStore.getState().setEditorActiveImageId(sourceImageId)
+    useStore.getState().setAppPage('editor')
+    navigateToAppPage('editor')
+  }
+  return prepared
+}
+
 export async function removeMultipleTasks(taskIds: string[]) {
   const { tasks, setTasks, inputImages, styleReferenceImage, galleryInputDraft, showToast, clearSelection, selectedTaskIds } = useStore.getState()
   
@@ -5026,6 +5130,37 @@ export async function addImageFromFile(file: File): Promise<void> {
   const image = await createInputImageFromFile(file)
   if (!image) return
   useStore.getState().addInputImage(image)
+}
+
+export async function addTaskOutputsToInputImages(task: TaskRecord) {
+  const state = useStore.getState()
+  const limit = getReferenceImageUploadLimit(state.adminAccess)
+  const existingIds = new Set([
+    ...state.inputImages.map((image) => image.id),
+    ...(state.styleReferenceImage ? [state.styleReferenceImage.id] : []),
+  ])
+  const outputImageIds = [...new Set(task.outputImages ?? [])]
+  const candidateImageIds = outputImageIds.filter((imageId) => !existingIds.has(imageId))
+  const available = Math.max(0, limit - existingIds.size)
+  const acceptedImageIds = candidateImageIds.slice(0, available)
+  const addedImageIds: string[] = []
+  const missingImageIds: string[] = []
+
+  for (const imageId of acceptedImageIds) {
+    const dataUrl = await ensureImageCached(imageId)
+    if (!dataUrl) {
+      missingImageIds.push(imageId)
+      continue
+    }
+    useStore.getState().addInputImage({ id: imageId, dataUrl })
+    addedImageIds.push(imageId)
+  }
+
+  return {
+    addedImageIds,
+    missingImageIds,
+    skippedCount: Math.max(0, candidateImageIds.length - acceptedImageIds.length),
+  }
 }
 
 export async function createInputImageFromFile(file: File): Promise<InputImage | null> {

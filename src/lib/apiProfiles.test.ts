@@ -11,6 +11,7 @@ import {
   createDefaultOpenAIProfile,
   createDefaultFalProfile,
   findEquivalentApiProfile,
+  getActiveApiProfile,
   getAmazonPlannerProfile,
   importCustomProviderDefinitionFromJson,
   importCustomProviderSettingsFromJson,
@@ -755,6 +756,39 @@ describe('custom providers', () => {
 })
 
 describe('amazon planner profile', () => {
+  it('keeps image generation on an image-capable profile when legacy active id points to planner', () => {
+    const settings = {
+      baseUrl: 'https://planner.example.com/v1',
+      apiKey: 'planner-key',
+      profiles: [
+        createDefaultOpenAIProfile({
+          id: 'image-profile',
+          baseUrl: 'https://images.example.com/v1',
+          apiKey: 'image-key',
+          apiMode: 'images',
+          model: DEFAULT_IMAGES_MODEL,
+        }),
+        createDefaultOpenAIProfile({
+          id: 'planner-profile',
+          baseUrl: 'https://planner.example.com/v1',
+          apiKey: 'planner-key',
+          apiMode: 'responses',
+          model: DEFAULT_RESPONSES_MODEL,
+        }),
+      ],
+      activeProfileId: 'planner-profile',
+      amazonPlannerProfileId: 'planner-profile',
+    }
+
+    expect(normalizeSettings(settings).activeProfileId).toBe('planner-profile')
+    expect(getActiveApiProfile(settings)).toMatchObject({
+      id: 'image-profile',
+      baseUrl: 'https://images.example.com/v1',
+      apiKey: 'image-key',
+      apiMode: 'images',
+    })
+  })
+
   it('auto-selects the first OpenAI Chat/Responses profile when none is configured', () => {
     const settings = normalizeSettings({
       profiles: [
@@ -825,6 +859,41 @@ describe('amazon planner profile', () => {
       id: 'planner-profile',
       apiKey: 'planner-key',
       model: 'deepseek-v4-flash',
+    })
+  })
+
+  it('reuses the current image connection for planner requests without changing the planner model', () => {
+    const settings = normalizeSettings({
+      plannerConnectionMode: 'reuse-image',
+      profiles: [
+        createDefaultOpenAIProfile({
+          id: 'image-profile',
+          baseUrl: 'https://images.example.com/v1',
+          apiKey: 'image-key',
+          apiMode: 'images',
+          model: DEFAULT_IMAGES_MODEL,
+        }),
+        createDefaultOpenAIProfile({
+          id: 'planner-profile',
+          baseUrl: 'https://planner.example.com/v1',
+          apiKey: 'planner-key',
+          apiMode: 'responses',
+          model: DEFAULT_RESPONSES_MODEL,
+        }),
+      ],
+      activeProfileId: 'image-profile',
+      amazonPlannerProfileId: 'planner-profile',
+    })
+
+    expect(getAmazonPlannerProfile(settings)).toMatchObject({
+      id: 'planner-profile',
+      baseUrl: 'https://images.example.com/v1',
+      apiKey: 'image-key',
+      timeout: settings.profiles[0].timeout,
+      apiProxy: settings.profiles[0].apiProxy,
+      codexCli: settings.profiles[0].codexCli,
+      apiMode: 'responses',
+      model: DEFAULT_RESPONSES_MODEL,
     })
   })
 })

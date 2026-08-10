@@ -1,10 +1,14 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
-import { useStore, reuseConfig, editOutputs, removeTask } from '../store'
+import { addTaskOutputsToInputImages, useStore, reuseConfig, openImageEditor, removeTask } from '../store'
 import { getFilteredTaskHistory, HISTORY_PAGE_SIZE_OPTIONS } from '../lib/taskHistory'
 import TaskCard from './TaskCard'
 import Pagination from './Pagination'
 
-export default function TaskGrid() {
+interface TaskGridProps {
+  showUseAsMaterialButton?: boolean
+}
+
+export default function TaskGrid({ showUseAsMaterialButton = false }: TaskGridProps) {
   const tasks = useStore((s) => s.tasks)
   const searchQuery = useStore((s) => s.searchQuery)
   const filterStatus = useStore((s) => s.filterStatus)
@@ -18,6 +22,7 @@ export default function TaskGrid() {
   const setHistoryPageSize = useStore((s) => s.setHistoryPageSize)
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
+  const showToast = useStore((s) => s.showToast)
   const selectedTaskIds = useStore((s) => s.selectedTaskIds)
   const setSelectedTaskIds = useStore((s) => s.setSelectedTaskIds)
   const clearSelection = useStore((s) => s.clearSelection)
@@ -74,6 +79,32 @@ export default function TaskGrid() {
       message: '确定要删除这条记录吗？关联的图片资源也会被清理（如果没有其他任务引用）。',
       action: () => removeTask(task),
     })
+  }
+
+  const handleUseAsMaterials = async (task: typeof tasks[0]) => {
+    try {
+      const result = await addTaskOutputsToInputImages(task)
+      if (result.addedImageIds.length === 0) {
+        showToast(
+          result.skippedCount > 0
+            ? '参考图数量已达上限，未能继续添加历史结果'
+            : result.missingImageIds.length > 0
+              ? '历史结果图片已不存在'
+              : '这些历史结果已经在素材中',
+          result.missingImageIds.length > 0 ? 'error' : 'info',
+        )
+        return
+      }
+
+      const suffix = result.skippedCount > 0
+        ? `，另有 ${result.skippedCount} 张受参考图上限限制`
+        : result.missingImageIds.length > 0
+          ? `，${result.missingImageIds.length} 张图片已不存在`
+          : ''
+      showToast(`已将 ${result.addedImageIds.length} 张历史结果加入素材${suffix}`, result.skippedCount > 0 ? 'info' : 'success')
+    } catch (error) {
+      showToast(`加入素材失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+    }
   }
 
   const getPagePoint = (clientX: number, clientY: number) => ({
@@ -330,7 +361,11 @@ export default function TaskGrid() {
                 setDetailTaskId(task.id)
               }}
               onReuse={() => reuseConfig(task)}
-              onEditOutputs={() => editOutputs(task)}
+              onEditOutputs={() => {
+                const imageId = task.outputImages?.[0]
+                if (imageId) void openImageEditor(imageId)
+              }}
+              onUseAsMaterials={showUseAsMaterialButton ? () => void handleUseAsMaterials(task) : undefined}
               onDelete={() => handleDelete(task)}
               isSelected={selectedTaskIds.includes(task.id)}
             />

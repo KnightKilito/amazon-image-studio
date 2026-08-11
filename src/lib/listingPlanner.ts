@@ -141,18 +141,23 @@ export function buildPremiumAPlusComposedModuleSpecs(
 
     if (group.kind === 'lifestyle-carousel') {
       const slideCount = group.slideCount ?? 3
+      const purposeLabel = getPremiumAPlusPurposeLabel(group.purpose)
+      const sharedCarouselObjective = `内容定位为“${purposeLabel}”，该定位优先于轮播展示形式。这是同一轮播组中的独立图片，需与组内其他图片保持产品身份、品牌视觉系统和图像语言一致。`
+      const carouselVariationObjective = group.purpose === 'lifestyle'
+        ? '围绕模特与场景定位保持人物和造型一致，同时变化姿态、场景、取景或使用时刻。'
+        : '围绕当前内容定位变化构图、证据重点、取景或信息层级。'
       for (let slideIndex = 0; slideIndex < slideCount; slideIndex += 1) {
         specs.push({
           contentType: 'premium',
           slot: `A+F${groupNumber}-C${String(slideIndex + 1).padStart(2, '0')}`,
-          label: `Lifestyle Carousel Slide ${slideIndex + 1}`,
-          displayLabel: `场景轮播 ${slideIndex + 1}`,
+          label: `Carousel Slide ${slideIndex + 1}`,
+          displayLabel: `轮播图 ${slideIndex + 1}`,
           moduleType: 'carousel-slide',
           uploadWidth: PREMIUM_A_PLUS_UPLOAD_SLICE_WIDTH,
           uploadHeight: PREMIUM_A_PLUS_UPLOAD_SLICE_HEIGHT,
           exactGenerationWidth: PREMIUM_A_PLUS_SLICE_WIDTH,
           exactGenerationHeight: PREMIUM_A_PLUS_SLICE_HEIGHT,
-          objective: `${objective} 这是同一轮播组的第 ${slideIndex + 1} 张，需与其他轮播图保持产品、人物和视觉系统一致，同时改变场景、姿态或取景。`,
+          objective: `${objective} ${sharedCarouselObjective} 当前为第 ${slideIndex + 1} 张。${carouselVariationObjective}`,
           planContext: {
             ...baseContext,
             itemIndex: slideIndex,
@@ -812,7 +817,7 @@ export function getAPlusModuleDisplayName(module: (Pick<AmazonAPlusPlan, 'slot' 
     case 'continuous-canvas':
       return '连续母图'
     case 'carousel-slide':
-      return '场景轮播图'
+      return '轮播图'
     case 'brand-story-background':
       return '品牌故事背景'
     case 'brand-story-card':

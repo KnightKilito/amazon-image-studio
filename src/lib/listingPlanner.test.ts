@@ -213,6 +213,39 @@ describe('Amazon prompt builders', () => {
 })
 
 describe('A+ module helpers', () => {
+  it('treats carousel as a neutral format and derives slide guidance from content positioning', () => {
+    const technicalSpecs = buildPremiumAPlusComposedModuleSpecs([{
+      id: 'technical-carousel',
+      kind: 'lifestyle-carousel',
+      purpose: 'technical-detail',
+      label: '轮播图',
+      objective: '解释产品功能、工艺和关键结构细节。',
+      customInstruction: '',
+      slideCount: 2,
+    }])
+    const lifestyleSpecs = buildPremiumAPlusComposedModuleSpecs([{
+      id: 'lifestyle-carousel',
+      kind: 'lifestyle-carousel',
+      purpose: 'lifestyle',
+      label: '轮播图',
+      objective: '建立目标人群的真实使用想象。',
+      customInstruction: '',
+      slideCount: 2,
+    }])
+
+    expect(technicalSpecs).toHaveLength(2)
+    expect(technicalSpecs[0]).toMatchObject({
+      label: 'Carousel Slide 1',
+      displayLabel: '轮播图 1',
+      moduleType: 'carousel-slide',
+    })
+    expect(technicalSpecs[0]?.objective).toContain('内容定位为“技术细节”，该定位优先于轮播展示形式')
+    expect(technicalSpecs[0]?.objective).toContain('围绕当前内容定位变化构图、证据重点、取景或信息层级')
+    expect(technicalSpecs[0]?.objective).not.toContain('人物和造型')
+    expect(lifestyleSpecs[0]?.objective).toContain('内容定位为“模特与场景”，该定位优先于轮播展示形式')
+    expect(lifestyleSpecs[0]?.objective).toContain('保持人物和造型一致，同时变化姿态、场景、取景或使用时刻')
+  })
+
   it('keeps a continuous group as one vertically stacked mother-image plan', () => {
     const specs = buildPremiumAPlusComposedModuleSpecs([{
       id: 'hero-story',
@@ -1449,6 +1482,49 @@ describe('callAmazonPlannerApi', () => {
     expect(body.instructions).toContain('Never ask the image model to crop, slice, split, resize, downscale, prepare uploads, or return multiple images')
     expect(body.instructions).toContain('Do not add planMarkdown sections such as “输出与裁切”')
     expect(body.instructions).not.toContain('final upload 1464x600 × 2片px')
+  })
+
+  it('sends carousel content positioning as the primary planner objective', async () => {
+    const composedSpecs = buildPremiumAPlusComposedModuleSpecs([{
+      id: 'technical-carousel',
+      kind: 'lifestyle-carousel',
+      purpose: 'technical-detail',
+      label: '轮播图',
+      objective: '优先解释产品结构、功能证据和工艺细节。',
+      customInstruction: '不要使用模特场景替代技术证据。',
+      slideCount: 2,
+    }])
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
+      output_text: JSON.stringify(createAPlusPayloadFromSpecs(composedSpecs, 'Technical carousel shoes', 'ExampleBrand')),
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: { ...DEFAULT_AMAZON_PROMPT_DRAFT, brand: 'ExampleBrand' },
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+      mode: 'aplus',
+      aPlusType: 'premium',
+      aPlusModuleSpecs: composedSpecs,
+      aPlusGenerationTier: '2K',
+    })
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
+    expect(body.instructions).toContain('A+F01-C01 Carousel Slide 1')
+    expect(body.instructions).toContain('primary content objective: 优先解释产品结构、功能证据和工艺细节。 不要使用模特场景替代技术证据。')
+    expect(body.instructions).toContain('Treat each module primary content objective as the semantic priority')
+    expect(body.instructions).toContain('Treat the carousel as a presentation format')
+    expect(body.instructions).not.toContain('Lifestyle Carousel Slide')
+    expect(body.instructions).not.toContain('palette, casting, and image language consistent')
+    expect(body.instructions).not.toContain('vary pose, crop, scene, or usage moment')
   })
 
   it('parses Mobile A+ output as five fixed 600x450 modules', async () => {

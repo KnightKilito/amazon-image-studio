@@ -61,7 +61,7 @@ export function createPremiumAPlusGroup(
   kind: PremiumAPlusGroupKind,
   overrides: Partial<PremiumAPlusLayoutGroup> = {},
 ): PremiumAPlusLayoutGroup {
-  const purpose = overrides.purpose ?? (kind === 'lifestyle-carousel' ? 'lifestyle' : 'auto')
+  const purpose = overrides.purpose ?? 'auto'
   return normalizePremiumAPlusGroup({
     id: overrides.id ?? `premium-group-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     kind,
@@ -156,7 +156,7 @@ export function getPremiumAPlusGroupKindLabel(kind: PremiumAPlusGroupKind) {
     case 'continuous-canvas':
       return '连续母图'
     case 'lifestyle-carousel':
-      return '模特场景轮播'
+      return '轮播图'
     default:
       return '独立大图'
   }

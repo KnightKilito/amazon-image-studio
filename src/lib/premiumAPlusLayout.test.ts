@@ -5,6 +5,7 @@ import {
   getPremiumAPlusGroupSlotCost,
   getPremiumAPlusSlotCount,
   getMobileMotherImageSize,
+  getPremiumAPlusGroupKindLabel,
   getPremiumMotherImageSize,
   normalizePremiumAPlusGroup,
 } from './premiumAPlusLayout'
@@ -41,6 +42,17 @@ describe('Premium A+ composed layout', () => {
 
     expect(groups.map(getPremiumAPlusGroupSlotCost)).toEqual([3, 1, 1])
     expect(getPremiumAPlusSlotCount(groups)).toBe(5)
+  })
+
+  it('creates new carousel groups as content-neutral presentation modules', () => {
+    const carousel = createPremiumAPlusGroup('lifestyle-carousel')
+
+    expect(carousel).toMatchObject({
+      purpose: 'auto',
+      label: '轮播图',
+      slideCount: 3,
+    })
+    expect(getPremiumAPlusGroupKindLabel('lifestyle-carousel')).toBe('轮播图')
   })
 
   it('keeps every built-in preset inside the seven-slot budget', () => {

@@ -190,7 +190,7 @@ export default function PremiumAPlusLayoutEditor({
         {([
           ['independent-image', '独立大图'],
           ['continuous-canvas', '连续母图'],
-          ['lifestyle-carousel', '场景轮播'],
+          ['lifestyle-carousel', '轮播图'],
         ] as const).map(([kind, label]) => {
           const minimumCost = kind === 'continuous-canvas' ? MIN_PREMIUM_MOTHER_SLICES : 1
           return (

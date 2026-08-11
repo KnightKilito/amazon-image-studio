@@ -691,10 +691,13 @@ function getAPlusPlannerTypeName(aPlusType: APlusContentType) {
 
 function formatAPlusPlannerModuleRequirement(spec: AmazonAPlusModuleSpec, generationTier: SizeTier) {
   const generationSize = getAPlusModuleGenerationSize(spec, generationTier)
+  const objectiveRequirement = spec.objective.trim()
+    ? `; primary content objective: ${spec.objective.trim()}`
+    : ''
   if (spec.planContext?.groupKind === 'continuous-canvas' && spec.planContext.sliceCount) {
-    return `${spec.slot} ${spec.label}, generate exactly one uninterrupted ${generationSize}px master canvas for a ${spec.planContext.sliceCount}-slot continuous layout; the website handles all later slicing, resizing, and upload preparation`
+    return `${spec.slot} ${spec.label}, generate exactly one uninterrupted ${generationSize}px master canvas for a ${spec.planContext.sliceCount}-slot continuous layout; the website handles all later slicing, resizing, and upload preparation${objectiveRequirement}`
   }
-  return `${spec.slot} ${spec.label}, generate ${generationSize}px, final upload ${getAPlusModuleUploadSize(spec)}px`
+  return `${spec.slot} ${spec.label}, generate ${generationSize}px, final upload ${getAPlusModuleUploadSize(spec)}px${objectiveRequirement}`
 }
 
 function buildAPlusPlannerInstructions(baseDraft: AmazonPromptDraft, aPlusType: APlusContentType, specs: AmazonAPlusModuleSpec[], visualStyleMode: AmazonVisualStyleMode, generationTier: SizeTier) {
@@ -711,7 +714,8 @@ function buildAPlusPlannerInstructions(baseDraft: AmazonPromptDraft, aPlusType: 
         'Require scene planes, architecture, floors, fabric, shadows, lighting, color fields, or other non-critical visual anchors to continue naturally across every safety boundary. Only keep faces, the exact product, complete copy blocks, logos, measurements, and critical details from crossing a boundary.',
         'The image prompt must request exactly one complete mother image. Never ask the image model to crop, slice, split, resize, downscale, prepare uploads, or return multiple images; the website owns all post-processing.',
         'Do not add planMarkdown sections such as “输出与裁切”, “裁切与上传”, or other cropping, resizing, and upload workflow instructions. Keep planMarkdown focused on creative direction, composition, product evidence, and on-image copy.',
-        'Carousel slide items belong to one carousel module. Keep product fidelity, campaign identity, palette, casting, and image language consistent, but vary pose, crop, scene, or usage moment across slides.',
+        'Treat each module primary content objective as the semantic priority. Module type describes presentation format and must not replace or override that objective.',
+        'Carousel slide items belong to one carousel module. Treat the carousel as a presentation format: keep product fidelity, campaign identity, palette, and image language consistent, while varying composition, product evidence, crop, or information hierarchy according to each slide primary content objective.',
         'Brand-story background and card items are product-specific. The background should use a model wearing the exact product as an optional side anchor and extend a quiet scene into safe card areas. Do not write generic brand copy that could apply to any product.',
       ].join(' ')
     : ''

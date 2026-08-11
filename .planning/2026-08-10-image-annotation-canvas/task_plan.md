@@ -16,6 +16,10 @@ Integrate the annotation canvas and visual-guide submission behavior from upstre
 - [complete] Add regression coverage and rerun targeted/full verification.
 - [complete] Restore the custom image-provider creation entry removed by the split settings cards.
 - [complete] Verify permissions, provider creation flow, tests, build, and diff integrity.
+- [complete] Diagnose and fix result-preview selection locking in the image editor.
+- [complete] Add selection regression coverage and rerun targeted/full verification.
+- [complete] Restore visible, per-pane configuration-name editing for image generation and AI planning.
+- [complete] Verify rename persistence, permissions, tests, build, and diff integrity.
 
 ## Decisions
 
@@ -42,6 +46,11 @@ Integrate the annotation canvas and visual-guide submission behavior from upstre
 - Custom-provider entry follow-up: full Vitest run passed 30 files / 337 tests.
 - Custom-provider entry follow-up: production build passed with only the existing Vite large-chunk warning.
 - Custom-provider entry follow-up: `git diff --check` passed with only normal LF-to-CRLF notices.
+- Result-selection follow-up: targeted selection tests passed 2/2.
+- Result-selection follow-up: full Vitest run passed 31 files / 339 tests.
+- Result-selection follow-up: production build and `git diff --check` passed; only existing chunk-size and normal LF-to-CRLF warnings remain.
+- Profile-name follow-up: targeted profile suite passed 36/36; full Vitest run passed 31 files / 339 tests.
+- Profile-name follow-up: production build and `git diff --check` passed; only existing chunk-size and normal LF-to-CRLF warnings remain.
 
 ## Errors Encountered
 

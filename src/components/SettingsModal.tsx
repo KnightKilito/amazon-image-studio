@@ -929,10 +929,6 @@ export default function SettingsModal() {
   
   const renameProfile = (purpose: ProfilePurpose, profile: ApiProfile | null) => {
     if (!profile) return
-    if (!canCreateApiProfile) {
-      showToast('游客暂不能修改服务商配置', 'error')
-      return
-    }
     const nextName = window.prompt('重命名配置', profile.name)?.trim()
     if (!nextName || nextName === profile.name) return
     setProfilePurpose(purpose)
@@ -967,7 +963,7 @@ export default function SettingsModal() {
               <PlusIcon className="h-4 w-4" />
               新建配置
             </button>
-            <button type="button" disabled={!profile || !canCreateApiProfile} onClick={() => { setOpenProfileManageMenu(null); renameProfile(purpose, profile) }} className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:hover:bg-white/[0.06]">
+            <button type="button" disabled={!profile} onClick={() => { setOpenProfileManageMenu(null); renameProfile(purpose, profile) }} className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:hover:bg-white/[0.06]">
               <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z" /></svg>
               重命名
             </button>
@@ -1006,6 +1002,22 @@ export default function SettingsModal() {
 
     return (
       <div className="mt-4 space-y-3 border-t border-black/[0.06] pt-4 dark:border-white/[0.08]">
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-medium text-gray-600 dark:text-gray-300">配置名称</span>
+          <input
+            value={profile.name}
+            onChange={(event) => updateProfileById(profile.id, { name: event.target.value })}
+            onBlur={(event) => updateProfileById(profile.id, { name: event.target.value }, true)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') event.currentTarget.blur()
+            }}
+            type="text"
+            autoComplete="off"
+            aria-label={`${isPlanner ? 'AI 策划' : '图片生成'}配置名称`}
+            className="w-full rounded-xl bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:ring-2 focus:ring-blue-200 dark:bg-gray-950/30 dark:text-gray-200 dark:focus:ring-blue-500/20"
+          />
+        </label>
+
         <label className="block">
           <span className="mb-1.5 block text-xs font-medium text-gray-600 dark:text-gray-300">{isPlanner ? '策划接口' : '图片服务'}</span>
           {isPlanner ? (

@@ -44,6 +44,14 @@
 - The existing provider change handler operates on the global expanded `activeProfile`; the split-card dropdown needs a target-aware handler so opening/creating a provider always modifies the image card's profile even if the planner profile was previously active.
 - The only remaining provider `Select` is inside a permanently disabled `{false && (...)}` legacy details block, explaining why the fully implemented custom-provider flow has no visible entry.
 - The visible image card can reuse the existing `providerOptions`, including provider edit/delete actions and drag reorder. Its disabled state must allow the Select when either provider switching or custom-provider creation is permitted.
+- Result-preview locking root cause: `ImageEditorWorkspace` has an effect whose dependency list includes `editorActiveImageId`; whenever a user clicks any main/reference/style thumbnail, that effect immediately sees a completed active task and writes the first output ID back into selection.
+- Auto-preview should run once per completed output set, not once per selection change. Tracking a completion signature (`task id + output IDs`) in a ref preserves the desired first-result auto-preview while allowing subsequent manual thumbnail selection.
+- The project has only lightweight React component tests and no installed DOM testing environment. The selection policy should therefore be extracted into a small pure helper for deterministic regression coverage, while the component uses a ref to remember the last auto-previewed completion signature.
+- Configuration renaming still exists only as `管理 -> 重命名`, but it is incorrectly gated by `canCreateApiProfile`; guest profile creation defaults to disabled, so the rename command is disabled even though ordinary profile fields such as Key/model remain editable.
+- The old hidden details block contains an unrestricted “配置名称” input. The split cards omitted this field, so restoring the same input inside `renderProfileBasics` for both image and planner panes matches prior behavior and makes renaming discoverable.
+- There is no separate “edit profile name” permission in `AdminAccessSettings`; creation permission should control creating/duplicating profiles, not renaming an existing local configuration.
+- Existing profile normalization/import tests already exercise preservation of custom profile names. This fix changes the editing surface and permission gate only; no persistence schema or normalization helper is needed.
+- Current component tests are server-render/static and `SettingsModal` portals only when open, so the proportional verification is TypeScript build plus existing profile/full suites and static source review of both pane invocations.
 
 ## Security boundary
 

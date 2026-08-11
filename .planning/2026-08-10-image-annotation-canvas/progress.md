@@ -31,3 +31,14 @@
 - Confirmed the custom-provider modal and permission logic still exist; only the split image card lost its provider dropdown/action. Chose to restore that dropdown with target-aware profile switching.
 - Restored the provider `Select` under the visible “图片服务” field, including the existing custom-provider action/edit/delete/reorder options, and added target-aware switching so it always updates the selected image profile.
 - Verified the restored flow with 30 files / 337 tests, a successful production build, and a clean diff check.
+
+## 2026-08-11
+
+- Started diagnosing the image-editor bug where an automatically selected result prevents switching back to other materials.
+- Located the lock in the completed-task auto-preview effect: it depends on and overwrites every manual `editorActiveImageId` change.
+- Changed result auto-preview to a once-per-completed-output-set policy and added pure regressions for initial completion, repeated selection, unfinished tasks, and changed outputs.
+- Verified the fix with 2 targeted tests, 31 files / 339 full tests, a successful production build, and a clean diff check.
+- Started a settings follow-up to restore clearly visible configuration-name editing in both API panes.
+- Confirmed the only visible rename command is wrongly tied to profile-creation permission, while the original unrestricted name input remains trapped in the hidden legacy block.
+- Added a visible configuration-name input to each split pane, saving on blur/Enter, and removed the incorrect create-profile permission gate from the management-menu rename command.
+- Verified profile-name editing with 36 targeted profile tests, 31 files / 339 full tests, a successful build, and a clean diff check.

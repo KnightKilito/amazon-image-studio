@@ -9,6 +9,7 @@ import {
   useStore,
 } from '../store'
 import { getImageDimensions } from '../lib/canvasImage'
+import { getPendingImageEditorResultAutoPreview } from '../lib/imageEditorSelection'
 import { getAPlusUpscalePlan, type APlusUpscaleFormat } from '../lib/imageUpscaling'
 import { downloadImageIds } from '../lib/downloadImages'
 import type { APlusOutputConversionTarget } from '../store'
@@ -104,6 +105,7 @@ export default function ImageEditorWorkspace() {
   const showToast = useStore((s) => s.showToast)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const lastAutoPreviewedResultSignatureRef = useRef<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [previewSrc, setPreviewSrc] = useState('')
   const [sliceFormat, setSliceFormat] = useState<APlusSliceFormat>('premium')
@@ -171,10 +173,14 @@ export default function ImageEditorWorkspace() {
   }, [inputImages, mainSourceImageId, setEditorCanvasDraft])
 
   useEffect(() => {
-    if (!activeTask || activeTask.status !== 'done' || activeTask.outputImages.length === 0) return
-    const firstOutputId = activeTask.outputImages[0]
-    if (editorActiveImageId !== firstOutputId) setEditorActiveImageId(firstOutputId)
-  }, [activeTask, editorActiveImageId, setEditorActiveImageId])
+    const pendingPreview = getPendingImageEditorResultAutoPreview(
+      activeTask,
+      lastAutoPreviewedResultSignatureRef.current,
+    )
+    if (!pendingPreview) return
+    lastAutoPreviewedResultSignatureRef.current = pendingPreview.signature
+    setEditorActiveImageId(pendingPreview.imageId)
+  }, [activeTask, setEditorActiveImageId])
 
   const uploadFiles = async (files: File[]) => {
     if (files.length === 0) return

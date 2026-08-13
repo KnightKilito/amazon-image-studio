@@ -50,7 +50,7 @@ export default function HelpModal({ onClose }: HelpModalProps) {
                 <BookOpenIcon className="h-5 w-5" />
               </span>
               <div className="min-w-0">
-                <div className="truncate text-sm font-bold text-gray-900 dark:text-gray-100">亚马逊图片工作台 · 使用文档</div>
+                <div className="truncate text-sm font-bold text-gray-900 dark:text-gray-100">亚马逊AI工作台 · 使用文档</div>
                 <div className="truncate text-xs text-gray-500 dark:text-gray-400">Markdown 自动生成导航与正文</div>
               </div>
             </div>

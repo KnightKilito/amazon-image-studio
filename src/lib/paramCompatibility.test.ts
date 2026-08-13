@@ -60,10 +60,11 @@ describe('parameter compatibility', () => {
     })
 
     expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, size: '1200x900' }, settings, { hasInputImages: true }).size).toBe('1200x900')
+    expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, size: '2400x1800' }, settings, { hasInputImages: true }).size).toBe('2400x1800')
     expect(normalizeParamsForSettings({ ...DEFAULT_PARAMS, size: '2928x1200' }, settings, { hasInputImages: true }).size).toBe('2928x1200')
   })
 
-  it('preserves tall Premium A+ sizes only for planned mother-image tasks', () => {
+  it('preserves tall Premium and Mobile A+ sizes only for planned mother-image tasks', () => {
     const openAIProfile = createDefaultOpenAIProfile({ apiKey: 'test-key' })
     const settings = normalizeSettings({
       ...DEFAULT_SETTINGS,
@@ -74,18 +75,23 @@ describe('parameter compatibility', () => {
     expect(normalizeParamsForSettings(
       { ...DEFAULT_PARAMS, size: '2928x2400' },
       settings,
-      { hasInputImages: true, preservePremiumMotherSize: true },
+      { hasInputImages: true, preserveAPlusMotherSize: true },
     ).size).toBe('2928x2400')
     expect(normalizeParamsForSettings(
       { ...DEFAULT_PARAMS, size: '2928x8400' },
       settings,
-      { hasInputImages: true, preservePremiumMotherSize: true },
+      { hasInputImages: true, preserveAPlusMotherSize: true },
     ).size).toBe('2928x8400')
     expect(normalizeParamsForSettings(
       { ...DEFAULT_PARAMS, size: '1200x6300' },
       settings,
-      { hasInputImages: true, preservePremiumMotherSize: true },
+      { hasInputImages: true, preserveAPlusMotherSize: true },
     ).size).toBe('1200x6300')
+    expect(normalizeParamsForSettings(
+      { ...DEFAULT_PARAMS, size: '2400x12600' },
+      settings,
+      { hasInputImages: true, preserveAPlusMotherSize: true },
+    ).size).toBe('2400x12600')
     expect(normalizeParamsForSettings(
       { ...DEFAULT_PARAMS, size: '2928x8400' },
       settings,

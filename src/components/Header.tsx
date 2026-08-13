@@ -404,15 +404,15 @@ export default function Header() {
     <>
       <header data-no-drag-select className="safe-area-top fixed top-0 left-0 right-0 z-40 border-b border-gray-200 bg-white/80 backdrop-blur dark:border-white/[0.08] dark:bg-gray-950/80">
         <div className="safe-area-x safe-header-inner mx-auto flex max-w-7xl items-center justify-between">
-          <div className="flex min-w-0 items-center gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-3">
           <h1 className="min-w-0 shrink-0 pr-1">
-            <span className="text-[17px] font-bold tracking-tight text-gray-800 transition-colors hover:text-gray-600 dark:text-gray-100 dark:hover:text-gray-300 sm:text-lg">
-              亚马逊图片工作台
-            </span>
+            <span className="text-sm font-bold tracking-tight text-gray-800 transition-colors hover:text-gray-600 dark:text-gray-100 dark:hover:text-gray-300 sm:hidden">亚马逊AI</span>
+            <span className="hidden text-lg font-bold tracking-tight text-gray-800 transition-colors hover:text-gray-600 dark:text-gray-100 dark:hover:text-gray-300 sm:inline">亚马逊AI工作台</span>
           </h1>
           <nav aria-label="主导航" className="flex min-w-0 items-center gap-1 overflow-x-auto py-1">
             {([
               { page: 'home' as const, label: '首页' },
+              { page: 'listing-copy' as const, label: 'Listing 文案' },
               { page: 'editor' as const, label: '图片编辑' },
             ]).map(({ page, label }) => {
               const active = appPage === page
@@ -426,7 +426,7 @@ export default function Header() {
                     setAppPage(page)
                     navigateToAppPage(page)
                   }}
-                  className={`shrink-0 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors sm:px-3.5 sm:text-sm ${active
+                  className={`shrink-0 rounded-xl px-2 py-1.5 text-[11px] font-semibold transition-colors sm:px-3.5 sm:text-sm ${active
                     ? 'bg-gray-900 text-white shadow-sm dark:bg-white dark:text-gray-900'
                     : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.06] dark:hover:text-gray-200'
                     }`}
@@ -440,7 +440,7 @@ export default function Header() {
           <div className="flex shrink-0 items-center gap-1">
             {!isPwaInstalled && (
               <div
-                className="relative"
+                className="relative hidden sm:block"
                 {...installTooltip.handlers}
               >
                 <button
@@ -459,7 +459,7 @@ export default function Header() {
               </div>
             )}
             <div
-              className="relative"
+              className="relative hidden md:block"
               {...helpTooltip.handlers}
             >
               <button
@@ -500,10 +500,11 @@ export default function Header() {
                   dismissAllTooltips()
                   setShowAdmin(true)
                 }}
-                className={`rounded-lg px-2.5 py-2 text-xs font-semibold transition-colors ${isAdminAuthenticated ? 'bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-400/10 dark:text-blue-300 dark:hover:bg-blue-400/15' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-900'}`}
+                className={`rounded-lg px-1.5 py-2 text-[11px] font-semibold transition-colors sm:px-2.5 sm:text-xs ${isAdminAuthenticated ? 'bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-400/10 dark:text-blue-300 dark:hover:bg-blue-400/15' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-900'}`}
                 aria-label="管理员登录"
               >
-                {isAdminAuthenticated ? '管理员' : '管理员登录'}
+                <span className="sm:hidden">管理</span>
+                <span className="hidden sm:inline">{isAdminAuthenticated ? '管理员' : '管理员登录'}</span>
               </button>
               <ViewportTooltip visible={adminTooltip.visible} className="whitespace-nowrap">
                 管理游客权限

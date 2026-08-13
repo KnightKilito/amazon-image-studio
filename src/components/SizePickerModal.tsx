@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { calculateImageSize, normalizeImageSize, parseRatio, type SizeTier } from '../lib/size'
-import { isAPlusMotherImageSize } from '../lib/premiumAPlusLayout'
+import { isAPlusMotherImageSize } from '../lib/aPlusLayout'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import ViewportTooltip from './ViewportTooltip'
 
@@ -95,7 +95,7 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
       if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
         const requestedSize = `${w}x${h}`
         return normalizeImageSize(requestedSize, {
-          preservePremiumMotherSize: isAPlusMotherImageSize(requestedSize),
+          preserveAPlusMotherSize: isAPlusMotherImageSize(requestedSize),
         })
       }
       return ''
@@ -117,7 +117,7 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
     return false
   }, [mode, ratio, customRatioClamped, customW, customH, previewSize])
   const sizeLimitText = isAPlusMotherImageSize(previewSize)
-    ? '当前尺寸来自高级 A+ 连续母图策划，将按原值提交。是否支持该纵向长图尺寸取决于当前服务商和模型。'
+    ? '当前尺寸来自 A+ 连续母图策划，将按原值提交。是否支持该纵向长图尺寸取决于当前服务商和模型。'
     : SIZE_LIMIT_TEXT
 
   const showHint = () => setHintVisible(true)

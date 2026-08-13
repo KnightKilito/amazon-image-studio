@@ -5,6 +5,7 @@ import type {
   AgentMessage,
   AgentRound,
   AmazonPlannerSession,
+  ListingCopySession,
   AdminAccessSettings,
   ApiMode,
   ApiProfile,
@@ -37,6 +38,9 @@ import {
   getAllAmazonPlannerSessions,
   putAmazonPlannerSession,
   clearAmazonPlannerSessions as dbClearAmazonPlannerSessions,
+  getAllListingCopySessions,
+  putListingCopySession,
+  clearListingCopySessions as dbClearListingCopySessions,
   getImage,
   getImageThumbnail,
   getStoredFreshImageThumbnail,
@@ -67,6 +71,7 @@ import { upscaleImageDataUrlForAPlus, type APlusUpscaleFormat } from './lib/imag
 import { getMobileMotherImageSize, getPremiumMotherImageSize, MAX_PREMIUM_MOTHER_SLICES, MIN_PREMIUM_MOTHER_SLICES } from './lib/premiumAPlusLayout'
 import { fetchAdminSettings, readAdminToken, saveAdminSettings } from './lib/adminApi'
 import { navigateToAppPage } from './lib/appNavigation'
+import { normalizeAmazonMarketplace } from './lib/amazonMarketplace'
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 
 // ===== Image cache =====
@@ -1041,6 +1046,8 @@ export async function deleteImageIfUnreferenced(imageId: string) {
   if (isImageReferencedByState(useStore.getState(), imageId)) return
   const plannerSessions = await getAllAmazonPlannerSessions()
   if (plannerSessions.some((session) => collectAmazonPlannerSessionImageIds(session).includes(imageId))) return
+  const listingCopySessions = await getAllListingCopySessions()
+  if (listingCopySessions.some((session) => session.referenceImageIds?.includes(imageId))) return
   try {
     await deleteImage(imageId)
   } catch {
@@ -2100,9 +2107,10 @@ async function recoverFalTask(taskId: string) {
 
 /** 初始化：从 IndexedDB 加载任务，按需恢复输入图片，并清理孤立图片 */
 export async function initStore() {
-  const [storedTasks, plannerSessions] = await Promise.all([
+  const [storedTasks, plannerSessions, listingCopySessions] = await Promise.all([
     getAllTasks(),
     getAllAmazonPlannerSessions(),
+    getAllListingCopySessions(),
   ])
   const { tasks, interruptedTasks } = markInterruptedOpenAIRunningTasks(storedTasks)
   await Promise.all(interruptedTasks.map((task) => putTask(task)))
@@ -2135,6 +2143,7 @@ export async function initStore() {
   const agentInputDrafts = state.agentInputDrafts
   addSettingsReferencedImageIds(referencedIds, state.settings)
   addAmazonPlannerSessionReferencedImageIds(referencedIds, plannerSessions)
+  addListingCopySessionReferencedImageIds(referencedIds, listingCopySessions)
   for (const img of persistedInputImages) referencedIds.add(img.id)
   if (styleReferenceImage) referencedIds.add(styleReferenceImage.id)
   if (galleryInputDraft) {
@@ -2489,7 +2498,7 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<boole
 
   const normalizedParams = normalizeParamsForSettings(params, requestSettings, {
     hasInputImages: orderedInputImages.length > 0,
-    preservePremiumMotherSize: Boolean(motherPlanContext),
+    preserveAPlusMotherSize: Boolean(motherPlanContext),
   })
   const normalizedParamPatch = getChangedParams(params, normalizedParams)
   if (Object.keys(normalizedParamPatch).length) {
@@ -2898,6 +2907,8 @@ async function deleteUnreferencedImageIds(imageIds: Iterable<string>) {
   addSettingsReferencedImageIds(stillUsed, useStore.getState().settings)
   const plannerSessions = await getAllAmazonPlannerSessions()
   addAmazonPlannerSessionReferencedImageIds(stillUsed, plannerSessions)
+  const listingCopySessions = await getAllListingCopySessions()
+  addListingCopySessionReferencedImageIds(stillUsed, listingCopySessions)
 
   for (const imgId of candidates) {
     if (stillUsed.has(imgId)) continue
@@ -4602,7 +4613,7 @@ export async function retryTask(task: TaskRecord) {
   const requestSettings = createSettingsForApiProfile(settings, activeProfile)
   const normalizedParams = normalizeParamsForSettings(task.params, requestSettings, {
     hasInputImages: task.inputImageIds.length > 0,
-    preservePremiumMotherSize: !task.derivation && task.category?.aPlusPlanContext?.groupKind === 'continuous-canvas',
+    preserveAPlusMotherSize: !task.derivation && task.category?.aPlusPlanContext?.groupKind === 'continuous-canvas',
   })
   const taskId = genId()
   const newTask: TaskRecord = {
@@ -4653,7 +4664,7 @@ export async function reuseConfig(task: TaskRecord) {
 
   setParams(normalizeParamsForSettings(task.params, paramsSettings, {
     hasInputImages: task.inputImageIds.length > 0,
-    preservePremiumMotherSize: !task.derivation && task.category?.aPlusPlanContext?.groupKind === 'continuous-canvas',
+    preserveAPlusMotherSize: !task.derivation && task.category?.aPlusPlanContext?.groupKind === 'continuous-canvas',
   }))
   setReusedTaskApiProfile(
     shouldTemporarilyReuseProfile && matchedProfile ? matchedProfile.id : null,
@@ -5015,6 +5026,7 @@ export async function clearData(options: ClearOptions = { clearConfig: true, cle
   if (options.clearTasks) {
     await dbClearTasks()
     await dbClearAmazonPlannerSessions()
+    await dbClearListingCopySessions()
     await clearImages()
     imageCache.clear()
     thumbnailCache.clear()
@@ -5137,6 +5149,14 @@ function addAmazonPlannerSessionReferencedImageIds(target: Set<string>, sessions
   }
 }
 
+function addListingCopySessionReferencedImageIds(target: Set<string>, sessions: ListingCopySession[]) {
+  for (const session of sessions) {
+    for (const imageId of session.referenceImageIds ?? []) {
+      if (typeof imageId === 'string' && imageId.trim()) target.add(imageId)
+    }
+  }
+}
+
 function addSettingsReferencedImageIds(target: Set<string>, settings: AppSettings) {
   for (const customStyle of settings.customStyleReferences ?? []) {
     if (customStyle.imageId) target.add(customStyle.imageId)
@@ -5154,6 +5174,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
   try {
     const tasks = options.exportTasks ? await getAllTasks() : []
     const amazonPlannerSessions = options.exportTasks ? await getAllAmazonPlannerSessions() : []
+    const listingCopySessions = options.exportTasks ? await getAllListingCopySessions() : []
     const images = options.exportTasks ? await getAllImages() : []
     const { settings, agentConversations } = useStore.getState()
     const exportedAt = Date.now()
@@ -5180,6 +5201,12 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
           if (prev == null || session.createdAt < prev) {
             imageCreatedAtFallback.set(id, session.createdAt)
           }
+        }
+      }
+      for (const session of listingCopySessions) {
+        for (const id of session.referenceImageIds ?? []) {
+          const prev = imageCreatedAtFallback.get(id)
+          if (prev == null || session.createdAt < prev) imageCreatedAtFallback.set(id, session.createdAt)
         }
       }
     }
@@ -5226,7 +5253,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
     }
 
     const manifest: ExportData = {
-      version: 4,
+      version: 5,
       exportedAt: new Date(exportedAt).toISOString(),
     }
 
@@ -5235,6 +5262,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
       manifest.tasks = tasks
       manifest.agentConversations = agentConversations
       manifest.amazonPlannerSessions = amazonPlannerSessions
+      manifest.listingCopySessions = listingCopySessions
       manifest.imageFiles = imageFiles
       manifest.thumbnailFiles = thumbnailFiles
     }
@@ -5319,7 +5347,10 @@ export async function importData(file: File, options: ImportOptions = { importCo
         await putTask(task)
       }
       for (const session of data.amazonPlannerSessions ?? []) {
-        await putAmazonPlannerSession(session)
+        await putAmazonPlannerSession({ ...session, marketplace: normalizeAmazonMarketplace(session.marketplace) })
+      }
+      for (const session of data.listingCopySessions ?? []) {
+        await putListingCopySession({ ...session, marketplace: normalizeAmazonMarketplace(session.marketplace) })
       }
 
       const tasks = await getAllTasks()
@@ -5348,8 +5379,10 @@ export async function importData(file: File, options: ImportOptions = { importCo
     let msg = '数据已成功导入'
     if (options.importTasks && data.tasks) {
       const plannerSessionCount = data.amazonPlannerSessions?.length ?? 0
-      msg = plannerSessionCount
-        ? `已导入 ${data.tasks.length} 条记录和 ${plannerSessionCount} 条策划历史`
+      const copySessionCount = data.listingCopySessions?.length ?? 0
+      const historyCount = plannerSessionCount + copySessionCount
+      msg = historyCount
+        ? `已导入 ${data.tasks.length} 条记录和 ${historyCount} 条策划历史`
         : `已导入 ${data.tasks.length} 条记录`
     } else if (options.importConfig && data.settings) {
       msg = '配置已成功导入'

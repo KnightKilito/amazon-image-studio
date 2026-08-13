@@ -1,3 +1,5 @@
+import { isAPlusMotherImageSize } from './aPlusLayout'
+
 const SIZE_PATTERN = /^\s*(\d+)\s*[xX×]\s*(\d+)\s*$/
 const RATIO_PATTERN = /^\s*(\d+(?:\.\d+)?)\s*[:xX×]\s*(\d+(?:\.\d+)?)\s*$/
 const SIZE_MULTIPLE = 16
@@ -5,7 +7,7 @@ const MAX_EDGE = 3840
 const MAX_ASPECT_RATIO = 3
 const MIN_PIXELS = 655_360
 const MAX_PIXELS = 8_294_400
-const EXACT_SIZE_ALLOWLIST = new Set(['1200x900', '2928x1200'])
+const EXACT_SIZE_ALLOWLIST = new Set(['1200x900', '2400x1800', '2928x1200'])
 
 export type SizeTier = '1K' | '2K' | '4K'
 
@@ -58,13 +60,16 @@ function normalizeDimensions(width: number, height: number) {
   return { width: normalizedWidth, height: normalizedHeight }
 }
 
-export function normalizeImageSize(size: string, options: { preservePremiumMotherSize?: boolean } = {}) {
+export function normalizeImageSize(
+  size: string,
+  options: { preserveAPlusMotherSize?: boolean; preservePremiumMotherSize?: boolean } = {},
+) {
   const trimmed = size.trim()
   const match = trimmed.match(SIZE_PATTERN)
   if (!match) return trimmed
   const canonical = `${Number(match[1])}x${Number(match[2])}`
   if (EXACT_SIZE_ALLOWLIST.has(canonical)) return canonical
-  if (options.preservePremiumMotherSize && isAPlusMotherImageSize(canonical)) return canonical
+  if ((options.preserveAPlusMotherSize || options.preservePremiumMotherSize) && isAPlusMotherImageSize(canonical)) return canonical
 
   const { width, height } = normalizeDimensions(Number(match[1]), Number(match[2]))
   return `${width}x${height}`
@@ -207,4 +212,3 @@ export function calculateImageSize(tier: SizeTier, ratio: string) {
   if (bestPixels === 0) return null
   return `${bestWidth}x${bestHeight}`
 }
-import { isAPlusMotherImageSize } from './premiumAPlusLayout'

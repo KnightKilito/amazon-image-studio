@@ -1,6 +1,6 @@
-# 亚马逊图片工作台
+# 亚马逊AI工作台
 
-面向 Amazon Listing 与 A+ Content 的图片策划和生成工作台。输入商品信息与参考图，即可生成分镜方案、提示词并逐张出图。
+面向 Amazon Listing 与 A+ Content 的 AI 文案、图片策划和生成工作台。输入商品信息与参考图，即可生成中英文 Listing 文案、利润建议、分镜方案、提示词并逐张出图。
 
 [🌐 作者博客](https://meochun.fun) · [🐛 反馈问题](https://github.com/KnightKilito/amazon-image-studio/issues) · [📝 更新日志](#-更新日志)
 
@@ -9,7 +9,8 @@
 ## ✨ 功能
 
 - 🪶 Listing 图片策划：默认 `MAIN + PT01-PT06`，可自定义为 `7-12` 张。
-- ✒️ A+ 图片策划：支持普通、标准、高级与手机 A+ 模块，可在策划前增删模块。
+- 📝 Listing 文案：生成美国站 Item Name、Item Highlight、五点、长描述、关键词与中文对照，并测算 FBM/FBA 利润。
+- ✒️ A+ 图片策划：支持普通、标准、高级、手机 A+ 与独立品牌故事；高级 A+ 的独立模块和自由编排均可同步策划 From the brand。
 - 💾 参考图、遮罩编辑、视觉风格、历史记录、批量下载与本地 IndexedDB 存储。
 - 🧠 支持 OpenAI / OpenAI 兼容接口、OpenRouter，以及独立的 Chat Completions / Responses 策划配置。
 - 📒 内置 Amazon 主图、附图与 A+ 尺寸规则；生成时会带入目标分辨率与合规约束。
@@ -20,7 +21,7 @@
 
 <!--
 <p align="center">
-  <img src="docs/screenshots/overview.png" alt="亚马逊图片工作台主界面" width="100%">
+  <img src="docs/screenshots/overview.png" alt="亚马逊AI工作台主界面" width="100%">
 </p>
 
 <p align="center">
@@ -55,9 +56,9 @@ npm run dev
 ## 📖 使用流程
 
 1. 在右上角设置中分别配置生图 API 与 AI 策划 API。
-2. 选择 `Listing 图` 或 `A+ 图`，填写商品标题、五点描述、卖点或品牌信息，并按需上传参考图。
-3. 执行 AI 策划，在右侧选择图片位，检查 Prompt Preview。
-4. 逐张提交生成；生成结果可在历史记录中筛选、复用、编辑或下载。
+2. 进入 `Listing 文案`，填写产品事实、成本和重量，按需上传参考图，生成中英文文案与建议定价。
+3. 返回首页选择 `Listing 图` 或 `A+ 图`，粘贴文案并执行 AI 策划，在右侧选择图片位、检查 Prompt Preview。
+4. 逐张提交生成；文案版本和图片结果均保存在本地历史中，可恢复、筛选、复用、编辑或下载。
 
 生图建议使用 `Images API (/v1/images)` 与 `gpt-image-2`。策划使用文本或多模态模型，建议选择 `Chat Completions (/chat/completions)` 或 `Responses API (/v1/responses)`。DeepSeek 官方 Chat Completions 不接收参考图，应用会自动以纯文本请求策划。
 
@@ -200,7 +201,7 @@ npm run admin:server
 - 更新 dev proxy、mock image API、接口兼容测试和参数兼容逻辑。
 - 内置 Amazon 图片规范、附图策划逻辑和 A+ 尺寸知识文档。
 - 策划接口会引用内置知识规则，提高 Listing / A+ 策划稳定性。
-- 项目名称统一调整为“亚马逊图片工作台”，同步页面标题、PWA manifest、启动脚本和界面文案。
+- 项目名称统一调整为“亚马逊AI工作台”，同步页面标题、PWA manifest、启动脚本和界面文案。
 - README 增加更完整的本地安装、启动和交付说明，历史记录搜索栏增加清理能力。
 - 优化 Amazon Planner 工作流说明、Listing 图片策划模板、复制逻辑和相关测试。
 - 提交：`a85312c`、`7c231bf`、`899532d`、`5cc09c4`、`0c8b9ec`、`d1de756`、`81a3fbd`、`3778620`。

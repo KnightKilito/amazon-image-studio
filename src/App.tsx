@@ -17,6 +17,7 @@ import Toast from './components/Toast'
 import MaskEditorModal from './components/MaskEditorModal'
 import ImageContextMenu from './components/ImageContextMenu'
 import ImageEditorWorkspace from './components/ImageEditorWorkspace'
+import ListingCopyWorkspace from './components/ListingCopyWorkspace'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
 
 export default function App() {
@@ -68,6 +69,8 @@ export default function App() {
       <Header />
       {appPage === 'editor' ? (
         <ImageEditorWorkspace />
+      ) : appPage === 'listing-copy' ? (
+        <ListingCopyWorkspace />
       ) : (
         <>
           <main data-home-main data-drag-select-surface className="home-main-with-dock pb-48 lg:pb-10">

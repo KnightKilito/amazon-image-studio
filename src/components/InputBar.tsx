@@ -6,7 +6,7 @@ import { getActiveApiProfile, normalizeSettings } from '../lib/apiProfiles'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
 import { getAtImageQuery, getImageMentionLabel, getPromptIndexFromVisibleIndex, getPromptMentionParts, getSelectedImageMentionLabel, getSelectedTextMentionLabel, imageMentionMatches, insertImageMentionAtVisibleRange, insertTextMentionAtVisibleRange, isCursorInSelectedImageMention, stripImageMentionMarkers } from '../lib/promptImageMentions'
 import { normalizeImageSize } from '../lib/size'
-import { isAPlusMotherImageSize } from '../lib/premiumAPlusLayout'
+import { isAPlusMotherImageSize } from '../lib/aPlusLayout'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { getSafeBoundingClientRect } from '../lib/domRect'
@@ -667,7 +667,7 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
     : `OpenAI 最大请求数量为 ${outputImageLimit}`
   const displaySize = isFalTextToImage && params.size === 'auto'
     ? DEFAULT_FAL_IMAGE_SIZE
-    : normalizeImageSize(params.size, { preservePremiumMotherSize: isAPlusMotherImageSize(params.size) }) || DEFAULT_PARAMS.size
+    : normalizeImageSize(params.size, { preserveAPlusMotherSize: isAPlusMotherImageSize(params.size) }) || DEFAULT_PARAMS.size
 
   const qualityOptions = isFalProvider
     ? [
@@ -817,7 +817,7 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
   useEffect(() => {
     const normalizedParams = normalizeParamsForSettings(params, effectiveSettings, {
       hasInputImages: inputImages.length > 0,
-      preservePremiumMotherSize: isAPlusMotherImageSize(params.size),
+      preserveAPlusMotherSize: isAPlusMotherImageSize(params.size),
     })
     const patch = getChangedParams(params, normalizedParams)
     if (Object.keys(patch).length) {

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_CHAT_MODEL, createDefaultOpenAIProfile } from './apiProfiles'
 import { DEFAULT_AMAZON_PROMPT_DRAFT } from './amazonPrompt'
 import {
+  buildBrandStoryModuleSpecs,
+  buildAPlusComposedMainModuleSpecs,
   buildPremiumAPlusComposedModuleSpecs,
   buildAmazonAPlusPlanPrompt,
   buildAmazonAPlusPlanOnlyPrompt,
@@ -348,6 +350,44 @@ describe('A+ module helpers', () => {
     expect(getAPlusContentTypeLabel('standard')).toBe('标准A+')
     expect(getAPlusContentTypeLabel('premium')).toBe('高级A+')
     expect(getAPlusContentTypeLabel('mobile')).toBe('手机A+')
+    expect(getAPlusContentTypeLabel('brand-story')).toBe('品牌故事')
+  })
+
+  it('builds a shared From the brand set with one introduction card and product-led cards', () => {
+    const specs = buildBrandStoryModuleSpecs(3)
+
+    expect(specs.map((spec) => spec.slot)).toEqual(['A+BS-BG', 'A+BS-C01', 'A+BS-C02', 'A+BS-C03'])
+    expect(specs[0]).toMatchObject({
+      contentType: 'brand-story',
+      moduleType: 'brand-story-background',
+      uploadWidth: 1464,
+      uploadHeight: 625,
+      exactGenerationWidth: 2928,
+      exactGenerationHeight: 1250,
+    })
+    expect(specs[0]?.objective).toContain('模特准确穿着当前页面商品')
+    expect(specs[1]?.objective).toContain('整组唯一的品牌介绍卡')
+    expect(specs[1]?.objective).toContain('禁止虚构')
+    expect(specs[2]?.objective).toContain('当前商品的模特穿搭卡')
+    expect(specs[3]?.objective).toContain('当前商品的穿着证据卡')
+    expect(specs.slice(1).every((spec) => spec.uploadWidth === 463 && spec.uploadHeight === 625)).toBe(true)
+  })
+
+  it('keeps Premium main-content defaults wide and appends the same Brand Story rules when enabled', () => {
+    const premiumMainSpecs = getAPlusModuleSpecs('premium')
+    const composedWithBrandStory = buildPremiumAPlusComposedModuleSpecs([], {
+      brandStoryEnabled: true,
+      brandStoryCardCount: 3,
+    })
+
+    expect(premiumMainSpecs).toHaveLength(6)
+    expect(premiumMainSpecs.map((spec) => spec.slot)).toEqual(['A+P01', 'A+P02', 'A+P03', 'A+P04', 'A+P05', 'A+P06'])
+    expect(premiumMainSpecs.slice(1).every((spec) => spec.moduleType === 'feature-image')).toBe(true)
+    expect(premiumMainSpecs.every((spec) => spec.uploadWidth === 1464 && spec.uploadHeight === 600)).toBe(true)
+    const embeddedBrandStorySpecs = composedWithBrandStory.filter((spec) => spec.planContext?.groupKind === 'brand-story')
+    expect(embeddedBrandStorySpecs.map((spec) => spec.slot)).toEqual(['A+BS-BG', 'A+BS-C01', 'A+BS-C02', 'A+BS-C03'])
+    expect(embeddedBrandStorySpecs.every((spec) => spec.contentType === 'premium')).toBe(true)
+    expect(embeddedBrandStorySpecs[1]?.objective).toBe(buildBrandStoryModuleSpecs(3)[1]?.objective)
   })
 
   it('defines Mobile A+ as five 600x450 modules', () => {
@@ -358,6 +398,64 @@ describe('A+ module helpers', () => {
     expect(mobileSpecs.every((spec) => spec.uploadWidth === 600 && spec.uploadHeight === 450)).toBe(true)
     expect(getAPlusModuleDisplayName(mobileSpecs[0]!)).toBe('手机首屏')
     expect(getAPlusModuleEnglishName(mobileSpecs[1]!)).toBe('Mobile Feature 1')
+  })
+
+  it('builds Mobile A+ free composition with shared modules and tier-specific dimensions', () => {
+    const groups = [
+      {
+        id: 'mobile-mother',
+        kind: 'continuous-canvas' as const,
+        purpose: 'hero' as const,
+        label: 'Mobile mother image',
+        objective: 'Create one continuous mobile campaign.',
+        customInstruction: '',
+        sliceCount: 3,
+      },
+      {
+        id: 'mobile-independent',
+        kind: 'independent-image' as const,
+        purpose: 'technical-detail' as const,
+        label: 'Mobile detail',
+        objective: 'Show factual product evidence.',
+        customInstruction: '',
+      },
+      {
+        id: 'mobile-carousel',
+        kind: 'lifestyle-carousel' as const,
+        purpose: 'lifestyle' as const,
+        label: 'Mobile carousel',
+        objective: 'Show coherent mobile scenes.',
+        customInstruction: '',
+        slideCount: 2,
+      },
+    ]
+    const specs2K = buildAPlusComposedMainModuleSpecs('mobile', groups, '2K')
+    const specs4K = buildAPlusComposedMainModuleSpecs('mobile', groups, '4K')
+
+    expect(specs4K.map((spec) => spec.slot)).toEqual(['A+MF01-M', 'A+MF02', 'A+MF03-C01', 'A+MF03-C02'])
+    expect(specs4K.every((spec) => spec.contentType === 'mobile')).toBe(true)
+    expect(specs4K.every((spec) => spec.uploadWidth === 600 && spec.uploadHeight === 450)).toBe(true)
+    expect(specs2K[0]).toMatchObject({
+      exactGenerationWidth: 1200,
+      exactGenerationHeight: 2700,
+      planContext: { aPlusType: 'mobile', generationSliceHeight: 900, plannedGenerationSize: '1200x2700' },
+    })
+    expect(specs4K[0]).toMatchObject({
+      exactGenerationWidth: 2400,
+      exactGenerationHeight: 5400,
+      planContext: { aPlusType: 'mobile', generationSliceHeight: 1800, plannedGenerationSize: '2400x5400' },
+    })
+    expect(specs4K.slice(1).every((spec) => getAPlusModuleGenerationSize(spec, '4K') === '2400x1800')).toBe(true)
+
+    const prompt = buildAmazonAPlusPlanPrompt({
+      prompt: 'Create one continuous mobile campaign.',
+      negativePrompt: 'seams',
+      uploadSize: '600x450 × 3片',
+      generationSize: '2400x5400',
+      planContext: specs4K[0]?.planContext,
+    })
+    expect(prompt).toContain('every 1800 px')
+    expect(prompt).toContain('one complete 2400x5400 image')
   })
 
   it('uses premium wide banner sizing for Premium A+ feature image modules', () => {
@@ -1484,6 +1582,47 @@ describe('callAmazonPlannerApi', () => {
     expect(body.instructions).not.toContain('final upload 1464x600 × 2片px')
   })
 
+  it('instructs Mobile A+ free composition with Mobile 4K geometry', async () => {
+    const composedSpecs = buildAPlusComposedMainModuleSpecs('mobile', [{
+      id: 'mobile-continuous-test',
+      kind: 'continuous-canvas',
+      purpose: 'hero',
+      label: 'Mobile mother image',
+      objective: 'Create one uninterrupted mobile campaign scene.',
+      customInstruction: '',
+      sliceCount: 3,
+    }], '4K')
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
+      output_text: JSON.stringify(createAPlusPayloadFromSpecs(composedSpecs, 'Continuous Mobile A+ shoes', 'ExampleBrand')),
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: { ...DEFAULT_AMAZON_PROMPT_DRAFT, brand: 'ExampleBrand' },
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+      mode: 'aplus',
+      aPlusType: 'mobile',
+      aPlusModuleSpecs: composedSpecs,
+      aPlusGenerationTier: '4K',
+    })
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
+    expect(body.instructions).toContain('freely composed Mobile A+ Content 600x450 module set campaign')
+    expect(body.instructions).toContain('generate exactly one uninterrupted 2400x5400px master canvas')
+    expect(body.instructions).toContain('every 1800 generation pixels')
+    expect(body.instructions).toContain('compact mobile screens')
+    expect(body.instructions).not.toContain('freely composed Premium A+ campaign')
+  })
+
   it('sends carousel content positioning as the primary planner objective', async () => {
     const composedSpecs = buildPremiumAPlusComposedModuleSpecs([{
       id: 'technical-carousel',
@@ -1525,6 +1664,82 @@ describe('callAmazonPlannerApi', () => {
     expect(body.instructions).not.toContain('Lifestyle Carousel Slide')
     expect(body.instructions).not.toContain('palette, casting, and image language consistent')
     expect(body.instructions).not.toContain('vary pose, crop, scene, or usage moment')
+  })
+
+  it('plans standalone Brand Story with one factual brand card and model-led product cards', async () => {
+    const brandStorySpecs = buildBrandStoryModuleSpecs(3)
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
+      output_text: JSON.stringify(createAPlusPayloadFromSpecs(brandStorySpecs, 'Brand Story walking shoes', 'ExampleBrand')),
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: { ...DEFAULT_AMAZON_PROMPT_DRAFT, brand: 'ExampleBrand' },
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+      mode: 'aplus',
+      aPlusType: 'brand-story',
+      aPlusModuleSpecs: brandStorySpecs,
+      aPlusGenerationTier: '2K',
+    })
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
+    expect(body.text.format.schema.properties.aPlusPlans.items.properties.slot.enum).toEqual(['A+BS-BG', 'A+BS-C01', 'A+BS-C02', 'A+BS-C03'])
+    expect(body.instructions).toContain('Amazon Brand Story (From the brand)')
+    expect(body.instructions).toContain('A+BS-C01 is the one and only brand-introduction card')
+    expect(body.instructions).toContain('Every card after A+BS-C01 is about the exact current product')
+    expect(body.instructions).toContain('Never invent founding history')
+    expect(body.instructions).not.toContain('This is a freely composed Premium A+ campaign')
+    expect(body.input[0].content[0].text).toContain('品牌故事 module plan')
+    expect(result.aPlusType).toBe('brand-story')
+    expect(result.aPlusPlans).toHaveLength(4)
+    expect(result.aPlusPlans[0]).toMatchObject({
+      slot: 'A+BS-BG',
+      moduleType: 'brand-story-background',
+      uploadSize: '1464x625',
+      generationSize: '2928x1250',
+    })
+  })
+
+  it('does not treat Brand Story appended to independent Premium modules as a free-composition campaign', async () => {
+    const independentPremiumSpecs = [
+      ...getAPlusModuleSpecs('premium'),
+      ...buildBrandStoryModuleSpecs(3, 'premium'),
+    ]
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
+      output_text: JSON.stringify(createAPlusPayloadFromSpecs(independentPremiumSpecs, 'Premium shoes with Brand Story', 'ExampleBrand')),
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: { ...DEFAULT_AMAZON_PROMPT_DRAFT, brand: 'ExampleBrand' },
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+      mode: 'aplus',
+      aPlusType: 'premium',
+      aPlusModuleSpecs: independentPremiumSpecs,
+      aPlusGenerationTier: '2K',
+    })
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
+    expect(body.instructions).toContain('The Brand Story set is a conversion-focused From the brand carousel')
+    expect(body.instructions).not.toContain('This is a freely composed Premium A+ campaign')
   })
 
   it('parses Mobile A+ output as five fixed 600x450 modules', async () => {

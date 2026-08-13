@@ -2,11 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { DEFAULT_PARAMS } from './types'
 import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, normalizeSettings } from './lib/apiProfiles'
-import type { AgentConversation, AmazonPlannerSession, ExportData, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
+import type { AgentConversation, AmazonPlannerSession, ExportData, ListingCopySession, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
 vi.mock('./lib/db', () => {
   const tasks = new Map<string, TaskRecord>()
   const amazonPlannerSessions = new Map<string, AmazonPlannerSession>()
+  const listingCopySessions = new Map<string, ListingCopySession>()
   const images = new Map<string, StoredImage>()
   const thumbnails = new Map<string, StoredImageThumbnail>()
   let imageSeq = 0
@@ -34,6 +35,17 @@ vi.mock('./lib/db', () => {
     },
     clearAmazonPlannerSessions: async () => {
       amazonPlannerSessions.clear()
+    },
+    getAllListingCopySessions: async () => [...listingCopySessions.values()],
+    putListingCopySession: async (session: ListingCopySession) => {
+      listingCopySessions.set(session.id, session)
+      return session.id
+    },
+    deleteListingCopySession: async (id: string) => {
+      listingCopySessions.delete(id)
+    },
+    clearListingCopySessions: async () => {
+      listingCopySessions.clear()
     },
     getImage: async (id: string) => images.get(id),
     getImageThumbnail: async (id: string) => thumbnails.get(id),
@@ -129,7 +141,7 @@ vi.mock('./lib/agentApi', () => ({
     }
   }),
 }))
-import { clearAmazonPlannerSessions, clearImages, clearTasks, getAllAmazonPlannerSessions, getAllImages, getImage, putAmazonPlannerSession, putImage } from './lib/db'
+import { clearAmazonPlannerSessions, clearImages, clearListingCopySessions, clearTasks, getAllAmazonPlannerSessions, getAllImages, getAllListingCopySessions, getImage, putAmazonPlannerSession, putImage, putListingCopySession } from './lib/db'
 import { callImageApi } from './lib/api'
 import { createImageEditorVisualGuideDataUrl } from './lib/imageEditorAnnotations'
 import { getTaskDisplayPrompt } from './lib/taskPromptDisplay'
@@ -283,6 +295,54 @@ function amazonPlannerSession(overrides: Partial<AmazonPlannerSession> = {}): Am
     aPlusPlans: [],
     selectedPlanIndex: 0,
     selectedAPlusPlanIndex: null,
+    createdAt: 1,
+    updatedAt: 2,
+    ...overrides,
+  }
+}
+
+function listingCopySession(overrides: Partial<ListingCopySession> = {}): ListingCopySession {
+  return {
+    id: 'listing-copy-version-a',
+    kind: 'version',
+    title: 'Women Mule Sandals',
+    marketplace: 'us',
+    input: {
+      preset: 'footwear',
+      productDescription: 'Women mule sandals',
+      brand: '',
+      category: 'Mule Sandals',
+      material: 'Synthetic upper',
+      features: 'Slip-on',
+      colorAndSize: 'Black, 35-42',
+      audience: 'Women',
+      useCases: 'Office and casual wear',
+      requiredTerms: '',
+      forbiddenTerms: '',
+      heel: 'Block heel',
+      sole: 'Rubber outsole',
+      closure: 'Slip-on',
+      comfort: 'Cushioned footbed',
+    },
+    prompt: 'Create compliant listing copy.',
+    result: null,
+    profitInput: {
+      purchaseCostCny: 30,
+      domesticShippingCny: 5,
+      netWeightG: 500,
+      packagingWeightG: 50,
+      exchangeRate: 7,
+      referralRatePercent: 15,
+      targetMarginPercent: 30,
+      yanwenRateCnyPerKg: 100,
+      yanwenRegistrationFeeCny: 16,
+      competitorMinPriceUsd: null,
+      competitorMaxPriceUsd: null,
+      fbaInboundCny: null,
+      fbaFulfillmentFeeUsd: null,
+      calculationPriceUsd: null,
+    },
+    referenceImageIds: [],
     createdAt: 1,
     updatedAt: 2,
     ...overrides,
@@ -1542,6 +1602,7 @@ describe('agent conversation creation', () => {
 describe('data import', () => {
   beforeEach(async () => {
     await clearAmazonPlannerSessions()
+    await clearListingCopySessions()
     useStore.setState({
       tasks: [],
       agentConversations: [],
@@ -1650,7 +1711,22 @@ describe('data import', () => {
     }), { importConfig: false, importTasks: true })
 
     expect(imported).toBe(true)
-    expect(await getAllAmazonPlannerSessions()).toEqual([session])
+    expect(await getAllAmazonPlannerSessions()).toEqual([{ ...session, marketplace: 'us' }])
+    expect(useStore.getState().showToast).toHaveBeenCalledWith('已导入 0 条记录和 1 条策划历史', 'success')
+  })
+
+  it('imports Listing copy history and restores the US marketplace default', async () => {
+    const session = listingCopySession({ marketplace: undefined as never })
+    const imported = await importData(importFile({
+      version: 4,
+      exportedAt: new Date(0).toISOString(),
+      tasks: [],
+      listingCopySessions: [session],
+      imageFiles: {},
+    }), { importConfig: false, importTasks: true })
+
+    expect(imported).toBe(true)
+    expect(await getAllListingCopySessions()).toEqual([{ ...session, marketplace: 'us' }])
     expect(useStore.getState().showToast).toHaveBeenCalledWith('已导入 0 条记录和 1 条策划历史', 'success')
   })
 
@@ -1694,6 +1770,7 @@ describe('data import', () => {
 describe('data export and clearing', () => {
   beforeEach(async () => {
     await clearAmazonPlannerSessions()
+    await clearListingCopySessions()
     await clearImages()
     useStore.setState({
       tasks: [],
@@ -1740,7 +1817,7 @@ describe('data export and clearing', () => {
     const buffer = await blob.arrayBuffer()
     const unzipped = unzipSync(new Uint8Array(buffer))
     const manifest = JSON.parse(strFromU8(unzipped['manifest.json'])) as ExportData
-    expect(manifest.version).toBe(4)
+    expect(manifest.version).toBe(5)
     expect(manifest.amazonPlannerSessions).toEqual([session])
     expect(manifest.imageFiles).toHaveProperty('image-a')
     expect(manifest.imageFiles).toHaveProperty('preset-style-image')
@@ -1750,6 +1827,29 @@ describe('data export and clearing', () => {
 
     createObjectUrl.mockRestore()
     revokeObjectUrl.mockRestore()
+    vi.unstubAllGlobals()
+  })
+
+  it('exports Listing copy history and its reference images', async () => {
+    const timestamp = 1_700_000_000_000
+    const session = listingCopySession({ referenceImageIds: ['copy-reference-image'], createdAt: timestamp, updatedAt: timestamp })
+    await putListingCopySession(session)
+    await putImage({ id: 'copy-reference-image', dataUrl: 'data:image/png;base64,YQ==', createdAt: timestamp, source: 'upload' })
+    const anchor = { href: '', download: '', click: vi.fn() }
+    vi.stubGlobal('document', { createElement: vi.fn(() => anchor) })
+    const createObjectUrl = vi.fn<(blob: Blob) => string>(() => 'blob:backup')
+    const revokeObjectUrl = vi.fn()
+    vi.stubGlobal('URL', { createObjectURL: createObjectUrl, revokeObjectURL: revokeObjectUrl })
+
+    await exportData({ exportConfig: false, exportTasks: true })
+
+    expect(useStore.getState().showToast).not.toHaveBeenCalledWith(expect.stringContaining('导出失败'), 'error')
+    expect(createObjectUrl).toHaveBeenCalled()
+    const blob = createObjectUrl.mock.calls[0]?.[0] as Blob
+    const unzipped = unzipSync(new Uint8Array(await blob.arrayBuffer()))
+    const manifest = JSON.parse(strFromU8(unzipped['manifest.json'])) as ExportData
+    expect(manifest.listingCopySessions).toEqual([session])
+    expect(manifest.imageFiles).toHaveProperty('copy-reference-image')
     vi.unstubAllGlobals()
   })
 
@@ -1815,10 +1915,12 @@ describe('data export and clearing', () => {
 
   it('clears Amazon planner sessions when clearing task data', async () => {
     await putAmazonPlannerSession(amazonPlannerSession())
+    await putListingCopySession(listingCopySession())
 
     await clearData({ clearConfig: false, clearTasks: true })
 
     expect(await getAllAmazonPlannerSessions()).toEqual([])
+    expect(await getAllListingCopySessions()).toEqual([])
   })
 })
 

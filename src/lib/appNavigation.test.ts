@@ -7,6 +7,11 @@ describe('app page hash navigation', () => {
     expect(getAppPageFromLocation({ hash: '#EDITOR' })).toBe('editor')
   })
 
+  it('maps listing copy hashes to the listing copy page', () => {
+    expect(getAppPageFromLocation({ hash: '#listing-copy' })).toBe('listing-copy')
+    expect(getAppPageFromLocation({ hash: '#LISTING-COPY' })).toBe('listing-copy')
+  })
+
   it('falls back to home for the default and unknown hashes', () => {
     expect(getAppPageFromLocation({ hash: '' })).toBe('home')
     expect(getAppPageFromLocation({ hash: '#home' })).toBe('home')

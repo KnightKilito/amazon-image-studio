@@ -13,13 +13,15 @@ export function getOutputImageLimitForSettings(settings: AppSettings) {
 export function normalizeParamsForSettings(
   params: TaskParams,
   settings: AppSettings,
-  options: { hasInputImages?: boolean; preservePremiumMotherSize?: boolean } = {},
+  options: { hasInputImages?: boolean; preserveAPlusMotherSize?: boolean; preservePremiumMotherSize?: boolean } = {},
 ): TaskParams {
   const activeProfile = getActiveApiProfile(settings)
   const outputImageLimit = getOutputImageLimitForSettings(settings)
   const nextParams: TaskParams = {
     ...params,
-    size: normalizeImageSize(params.size, { preservePremiumMotherSize: options.preservePremiumMotherSize }) || DEFAULT_PARAMS.size,
+    size: normalizeImageSize(params.size, {
+      preserveAPlusMotherSize: options.preserveAPlusMotherSize || options.preservePremiumMotherSize,
+    }) || DEFAULT_PARAMS.size,
     n: Math.min(outputImageLimit, Math.max(1, params.n || DEFAULT_PARAMS.n)),
   }
 

@@ -458,7 +458,7 @@ class PlannerEmptyTextError extends Error {
   }
 }
 
-async function readPlannerResponseText(response: Response, onTextDelta?: (delta: string) => void): Promise<string> {
+export async function readPlannerResponseText(response: Response, onTextDelta?: (delta: string) => void): Promise<string> {
   if (isEventStreamResponse(response)) {
     const text = await readPlannerTextFromSseResponse(response, onTextDelta)
     if (!text) throw new PlannerEmptyTextError('AI 策划流式接口未返回文本内容')
@@ -678,6 +678,8 @@ function buildListingPlannerInstructions(baseDraft: AmazonPromptDraft, listingIm
 
 function getAPlusPlannerTypeName(aPlusType: APlusContentType) {
   switch (aPlusType) {
+    case 'brand-story':
+      return 'Amazon Brand Story (From the brand)'
     case 'premium':
       return 'Premium A+ Content'
     case 'mobile':
@@ -705,18 +707,32 @@ function buildAPlusPlannerInstructions(baseDraft: AmazonPromptDraft, aPlusType: 
   const mobileGuidance = aPlusType === 'mobile'
     ? 'For Mobile A+ modules, design every 600x450 image for compact mobile screens: one clear message per module, large product evidence, short mobile-readable US-English copy, and no dense multi-column layouts.'
     : ''
-  const composedGuidance = specs.some((spec) => spec.planContext?.layoutMode === 'composed')
+  const composedMainSpecs = specs.filter((spec) => (
+    spec.planContext?.layoutMode === 'composed' && spec.planContext.groupKind !== 'brand-story'
+  ))
+  const composedBoundaryHeight = composedMainSpecs.find((spec) => spec.planContext?.generationSliceHeight)?.planContext?.generationSliceHeight
+    ?? (aPlusType === 'mobile' && generationTier === '4K' ? 1800 : aPlusType === 'mobile' ? 900 : 1200)
+  const composedGuidance = composedMainSpecs.length
     ? [
-        'This is a freely composed Premium A+ campaign. Preserve the exact group structure represented by the ordered module specifications.',
+        `This is a freely composed ${typeLabel} campaign. Preserve the exact group structure represented by the ordered module specifications.`,
         'A continuous-canvas item is one single generation request for one uninterrupted master composition. The complete mother image is the primary design and must not be art-directed as independent upper/lower panels.',
         'Plan one scene, one camera/perspective, one lighting system, and one continuous visual hierarchy across the entire declared generation canvas. Do not organize planMarkdown or prompt into upper/lower panel strategies, per-slice scenes, separate hero versus still-life sections, or separate headline systems.',
-        'Treat horizontal positions every 1200 generation pixels as invisible composition safety boundaries used later by the website. Never render dividers, seams, gutters, borders, panel frames, abrupt background changes, or deliberately centered horizontal transitions there.',
+        `Treat horizontal positions every ${composedBoundaryHeight} generation pixels as invisible composition safety boundaries used later by the website. Never render dividers, seams, gutters, borders, panel frames, abrupt background changes, or deliberately centered horizontal transitions there.`,
         'Require scene planes, architecture, floors, fabric, shadows, lighting, color fields, or other non-critical visual anchors to continue naturally across every safety boundary. Only keep faces, the exact product, complete copy blocks, logos, measurements, and critical details from crossing a boundary.',
         'The image prompt must request exactly one complete mother image. Never ask the image model to crop, slice, split, resize, downscale, prepare uploads, or return multiple images; the website owns all post-processing.',
         'Do not add planMarkdown sections such as “输出与裁切”, “裁切与上传”, or other cropping, resizing, and upload workflow instructions. Keep planMarkdown focused on creative direction, composition, product evidence, and on-image copy.',
         'Treat each module primary content objective as the semantic priority. Module type describes presentation format and must not replace or override that objective.',
         'Carousel slide items belong to one carousel module. Treat the carousel as a presentation format: keep product fidelity, campaign identity, palette, and image language consistent, while varying composition, product evidence, crop, or information hierarchy according to each slide primary content objective.',
-        'Brand-story background and card items are product-specific. The background should use a model wearing the exact product as an optional side anchor and extend a quiet scene into safe card areas. Do not write generic brand copy that could apply to any product.',
+      ].join(' ')
+    : ''
+  const brandStoryGuidance = specs.some((spec) => spec.planContext?.groupKind === 'brand-story')
+    ? [
+        'The Brand Story set is a conversion-focused From the brand carousel for a small brand. Keep it visually coherent with the current product campaign, but do not duplicate the main A+ compositions.',
+        'The background must feature a model accurately wearing the exact current product as the visual anchor and extend a quiet scene beneath the card safe area. Decide whether to show the face from the product category, pose, composition, and need for emotional identification; a face is optional, the exact worn product is mandatory.',
+        'A+BS-C01 is the one and only brand-introduction card. Use the real brand name and only supported positioning, design philosophy, or intended wearing experience. If brand facts are sparse, write a restrained design-positioning introduction based on supplied product facts. Never invent founding history, dates, founders, mission, awards, certifications, causes, guarantees, or brand promises.',
+        'Every card after A+BS-C01 is about the exact current product, not another brand introduction. Prefer model-led styling and wearing imagery: first a full-body or three-quarter outfit/use scene, then a foot-level wearing close-up, walking pose, fit view, material detail, comfort structure, or other factual product evidence.',
+        'When extra product cards exist, vary occasion, styling, pose, crop, color, or supported fit evidence. Avoid repeated poses, repeated selling points, generic stock lifestyle imagery, white-background catalog cards, and claims not supported by the listing or reference images.',
+        'Keep the Brand Story background, introduction card, and product cards coherent in model direction, product fidelity, palette, lighting, typography, and campaign language. Keep card copy concise and mobile-readable; let product cards remain image-led.',
       ].join(' ')
     : ''
   return [
@@ -733,6 +749,7 @@ function buildAPlusPlannerInstructions(baseDraft: AmazonPromptDraft, aPlusType: 
     'Each module prompt should fully plan the finished Amazon image: composition, product evidence, on-image US-English copy when useful, callouts or information areas when useful, visual hierarchy, and rendering style.',
     'For A+ information modules, prefer complete information design with clear hierarchy and useful product evidence; lifestyle or brand modules should still have purposeful composition and visible product support.',
     composedGuidance,
+    brandStoryGuidance,
     mobileGuidance,
     baseDraft.brand
       ? `Known brand/model: ${baseDraft.brand}. For header-banner and hero-banner modules, naturally include this real brand/model as a small brand line, headline prefix, or subline when it improves the composition. For brand-story modules, use this brand/model to frame the brand tone or promise only when supported by the provided listing or brand notes.`
@@ -754,7 +771,7 @@ function buildPlannerInstructions(
   baseDraft: AmazonPromptDraft,
   mode: AmazonPlannerMode,
   aPlusType: APlusContentType,
-  options: { textOnlyReferenceGuard?: boolean | string; listingImageCount?: number; aPlusModuleSpecs?: AmazonAPlusModuleSpec[]; compact?: boolean; visualStyleMode?: AmazonVisualStyleMode; aPlusGenerationTier?: SizeTier } = {},
+  options: { textOnlyReferenceGuard?: boolean | string; listingImageCount?: number; aPlusModuleSpecs?: AmazonAPlusModuleSpec[]; compact?: boolean; visualStyleMode?: AmazonVisualStyleMode; aPlusGenerationTier?: SizeTier; marketplaceContext?: string } = {},
 ) {
   const listingImageCount = normalizeListingImageCount(options.listingImageCount)
   const aPlusModuleSpecs = normalizeAPlusModuleSpecs(aPlusType, options.aPlusModuleSpecs)
@@ -772,6 +789,7 @@ function buildPlannerInstructions(
       : buildListingPlannerInstructions(baseDraft, listingImageCount, visualStyleMode)
   return [
     baseInstructions,
+    options.marketplaceContext,
     textOnlyReferenceGuard,
   ].filter(Boolean).join('\n')
 }
@@ -792,10 +810,10 @@ function buildCompactPlannerInstructions(
       'Each summary must be one or two concise Simplified Chinese sentences specific to that module. Each planMarkdown must be concise Simplified Chinese. Each prompt and negativePrompt must be professional English for image generation.',
       'For A+ modules, make the composition Amazon-ready, readable on mobile, product-focused, and compliant: no pricing, reviews, QR codes, external links, medical claims, competitor names, or unsupported superlatives.',
       specs.some((spec) => spec.planContext?.groupKind === 'continuous-canvas')
-        ? 'Continuous-canvas items are one uninterrupted master composition, not upper/lower panels. Use one scene, camera, lighting system, and visual hierarchy across the exact canvas; make non-critical scene elements cross invisible 1200px safety boundaries naturally. Request exactly one complete image and never include cropping, slicing, resizing, upload preparation, or multiple-image instructions in planMarkdown or prompt; the website handles all post-processing.'
+        ? `Continuous-canvas items are one uninterrupted master composition, not upper/lower panels. Use one scene, camera, lighting system, and visual hierarchy across the exact canvas; make non-critical scene elements cross invisible ${specs.find((spec) => spec.planContext?.groupKind === 'continuous-canvas')?.planContext?.generationSliceHeight ?? (aPlusType === 'mobile' && options.aPlusGenerationTier === '4K' ? 1800 : aPlusType === 'mobile' ? 900 : 1200)}px safety boundaries naturally. Request exactly one complete image and never include cropping, slicing, resizing, upload preparation, or multiple-image instructions in planMarkdown or prompt; the website handles all post-processing.`
         : '',
       specs.some((spec) => spec.planContext?.groupKind === 'brand-story')
-        ? 'Brand-story items must be specific to the exact product, with a model/product anchor, quiet background extension, and coordinated story cards; avoid generic reusable brand claims.'
+        ? 'For Brand Story items, the background must show a model accurately wearing the exact product. A+BS-C01 is the only brand-introduction card and may use only supplied facts; all later cards are model-led current-product styling or wearing-evidence cards. Never invent brand history, dates, founders, mission, awards, certifications, causes, guarantees, or promises.'
         : '',
       options.visualStyleMode === 'ai'
         ? 'Return aiVisualStyle with the full product-specific art direction and direction-board prompt, plus seriesStyleGuide for coherent module variation.'
@@ -936,7 +954,7 @@ function buildChatPlannerSystemPrompt(
   baseDraft: AmazonPromptDraft,
   mode: AmazonPlannerMode,
   aPlusType: APlusContentType,
-  options: { textOnlyReferenceGuard?: boolean | string; listingImageCount?: number; aPlusModuleSpecs?: AmazonAPlusModuleSpec[]; compact?: boolean; visualStyleMode?: AmazonVisualStyleMode; aPlusGenerationTier?: SizeTier } = {},
+  options: { textOnlyReferenceGuard?: boolean | string; listingImageCount?: number; aPlusModuleSpecs?: AmazonAPlusModuleSpec[]; compact?: boolean; visualStyleMode?: AmazonVisualStyleMode; aPlusGenerationTier?: SizeTier; marketplaceContext?: string } = {},
 ) {
   return [
     buildPlannerInstructions(baseDraft, mode, aPlusType, options),
@@ -990,6 +1008,7 @@ export async function callAmazonPlannerApi(options: {
   aPlusModuleSpecs?: Array<Partial<AmazonAPlusModuleSpec>>
   aPlusGenerationTier?: SizeTier
   visualStyleMode?: AmazonVisualStyleMode
+  marketplaceContext?: string
   signal?: AbortSignal
   onAttemptStart?: (attempt: PlannerAttemptInfo) => void
   onStatusChange?: (status: PlannerRequestStatus) => void
@@ -1059,6 +1078,7 @@ export async function callAmazonPlannerApi(options: {
                   compact,
                   visualStyleMode,
                   aPlusGenerationTier,
+                  marketplaceContext: options.marketplaceContext,
                 }),
               },
               {
@@ -1078,6 +1098,7 @@ export async function callAmazonPlannerApi(options: {
               compact,
               visualStyleMode,
               aPlusGenerationTier,
+              marketplaceContext: options.marketplaceContext,
             }),
             input: buildResponsesPlannerInput(inputText, referenceImageDataUrls),
             text: {

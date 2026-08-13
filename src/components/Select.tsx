@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
+
+export const COMPACT_SELECT_CLASS = 'h-9 rounded-xl border border-gray-200/70 bg-white/70 px-3 text-xs text-gray-700 shadow-sm outline-none transition hover:border-gray-300 hover:bg-white dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:hover:bg-white/[0.06]'
 import { DEFAULT_DROPDOWN_MAX_HEIGHT, getDropdownMaxHeight } from '../lib/dropdown'
 import { ChevronDownIcon, EditIcon, PlusIcon, TrashIcon, DragHandleIcon } from './icons'
 
@@ -22,9 +24,10 @@ interface SelectProps {
   options: Option[]
   disabled?: boolean
   className?: string
+  ariaLabel?: string
 }
 
-export default function Select({ value, onChange, onReorder, options, disabled, className }: SelectProps) {
+export default function Select({ value, onChange, onReorder, options, disabled, className, ariaLabel }: SelectProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [menuMaxHeight, setMenuMaxHeight] = useState(DEFAULT_DROPDOWN_MAX_HEIGHT)
   const [placement, setPlacement] = useState<'bottom' | 'top'>('bottom')
@@ -130,10 +133,10 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
     }
   }, [isOpen])
 
-  const handleToggle = (e: React.MouseEvent) => {
+  const handleToggle = (e?: React.SyntheticEvent) => {
     if (disabled) return
-    e.preventDefault()
-    e.stopPropagation()
+    e?.preventDefault()
+    e?.stopPropagation()
     // 动画和位置的计算在 useEffect 中进行，这里可以先假设一个默认值或保留当前状态
     setIsOpen(!isOpen)
   }
@@ -155,6 +158,21 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
       <div
         ref={triggerRef}
         onClick={handleToggle}
+        onKeyDown={(event) => {
+          if (disabled) return
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            handleToggle()
+          } else if (event.key === 'Escape') {
+            setIsOpen(false)
+          }
+        }}
+        role="button"
+        tabIndex={disabled ? -1 : 0}
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
+        aria-disabled={disabled}
         className={`flex items-center justify-between gap-1 w-full cursor-pointer select-none ${className ?? ''} ${
           disabled ? '!opacity-50 !cursor-not-allowed !bg-gray-100/50 dark:!bg-white/[0.05]' : ''
         }`}
@@ -165,6 +183,8 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
 
       {isOpen && (
         <div
+          role="listbox"
+          aria-label={ariaLabel}
           className={`absolute z-50 w-full overflow-hidden overflow-y-auto rounded-xl border border-gray-200/60 bg-white/95 py-1 shadow-[0_8px_30px_rgb(0,0,0,0.12)] ring-1 ring-black/5 backdrop-blur-xl dark:border-white/[0.08] dark:bg-gray-900/95 dark:shadow-[0_8px_30px_rgb(0,0,0,0.3)] dark:ring-white/10 custom-scrollbar ${
             placement === 'top' ? 'bottom-full mb-1.5 animate-dropdown-up' : 'top-full mt-1.5 animate-dropdown-down'
           }`}
@@ -174,6 +194,8 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
             <div
               key={option.value}
               data-option-value={String(option.value)}
+              role="option"
+              aria-selected={option.value === value}
               draggable={option.draggable}
               onDragStart={(e) => {
                 if (!option.draggable) return

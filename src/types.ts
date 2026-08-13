@@ -3,7 +3,8 @@
 export type ApiMode = 'images' | 'responses' | 'chat'
 export type PlannerConnectionMode = 'separate' | 'reuse-image'
 export type AppMode = 'gallery' | 'agent'
-export type AppPage = 'home' | 'editor'
+export type AppPage = 'home' | 'listing-copy' | 'editor'
+export type AmazonMarketplace = 'us'
 export type TaskWorkflow = 'amazon-listing' | 'amazon-aplus' | 'gallery' | 'image-edit' | 'agent' | 'unknown'
 export type TaskAspect = 'square' | 'landscape' | 'portrait'
 export type HistoryWorkflowFilter = 'all' | TaskWorkflow
@@ -283,15 +284,16 @@ export interface TaskRecord {
     productTitle?: string
     workflow?: TaskWorkflow
     amazonSlot?: string
-    aPlusType?: 'standard' | 'standard-large' | 'premium' | 'mobile'
+    aPlusType?: 'standard' | 'standard-large' | 'premium' | 'mobile' | 'brand-story'
     styleReferenceImageId?: string
-    aPlusPlanContext?: PremiumAPlusPlanContext
+    aPlusPlanContext?: APlusPlanContext
   }
 }
 
-export type PremiumAPlusLayoutMode = 'independent' | 'composed'
-export type PremiumAPlusGroupKind = 'independent-image' | 'continuous-canvas' | 'lifestyle-carousel'
-export type PremiumAPlusGroupPurpose =
+export type APlusComposableContentType = 'premium' | 'mobile'
+export type APlusLayoutMode = 'independent' | 'composed'
+export type APlusGroupKind = 'independent-image' | 'continuous-canvas' | 'lifestyle-carousel'
+export type APlusGroupPurpose =
   | 'auto'
   | 'hero'
   | 'lifestyle'
@@ -303,10 +305,10 @@ export type PremiumAPlusGroupPurpose =
   | 'comparison'
   | 'custom'
 
-export interface PremiumAPlusLayoutGroup {
+export interface APlusLayoutGroup {
   id: string
-  kind: PremiumAPlusGroupKind
-  purpose: PremiumAPlusGroupPurpose
+  kind: APlusGroupKind
+  purpose: APlusGroupPurpose
   label: string
   objective: string
   customInstruction: string
@@ -314,17 +316,40 @@ export interface PremiumAPlusLayoutGroup {
   slideCount?: number
 }
 
-export interface PremiumAPlusPlanContext {
+export interface APlusLayoutState {
+  mode: APlusLayoutMode
+  groups: APlusLayoutGroup[]
+}
+
+export type APlusLayoutStates = Record<APlusComposableContentType, APlusLayoutState>
+
+export interface APlusPlanContext {
   plannerSessionId?: string
-  layoutMode: PremiumAPlusLayoutMode
+  layoutMode: APlusLayoutMode
   groupId: string
-  groupKind: PremiumAPlusGroupKind | 'brand-story'
-  groupPurpose?: PremiumAPlusGroupPurpose
+  groupKind: APlusGroupKind | 'brand-story'
+  groupPurpose?: APlusGroupPurpose
   itemIndex: number
   sliceCount?: number
   slotCost: number
   plannedGenerationSize: string
+  /** 新版自由编排记录所属版式；旧高级 A+ 任务可能缺少。 */
+  aPlusType?: APlusComposableContentType
+  /** 单片生图画布，用于切换 2K/4K 后重新计算完整画布。 */
+  generationSliceWidth?: number
+  generationSliceHeight?: number
 }
+
+/** @deprecated 兼容旧调用方和已持久化的 Premium 字段。 */
+export type PremiumAPlusLayoutMode = APlusLayoutMode
+/** @deprecated 兼容旧调用方和已持久化的 Premium 字段。 */
+export type PremiumAPlusGroupKind = APlusGroupKind
+/** @deprecated 兼容旧调用方和已持久化的 Premium 字段。 */
+export type PremiumAPlusGroupPurpose = APlusGroupPurpose
+/** @deprecated 兼容旧调用方和已持久化的 Premium 字段。 */
+export type PremiumAPlusLayoutGroup = APlusLayoutGroup
+/** @deprecated 兼容旧调用方和已持久化的 Premium 字段。 */
+export type PremiumAPlusPlanContext = APlusPlanContext
 
 export interface AmazonVisualSystem {
   styleName: string
@@ -394,11 +419,11 @@ export interface AmazonPlannerSessionAPlusPlan {
   textBody: string
   prompt: string
   negativePrompt: string
-  planContext?: PremiumAPlusPlanContext
+  planContext?: APlusPlanContext
 }
 
 export interface AmazonPlannerSessionAPlusModuleSpec {
-  contentType: 'standard' | 'standard-large' | 'premium' | 'mobile' | 'optional'
+  contentType: 'standard' | 'standard-large' | 'premium' | 'mobile' | 'brand-story' | 'optional'
   slot: string
   label: string
   displayLabel: string
@@ -406,7 +431,7 @@ export interface AmazonPlannerSessionAPlusModuleSpec {
   uploadWidth: number
   uploadHeight: number
   objective: string
-  planContext?: PremiumAPlusPlanContext
+  planContext?: APlusPlanContext
   exactGenerationWidth?: number
   exactGenerationHeight?: number
 }
@@ -441,14 +466,19 @@ export interface AmazonPlannerSession {
   id: string
   title: string
   mode: 'listing' | 'aplus'
-  aPlusType: 'standard' | 'standard-large' | 'premium' | 'mobile'
+  aPlusType: 'standard' | 'standard-large' | 'premium' | 'mobile' | 'brand-story'
   resolution: '2k' | '4k'
   listingImageCount?: number
-  aPlusModuleSpecs?: Partial<Record<'standard' | 'standard-large' | 'premium' | 'mobile', AmazonPlannerSessionAPlusModuleSpec[]>>
+  marketplace?: AmazonMarketplace
+  aPlusModuleSpecs?: Partial<Record<'standard' | 'standard-large' | 'premium' | 'mobile' | 'brand-story', AmazonPlannerSessionAPlusModuleSpec[]>>
+  aPlusLayoutStates?: Partial<APlusLayoutStates>
+  /** @deprecated 旧版 Premium 自由编排字段，读取时迁入 aPlusLayoutStates.premium。 */
   premiumLayoutMode?: PremiumAPlusLayoutMode
+  /** @deprecated 旧版 Premium 自由编排字段，读取时迁入 aPlusLayoutStates.premium。 */
   premiumLayoutGroups?: PremiumAPlusLayoutGroup[]
   premiumBrandStoryEnabled?: boolean
   premiumBrandStoryCardCount?: number
+  standaloneBrandStoryCardCount?: number
   listingText: string
   referenceImageIds: string[]
   draft: AmazonPlannerSessionDraft
@@ -471,6 +501,106 @@ export interface AmazonPlannerSession {
   aPlusPlans: AmazonPlannerSessionAPlusPlan[]
   selectedPlanIndex: number | null
   selectedAPlusPlanIndex: number | null
+  createdAt: number
+  updatedAt: number
+}
+
+// ===== Listing 文案 =====
+
+export type ListingCopyPreset = 'footwear' | 'general'
+
+export interface BilingualText {
+  en: string
+  zh: string
+}
+
+export interface ListingCopyInput {
+  preset: ListingCopyPreset
+  productDescription: string
+  brand: string
+  category: string
+  material: string
+  features: string
+  colorAndSize: string
+  audience: string
+  useCases: string
+  requiredTerms: string
+  forbiddenTerms: string
+  heel: string
+  sole: string
+  closure: string
+  comfort: string
+}
+
+export type ListingCopyBullets = [BilingualText, BilingualText, BilingualText, BilingualText, BilingualText]
+
+export interface ListingCopyPrompts {
+  title: string
+  bullets: string
+  longDescription: string
+}
+
+export interface ListingCopyResult {
+  itemName: BilingualText
+  itemHighlight: BilingualText
+  bullets: ListingCopyBullets
+  longDescription: BilingualText
+  coreKeywords: BilingualText[]
+  backendSearchTerms: BilingualText
+  missingFacts: string[]
+  complianceWarnings: string[]
+}
+
+export interface ListingCopyProfitInput {
+  purchaseCostCny: number | null
+  domesticShippingCny: number | null
+  netWeightG: number | null
+  packagingWeightG: number | null
+  exchangeRate: number | null
+  referralRatePercent: number | null
+  targetMarginPercent: number | null
+  yanwenRateCnyPerKg: number | null
+  yanwenRegistrationFeeCny: number | null
+  competitorMinPriceUsd: number | null
+  competitorMaxPriceUsd: number | null
+  fbaInboundCny: number | null
+  fbaFulfillmentFeeUsd: number | null
+  calculationPriceUsd: number | null
+}
+
+export interface ListingCopyFulfillmentProfit {
+  fixedCostUsd: number
+  targetPriceUsd: number | null
+  suggestedPriceUsd: number | null
+  profitUsd: number | null
+  marginPercent: number | null
+  warning: string
+}
+
+export interface ListingCopyProfitResult {
+  billingWeightKg: number | null
+  yanwenFeeCny: number | null
+  calculationPriceUsd: number | null
+  suggestedPriceUsd: number | null
+  fbm: ListingCopyFulfillmentProfit
+  fba: ListingCopyFulfillmentProfit | null
+  error: string
+}
+
+export interface ListingCopySession {
+  id: string
+  kind: 'draft' | 'version'
+  title: string
+  marketplace: AmazonMarketplace
+  input: ListingCopyInput
+  prompts?: ListingCopyPrompts
+  /** 仅用于兼容旧版单提示词草稿和导入数据。 */
+  prompt?: string
+  /** 仅用于兼容旧版知识库开关。 */
+  useSystemKnowledgeBase?: boolean
+  result: ListingCopyResult | null
+  profitInput: ListingCopyProfitInput
+  referenceImageIds: string[]
   createdAt: number
   updatedAt: number
 }
@@ -670,6 +800,7 @@ export interface ExportData {
   tasks?: TaskRecord[]
   agentConversations?: AgentConversation[]
   amazonPlannerSessions?: AmazonPlannerSession[]
+  listingCopySessions?: ListingCopySession[]
   /** imageId → 图片信息 */
   imageFiles?: Record<string, {
     path: string

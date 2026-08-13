@@ -1,11 +1,12 @@
-import type { AmazonPlannerSession, TaskRecord, StoredImage, StoredImageThumbnail } from '../types'
+import type { AmazonPlannerSession, ListingCopySession, TaskRecord, StoredImage, StoredImageThumbnail } from '../types'
 
 const DB_NAME = 'amazon-image-studio'
-const DB_VERSION = 3
+const DB_VERSION = 4
 const STORE_TASKS = 'tasks'
 const STORE_IMAGES = 'images'
 const STORE_THUMBNAILS = 'thumbnails'
 const STORE_AMAZON_PLANNER_SESSIONS = 'amazonPlannerSessions'
+const STORE_LISTING_COPY_SESSIONS = 'listingCopySessions'
 const THUMBNAIL_MAX_SIZE = 720
 const THUMBNAIL_QUALITY = 0.9
 const THUMBNAIL_VERSION = 2
@@ -28,6 +29,9 @@ function openDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(STORE_AMAZON_PLANNER_SESSIONS)) {
         db.createObjectStore(STORE_AMAZON_PLANNER_SESSIONS, { keyPath: 'id' })
+      }
+      if (!db.objectStoreNames.contains(STORE_LISTING_COPY_SESSIONS)) {
+        db.createObjectStore(STORE_LISTING_COPY_SESSIONS, { keyPath: 'id' })
       }
     }
     req.onsuccess = () => resolve(req.result)
@@ -86,6 +90,24 @@ export function deleteAmazonPlannerSession(id: string): Promise<undefined> {
 
 export function clearAmazonPlannerSessions(): Promise<undefined> {
   return dbTransaction(STORE_AMAZON_PLANNER_SESSIONS, 'readwrite', (s) => s.clear())
+}
+
+// ===== Listing copy sessions =====
+
+export function getAllListingCopySessions(): Promise<ListingCopySession[]> {
+  return dbTransaction(STORE_LISTING_COPY_SESSIONS, 'readonly', (s) => s.getAll())
+}
+
+export function putListingCopySession(session: ListingCopySession): Promise<IDBValidKey> {
+  return dbTransaction(STORE_LISTING_COPY_SESSIONS, 'readwrite', (s) => s.put(session))
+}
+
+export function deleteListingCopySession(id: string): Promise<undefined> {
+  return dbTransaction(STORE_LISTING_COPY_SESSIONS, 'readwrite', (s) => s.delete(id))
+}
+
+export function clearListingCopySessions(): Promise<undefined> {
+  return dbTransaction(STORE_LISTING_COPY_SESSIONS, 'readwrite', (s) => s.clear())
 }
 
 // ===== Images =====

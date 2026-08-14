@@ -19,6 +19,7 @@ import {
   calculateListingCopyProfit,
   countVisibleCharacters,
   formatAllEnglishListingCopy,
+  formatListingCopyBullets,
   listingDescriptionToHtml,
   validateListingCopyResult,
 } from '../lib/listingCopy'
@@ -39,7 +40,9 @@ import {
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { applyGuestUnifiedApiUrl, createInputImageFromFile, ensureImageCached, useStore } from '../store'
 import Select, { COMPACT_SELECT_CLASS } from './Select'
-import { BookOpenIcon, CloseIcon, CopyIcon, EyeIcon, HistoryIcon, PhotoIcon, RefreshIcon, SettingsIcon, TrashIcon } from './icons'
+import PlannerRunDetailsModal, { type PlannerRunStatus } from './PlannerRunDetailsModal'
+import { BookOpenIcon, CloseIcon, CopyIcon, EditIcon, EyeIcon, HistoryIcon, PhotoIcon, RefreshIcon, SettingsIcon, TrashIcon } from './icons'
+import type { PlannerAttemptInfo } from '../lib/listingPlannerApi'
 
 const DRAFT_ID = 'listing-copy-current-draft'
 const FIELD_CLASS = 'w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 pr-10 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-100 dark:placeholder:text-gray-500'
@@ -62,7 +65,7 @@ function titleForSession(input: ListingCopyInput, result: ListingCopyResult | nu
   return result?.itemName.en.trim() || input.productDescription.trim().split(/\r?\n/)[0]?.slice(0, 60) || input.category.trim() || '未命名 Listing 文案'
 }
 
-function CopyButton({ value, label = '复制', onCopied }: { value: string; label?: string; onCopied: () => void }) {
+function CopyButton({ value, label = '复制', onCopied, showLabel = false }: { value: string; label?: string; onCopied: () => void; showLabel?: boolean }) {
   const showToast = useStore((state) => state.showToast)
   const copy = async () => {
     if (!value.trim()) return
@@ -80,9 +83,10 @@ function CopyButton({ value, label = '复制', onCopied }: { value: string; labe
       disabled={!value.trim()}
       aria-label={label}
       title={label}
-      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
+      className={`inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 disabled:cursor-not-allowed disabled:opacity-30 dark:text-gray-400 dark:hover:bg-white/[0.06] dark:hover:text-gray-100 ${showLabel ? 'w-auto border border-gray-200 bg-white px-2.5 text-xs font-semibold dark:border-white/[0.08] dark:bg-gray-950' : 'w-8'}`}
     >
       <CopyIcon className="h-4 w-4" />
+      {showLabel && <span>{label}</span>}
     </button>
   )
 }
@@ -239,6 +243,20 @@ function MoneyValue({ value }: { value: number | null | undefined }) {
   return <>{value == null ? '待补全' : `$${value.toFixed(2)}`}</>
 }
 
+function SafeHtmlPreview({ label, html }: { label: string; html: string }) {
+  return (
+    <div className="min-w-0 rounded-xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-gray-900">
+      <div className="mb-3 text-xs font-bold text-gray-500 dark:text-gray-400">{label}</div>
+      {html ? (
+        <article
+          className="min-h-56 break-words text-sm leading-7 text-gray-700 dark:text-gray-300 [&_h2]:mb-4 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:leading-8 [&_h2]:text-gray-900 dark:[&_h2]:text-white [&_h3]:mb-2 [&_h3]:mt-5 [&_h3]:text-base [&_h3]:font-bold [&_h3]:text-gray-900 dark:[&_h3]:text-white [&_li]:mb-1 [&_p]:mb-4 [&_ul]:mb-4 [&_ul]:list-disc [&_ul]:pl-5"
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      ) : <div className="flex min-h-56 items-center justify-center text-sm text-gray-400">生成长描述后可在这里预览</div>}
+    </div>
+  )
+}
+
 export default function ListingCopyWorkspace() {
   const settings = useStore((state) => state.settings)
   const adminAccess = useStore((state) => state.adminAccess)
@@ -247,6 +265,7 @@ export default function ListingCopyWorkspace() {
   const showToast = useStore((state) => state.showToast)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const dragCounterRef = useRef(0)
   const hydratedRef = useRef(false)
   const [marketplace, setMarketplace] = useState<AmazonMarketplace>(DEFAULT_AMAZON_MARKETPLACE)
   const [input, setInput] = useState<ListingCopyInput>(DEFAULT_LISTING_COPY_INPUT)
@@ -262,6 +281,19 @@ export default function ListingCopyWorkspace() {
   const [isUploading, setIsUploading] = useState(false)
   const [status, setStatus] = useState('')
   const [validationIssues, setValidationIssues] = useState<string[]>([])
+  const [isDraggingReferenceImages, setIsDraggingReferenceImages] = useState(false)
+  const [showGenerationDetails, setShowGenerationDetails] = useState(false)
+  const [showRefinement, setShowRefinement] = useState(false)
+  const [refinementInstruction, setRefinementInstruction] = useState('')
+  const [isRefining, setIsRefining] = useState(false)
+  const [generationRun, setGenerationRun] = useState<{
+    startedAt: number | null
+    finishedAt: number | null
+    status: PlannerRunStatus
+    attempt: PlannerAttemptInfo | null
+    responseText: string
+    error: string
+  }>({ startedAt: null, finishedAt: null, status: 'preparing', attempt: null, responseText: '', error: '' })
   const profit = useMemo(() => calculateListingCopyProfit(profitInput), [profitInput])
   const versions = useMemo(() => sessions.filter((session) => session.kind === 'version').sort((a, b) => b.createdAt - a.createdAt), [sessions])
   const plannerProfile = useMemo(() => {
@@ -364,6 +396,14 @@ export default function ListingCopyWorkspace() {
     }
   }
 
+  const stopGeneration = () => {
+    abortControllerRef.current?.abort()
+    setGenerationRun((current) => ({ ...current, status: 'stopped', finishedAt: Date.now() }))
+    setIsGenerating(false)
+    setIsRefining(false)
+    setStatus('')
+  }
+
   const restoreSession = async (session: ListingCopySession) => {
     setMarketplace(normalizeAmazonMarketplace(session.marketplace))
     setInput(cloneInput(session.input))
@@ -380,8 +420,14 @@ export default function ListingCopyWorkspace() {
     showToast('文案历史已恢复为当前草稿', 'success')
   }
 
-  const runGeneration = async () => {
-    if (!input.productDescription.trim() && !input.category.trim() && !referenceImages.length) {
+  const runGeneration = async (sellerRefinement = '') => {
+    const refinementRequest = sellerRefinement.trim()
+    const resultBeforeRefinement = result
+    if (refinementRequest && !resultBeforeRefinement) {
+      showToast('请先生成一版 Listing 文案', 'error')
+      return
+    }
+    if (!refinementRequest && !input.productDescription.trim() && !input.category.trim() && !referenceImages.length) {
       showToast('请至少填写产品介绍、品类或上传参考图', 'error')
       return
     }
@@ -400,8 +446,10 @@ export default function ListingCopyWorkspace() {
     const controller = new AbortController()
     abortControllerRef.current = controller
     setIsGenerating(true)
+    setIsRefining(Boolean(refinementRequest))
     setValidationIssues([])
-    setStatus('正在准备产品资料与参考图…')
+    setStatus(refinementRequest ? '正在准备当前文案与参考图…' : '正在准备产品资料与参考图…')
+    setGenerationRun({ startedAt: Date.now(), finishedAt: null, status: 'preparing', attempt: null, responseText: '', error: '' })
     try {
       const payload = await preparePlannerReferenceImagePayload(referenceImages.map((image) => image.dataUrl), { signal: controller.signal })
       const generated = await generateListingCopy({
@@ -410,13 +458,27 @@ export default function ListingCopyWorkspace() {
         marketplace,
         profile: plannerProfile,
         referenceImageDataUrls: payload.dataUrls,
+        previousRaw: refinementRequest && resultBeforeRefinement ? JSON.stringify(resultBeforeRefinement) : undefined,
+        refinementInstruction: refinementRequest || undefined,
         signal: controller.signal,
-        onAttemptStart: (attempt) => setStatus(attempt.label),
-        onStatusChange: (next) => setStatus(next === 'streaming' ? '正在接收文案…' : next === 'parsing' ? '正在校验结果…' : '等待 AI 返回…'),
+        onAttemptStart: (attempt) => {
+          setStatus(attempt.label)
+          setGenerationRun((current) => ({ ...current, attempt, status: 'waiting', responseText: '', error: '' }))
+        },
+        onStatusChange: (next) => {
+          setStatus(next === 'streaming' ? '正在接收文案…' : next === 'parsing' ? '正在校验结果…' : '等待 AI 返回…')
+          setGenerationRun((current) => ({ ...current, status: next }))
+        },
+        onTextDelta: (delta) => setGenerationRun((current) => ({ ...current, responseText: current.responseText + delta })),
       })
       if (controller.signal.aborted) return
       setResult(generated.result)
+      if (refinementRequest) {
+        setShowRefinement(false)
+        setRefinementInstruction('')
+      }
       setValidationIssues(generated.validationIssues)
+      setGenerationRun((current) => ({ ...current, status: 'success', finishedAt: Date.now(), responseText: generated.rawResponseText || current.responseText }))
       const now = Date.now()
       const version: ListingCopySession = {
         id: createVersionId(),
@@ -433,12 +495,20 @@ export default function ListingCopyWorkspace() {
       }
       await putListingCopySession(version)
       setSessions((current) => [version, ...current])
-      showToast(generated.validationIssues.length ? '文案已生成，请检查标红规则' : generated.repaired ? '文案已生成并自动修复' : 'Listing 文案已生成', generated.validationIssues.length ? 'info' : 'success')
+      const successMessage = refinementRequest
+        ? generated.validationIssues.length ? '文案已优化，请检查标红规则' : '当前 Listing 文案已优化'
+        : generated.validationIssues.length ? '文案已生成，请检查标红规则' : generated.repaired ? '文案已生成并自动修复' : 'Listing 文案已生成'
+      showToast(successMessage, generated.validationIssues.length ? 'info' : 'success')
     } catch (error) {
-      if (!controller.signal.aborted) showToast(`文案生成失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+      if (!controller.signal.aborted) {
+        const detail = error instanceof Error ? error.message : String(error)
+        setGenerationRun((current) => ({ ...current, status: 'error', finishedAt: Date.now(), error: detail }))
+        showToast(`${refinementRequest ? '文案优化' : '文案生成'}失败：${detail}`, 'error')
+      }
     } finally {
       if (abortControllerRef.current === controller) abortControllerRef.current = null
       setIsGenerating(false)
+      setIsRefining(false)
       setStatus('')
     }
   }
@@ -532,10 +602,32 @@ export default function ListingCopyWorkspace() {
               <TextField label="禁止使用的词" value={input.forbiddenTerms} onChange={(value) => updateInput('forbiddenTerms', value)} />
             </div>
 
-            <div className="mt-5 border-t border-gray-200 pt-5 dark:border-white/[0.08]">
+            <div
+              className={`mt-5 rounded-2xl border-2 border-dashed p-4 transition ${isDraggingReferenceImages ? 'border-blue-400 bg-blue-50 ring-4 ring-blue-500/10 dark:border-blue-400 dark:bg-blue-400/10' : 'border-transparent border-t-gray-200 pt-5 dark:border-transparent dark:border-t-white/[0.08]'}`}
+              onDragEnter={(event) => {
+                event.preventDefault()
+                dragCounterRef.current += 1
+                if (event.dataTransfer.types.includes('Files')) setIsDraggingReferenceImages(true)
+              }}
+              onDragOver={(event) => {
+                event.preventDefault()
+                event.dataTransfer.dropEffect = 'copy'
+              }}
+              onDragLeave={(event) => {
+                event.preventDefault()
+                dragCounterRef.current = Math.max(0, dragCounterRef.current - 1)
+                if (dragCounterRef.current === 0) setIsDraggingReferenceImages(false)
+              }}
+              onDrop={(event) => {
+                event.preventDefault()
+                dragCounterRef.current = 0
+                setIsDraggingReferenceImages(false)
+                if (event.dataTransfer.files.length) void handleFiles(event.dataTransfer.files)
+              }}
+            >
               <div className="mb-3 flex items-center justify-between"><div><h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">产品参考图</h4><p className="mt-1 text-[11px] text-gray-400">用于确认外观事实，最多 8 张；不会直接决定文案风格。</p></div><button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"><PhotoIcon className="h-4 w-4" />{isUploading ? '上传中…' : '上传参考图'}</button></div>
               <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(event: ChangeEvent<HTMLInputElement>) => { void handleFiles(event.target.files ?? []); event.target.value = '' }} />
-              {referenceImages.length ? <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">{referenceImages.map((image, index) => <div key={image.id} className="group relative aspect-square overflow-hidden rounded-xl border border-gray-200 bg-gray-100 dark:border-white/[0.08] dark:bg-gray-950"><img src={image.dataUrl} alt={`产品参考图 ${index + 1}`} className="h-full w-full object-cover" /><button type="button" aria-label={`删除参考图 ${index + 1}`} onClick={() => setReferenceImages((current) => current.filter((item) => item.id !== image.id))} className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100"><CloseIcon className="h-3.5 w-3.5" /></button></div>)}</div> : <button type="button" onClick={() => fileInputRef.current?.click()} className="flex w-full items-center justify-center rounded-xl border border-dashed border-gray-300 py-8 text-sm text-gray-400 transition hover:border-blue-300 hover:bg-blue-50/40 hover:text-blue-600 dark:border-white/[0.12] dark:hover:bg-blue-400/5"><PhotoIcon className="mr-2 h-5 w-5" />添加产品参考图</button>}
+              {referenceImages.length ? <><div className="grid grid-cols-4 gap-2 sm:grid-cols-6">{referenceImages.map((image, index) => <div key={image.id} className="group relative aspect-square overflow-hidden rounded-xl border border-gray-200 bg-gray-100 dark:border-white/[0.08] dark:bg-gray-950"><img src={image.dataUrl} alt={`产品参考图 ${index + 1}`} className="h-full w-full object-cover" /><button type="button" aria-label={`删除参考图 ${index + 1}`} onClick={() => setReferenceImages((current) => current.filter((item) => item.id !== image.id))} className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100"><CloseIcon className="h-3.5 w-3.5" /></button></div>)}</div><div className="mt-2 text-center text-[11px] text-gray-400">可继续把图片拖到此区域添加</div></> : <button type="button" onClick={() => fileInputRef.current?.click()} className={`flex w-full flex-col items-center justify-center rounded-xl border border-dashed py-8 text-sm transition ${isDraggingReferenceImages ? 'border-blue-400 bg-white/70 text-blue-600 dark:bg-gray-900/70' : 'border-gray-300 text-gray-400 hover:border-blue-300 hover:bg-blue-50/40 hover:text-blue-600 dark:border-white/[0.12] dark:hover:bg-blue-400/5'}`}><PhotoIcon className="mb-2 h-6 w-6" /><span>{isDraggingReferenceImages ? '松开即可上传图片' : '点击或拖拽上传产品参考图'}</span><span className="mt-1 text-[11px] font-normal opacity-75">支持一次拖入多张图片，不使用风格参考图</span></button>}
             </div>
 
             <div className="mt-5 border-t border-gray-200 pt-5 dark:border-white/[0.08]">
@@ -561,15 +653,16 @@ export default function ListingCopyWorkspace() {
           <section className={`${CARD_CLASS} flex min-h-[720px] flex-col p-4 sm:p-5`}>
             <div className="mb-4 flex items-start justify-between gap-3"><div><h3 className="font-bold text-gray-900 dark:text-white">Listing 策划提示词</h3><p className="mt-1 text-xs text-gray-400">标题、五点描述和长描述可分别修改，生成时会连同产品资料一起提交给 AI。</p></div><button type="button" onClick={() => setPrompts(cloneDefaultListingCopyPrompts())} className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]"><RefreshIcon className="h-3.5 w-3.5" />全部恢复默认</button></div>
             <div className="space-y-3">
-              <PromptEditor label="标题提示词" description="默认直接使用《标题Prompt.txt》，同时策划 Item Name（≤75）与 Item Highlight（≤125）。" value={prompts.title} onChange={(value) => setPrompts((current) => ({ ...current, title: value }))} onReset={() => setPrompts((current) => ({ ...current, title: DEFAULT_LISTING_COPY_PROMPTS.title }))} rows={9} tone="emerald" />
-              <PromptEditor label="五点描述提示词" description="根据两份笔记整理：设计/穿戴、关键结构、功能、搭配场景、注意事项，严格五条。" value={prompts.bullets} onChange={(value) => setPrompts((current) => ({ ...current, bullets: value }))} onReset={() => setPrompts((current) => ({ ...current, bullets: DEFAULT_LISTING_COPY_PROMPTS.bullets }))} rows={13} tone="blue" />
-              <PromptEditor label="长描述提示词" description="根据两份笔记整理：使用稳定结构展开产品价值，并将事实型注意事项放在结尾。" value={prompts.longDescription} onChange={(value) => setPrompts((current) => ({ ...current, longDescription: value }))} onReset={() => setPrompts((current) => ({ ...current, longDescription: DEFAULT_LISTING_COPY_PROMPTS.longDescription }))} rows={11} tone="violet" />
+              <PromptEditor label="标题提示词" description="默认仅使用《标题Prompt.txt》原文；系统只额外禁止逗号和独立单词 and，不再追加其他标题说明。" value={prompts.title} onChange={(value) => setPrompts((current) => ({ ...current, title: value }))} onReset={() => setPrompts((current) => ({ ...current, title: DEFAULT_LISTING_COPY_PROMPTS.title }))} rows={9} tone="emerald" />
+              <PromptEditor label="五点描述提示词" description="按《SKU标题.docx》的销售文风：严格五条，用具体利益型小标题把真实参数转化为购买理由。" value={prompts.bullets} onChange={(value) => setPrompts((current) => ({ ...current, bullets: value }))} onReset={() => setPrompts((current) => ({ ...current, bullets: DEFAULT_LISTING_COPY_PROMPTS.bullets }))} rows={16} tone="blue" />
+              <PromptEditor label="长描述提示词" description="按《SKU标题.docx》的成品风格：加粗大标题、卖点叙事、适用场景、规格说明和优雅收尾。" value={prompts.longDescription} onChange={(value) => setPrompts((current) => ({ ...current, longDescription: value }))} onReset={() => setPrompts((current) => ({ ...current, longDescription: DEFAULT_LISTING_COPY_PROMPTS.longDescription }))} rows={18} tone="violet" />
             </div>
-            <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-xs leading-5 text-gray-500 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-400"><span className="font-semibold text-gray-700 dark:text-gray-200">系统固定契约：</span>独立标题字段、75/125 字符限制、精确五点、中英结构、缺失事实、合规提醒、JSON-only 和禁止编造。该部分不会显示在编辑框内，也不能被删除。</div>
+            <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-xs leading-5 text-gray-500 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-400"><span className="font-semibold text-gray-700 dark:text-gray-200">系统固定契约：</span>标题只额外禁用逗号和独立单词 and；五点与长描述必须是买家销售文案，缺失资料只能进入内部清单，不能出现在买家可见内容中。JSON 结构和禁止编造规则始终保留。</div>
             <button type="button" onClick={() => setShowSystemKnowledgeBase(true)} className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50/60 px-4 text-sm font-semibold text-blue-700 transition hover:bg-blue-100/70 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200 dark:hover:bg-blue-400/15"><EyeIcon className="h-4 w-4" />查看内置知识库</button>
             <div className="mt-4 flex flex-col gap-2 sm:flex-row">
               <button type="button" onClick={() => void runGeneration()} disabled={isGenerating} className="inline-flex h-11 flex-1 items-center justify-center rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 px-5 text-sm font-bold text-white shadow-sm transition hover:from-blue-700 hover:to-violet-700 disabled:cursor-not-allowed disabled:opacity-60">{isGenerating ? status || 'AI 生成中…' : '生成 Listing 文案'}</button>
-              {isGenerating && <button type="button" onClick={() => abortControllerRef.current?.abort()} className="h-11 rounded-xl border border-red-200 px-4 text-sm font-semibold text-red-600 hover:bg-red-50 dark:border-red-400/20 dark:hover:bg-red-400/10">停止</button>}
+              {generationRun.startedAt && (plannerProfile?.streamImages || !isGenerating) && <button type="button" onClick={() => setShowGenerationDetails(true)} className="inline-flex h-11 items-center justify-center gap-1.5 rounded-xl border border-gray-200 px-4 text-sm font-semibold text-gray-600 hover:bg-gray-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]"><EyeIcon className="h-4 w-4" />{isGenerating && plannerProfile?.streamImages ? '查看流式数据' : '查看返回'}</button>}
+              {isGenerating && <button type="button" onClick={stopGeneration} className="h-11 rounded-xl border border-red-200 px-4 text-sm font-semibold text-red-600 hover:bg-red-50 dark:border-red-400/20 dark:hover:bg-red-400/10">停止</button>}
             </div>
           </section>
         </div>
@@ -586,16 +679,20 @@ export default function ListingCopyWorkspace() {
         </section>
 
         <section className={`${CARD_CLASS} p-4 sm:p-5`}>
-          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="font-bold text-gray-900 dark:text-white">中英文 Listing 文案</h3><p className="mt-1 text-xs text-gray-400">两侧均可独立编辑和复制，不会自动互相覆盖。</p></div>{result && <CopyButton value={formatAllEnglishListingCopy(result)} label="复制全部英文" onCopied={() => showToast('全部英文文案已复制', 'success')} />}</div>
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="font-bold text-gray-900 dark:text-white">中英文 Listing 文案</h3><p className="mt-1 text-xs text-gray-400">先查看 AI 的标题策划依据，再复制或编辑最终主标题、辅助标题和正文。</p></div>{result && <div className="flex flex-wrap gap-2"><button type="button" onClick={() => setShowRefinement((value) => !value)} disabled={isGenerating} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2.5 text-xs font-semibold text-violet-700 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-violet-400/20 dark:bg-violet-400/10 dark:text-violet-200 dark:hover:bg-violet-400/15"><EditIcon className="h-4 w-4" />优化当前文案</button><CopyButton value={formatAllEnglishListingCopy(result)} label="复制全部英文" showLabel onCopied={() => showToast('全部英文文案已复制', 'success')} /></div>}</div>
           {!result ? <div className="rounded-xl border border-dashed border-gray-300 py-16 text-center dark:border-white/[0.12]"><div className="text-sm font-medium text-gray-500 dark:text-gray-300">生成结果会显示在这里</div><div className="mt-1 text-xs text-gray-400">Item Name 与 Item Highlight 始终独立，不会拼接。</div></div> : <div className="space-y-3">
+            {showRefinement && <section className="rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-blue-50/60 p-4 dark:border-violet-400/20 dark:from-violet-500/10 dark:via-gray-900 dark:to-blue-500/10"><div className="flex items-start justify-between gap-3"><div><h4 className="text-sm font-bold text-gray-900 dark:text-white">继续优化当前文案</h4><p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">AI 会同时参考当前结果、原始产品资料和产品图，只修改你提出的部分，并把新结果保存为一个历史版本。</p></div><button type="button" aria-label="关闭优化当前文案" onClick={() => setShowRefinement(false)} className="rounded-lg p-1.5 text-gray-400 transition hover:bg-white hover:text-gray-700 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"><CloseIcon className="h-4 w-4" /></button></div><textarea value={refinementInstruction} onChange={(event) => setRefinementInstruction(event.target.value)} rows={4} placeholder="例如：保留标题，把五点和长描述写得更华丽；结合凹凸橡胶鞋底突出防滑与强抓地；结合高防水台说明16厘米高跟的实际坡度与稳定感。" className={`${FIELD_CLASS} mt-3 resize-y pr-3`} /><div className="mt-3 flex flex-wrap items-center justify-end gap-2"><button type="button" onClick={() => { setShowRefinement(false); setRefinementInstruction('') }} disabled={isGenerating} className="h-9 rounded-xl border border-gray-200 px-3 text-xs font-semibold text-gray-600 hover:bg-white disabled:opacity-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]">取消</button><button type="button" onClick={() => void runGeneration(refinementInstruction)} disabled={isGenerating || !refinementInstruction.trim()} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-violet-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"><EditIcon className="h-4 w-4" />{isRefining ? status || '正在优化…' : '提交优化要求'}</button></div></section>}
             {validationIssues.length > 0 && <div className="rounded-xl border border-red-200 bg-red-50 p-3 dark:border-red-400/20 dark:bg-red-400/10"><div className="text-xs font-bold text-red-700 dark:text-red-200">需要人工检查</div><ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs text-red-600 dark:text-red-300">{validationIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}
+            {(result.titleAnalysis ?? '').trim() && <section className="overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-violet-50/70 dark:border-blue-400/20 dark:from-blue-500/10 dark:via-gray-900 dark:to-violet-500/10"><div className="flex items-center justify-between gap-3 border-b border-blue-100 px-4 py-3 dark:border-blue-400/15"><div><h4 className="text-sm font-bold text-gray-900 dark:text-white">AI 标题策划分析</h4><p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">商品身份、图片识别节点、关键词分层与标题取舍</p></div><CopyButton value={result.titleAnalysis ?? ''} label="复制策划分析" showLabel onCopied={() => showToast('标题策划分析已复制', 'success')} /></div><article className="break-words px-4 py-4 text-sm leading-7 text-gray-700 dark:text-gray-300 [&_h2]:mb-3 [&_h2]:text-lg [&_h2]:font-bold [&_h2]:text-gray-900 dark:[&_h2]:text-white [&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:font-bold [&_h3]:text-gray-900 dark:[&_h3]:text-white [&_li]:mb-1 [&_p]:mb-3 [&_strong]:font-bold [&_strong]:text-gray-900 dark:[&_strong]:text-white [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5" dangerouslySetInnerHTML={{ __html: listingDescriptionToHtml(result.titleAnalysis ?? '') }} /></section>}
             <BilingualEditor label="主标题 Item Name" value={result.itemName} englishLimit={ITEM_NAME_MAX_CHARACTERS} onChange={(value) => updateBilingual('itemName', value)} />
             <BilingualEditor label="辅助标题 Item Highlight" value={result.itemHighlight} englishLimit={ITEM_HIGHLIGHT_MAX_CHARACTERS} onChange={(value) => updateBilingual('itemHighlight', value)} />
+            <section className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-gray-50/70 p-3 dark:border-white/[0.08] dark:bg-gray-950/60 sm:flex-row sm:items-center sm:justify-between"><div><h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100">五点描述</h4><p className="mt-1 text-[11px] text-gray-400">可整组复制，也可继续逐条编辑和复制。</p></div><div className="flex flex-wrap gap-2"><CopyButton value={formatListingCopyBullets(result, 'en')} label="复制五点英文" showLabel onCopied={() => showToast('五点英文已复制', 'success')} /><CopyButton value={formatListingCopyBullets(result, 'zh')} label="复制五点中文" showLabel onCopied={() => showToast('五点中文已复制', 'success')} /></div></section>
             {result.bullets.map((bullet, index) => <BilingualEditor key={index} label={`五点描述 ${index + 1}`} value={bullet} rows={4} onChange={(value) => setResult((current) => current ? { ...current, bullets: current.bullets.map((item, itemIndex) => itemIndex === index ? value : item) as ListingCopyResult['bullets'] } : current)} />)}
-            <BilingualEditor label="长描述（纯文本）" value={result.longDescription} rows={8} onChange={(value) => updateBilingual('longDescription', value)} />
+            <BilingualEditor label="长描述（纯文本）" value={result.longDescription} rows={15} onChange={(value) => updateBilingual('longDescription', value)} />
+            <section className="rounded-xl border border-gray-200 bg-white p-3 dark:border-white/[0.08] dark:bg-gray-900"><h4 className="mb-3 text-sm font-semibold text-gray-800 dark:text-gray-100">长描述富文本预览</h4><div className="grid gap-3 lg:grid-cols-2"><SafeHtmlPreview label="英文预览" html={listingDescriptionToHtml(result.longDescription.en)} /><SafeHtmlPreview label="中文预览" html={listingDescriptionToHtml(result.longDescription.zh)} /></div></section>
             <BilingualEditor label="核心关键词" value={coreKeywordsText} rows={3} onChange={(value) => setResult((current) => current ? { ...current, coreKeywords: value.en.split(/[,\n]/).map((en, index) => ({ en: en.trim(), zh: value.zh.split(/[，,\n]/)[index]?.trim() ?? '' })).filter((item) => item.en || item.zh) } : current)} />
             <BilingualEditor label="Backend Search Terms" value={result.backendSearchTerms} rows={3} onChange={(value) => updateBilingual('backendSearchTerms', value)} />
-            <section className="rounded-xl border border-gray-200 bg-gray-50/70 p-3 dark:border-white/[0.08] dark:bg-gray-950/60"><h4 className="mb-3 text-sm font-semibold text-gray-800 dark:text-gray-100">安全 HTML 长描述</h4><div className="grid gap-3 lg:grid-cols-2">{([{ label: '英文 HTML', value: listingDescriptionToHtml(result.longDescription.en) }, { label: '中文 HTML', value: listingDescriptionToHtml(result.longDescription.zh) }] as const).map((item) => <FieldShell key={item.label} label={item.label} value={item.value}><textarea readOnly value={item.value} rows={6} className={`${FIELD_CLASS} resize-y bg-gray-50 font-mono text-xs dark:bg-gray-950`} /></FieldShell>)}</div></section>
+            <section className="rounded-xl border border-gray-200 bg-gray-50/70 p-3 dark:border-white/[0.08] dark:bg-gray-950/60"><h4 className="mb-3 text-sm font-semibold text-gray-800 dark:text-gray-100">安全 HTML 长描述</h4><div className="grid gap-3 lg:grid-cols-2">{([{ label: '英文 HTML', value: listingDescriptionToHtml(result.longDescription.en) }, { label: '中文 HTML', value: listingDescriptionToHtml(result.longDescription.zh) }] as const).map((item) => <FieldShell key={item.label} label={item.label} value={item.value}><textarea readOnly value={item.value} rows={13} className={`${FIELD_CLASS} min-h-72 resize-y bg-gray-50 font-mono text-xs leading-5 dark:bg-gray-950`} /></FieldShell>)}</div><div className="mt-4"><div className="mb-3 text-sm font-semibold text-gray-800 dark:text-gray-100">富文本效果预览</div><div className="grid gap-3 lg:grid-cols-2"><SafeHtmlPreview label="英文预览" html={listingDescriptionToHtml(result.longDescription.en)} /><SafeHtmlPreview label="中文预览" html={listingDescriptionToHtml(result.longDescription.zh)} /></div></div></section>
             {(result.missingFacts.length > 0 || result.complianceWarnings.length > 0) && <div className="grid gap-3 lg:grid-cols-2"><div className="rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-400/20 dark:bg-amber-400/10"><div className="text-xs font-bold text-amber-700 dark:text-amber-200">缺失信息</div><ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-700 dark:text-amber-300">{result.missingFacts.length ? result.missingFacts.map((item) => <li key={item}>{item}</li>) : <li>无</li>}</ul></div><div className="rounded-xl border border-orange-200 bg-orange-50 p-3 dark:border-orange-400/20 dark:bg-orange-400/10"><div className="text-xs font-bold text-orange-700 dark:text-orange-200">合规提醒</div><ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-orange-700 dark:text-orange-300">{result.complianceWarnings.length ? result.complianceWarnings.map((item) => <li key={item}>{item}</li>) : <li>无</li>}</ul></div></div>}
           </div>}
         </section>
@@ -630,6 +727,22 @@ export default function ListingCopyWorkspace() {
             </footer>
           </section>
         </div>
+      )}
+      {showGenerationDetails && generationRun.startedAt && plannerProfile && (
+        <PlannerRunDetailsModal
+          status={generationRun.status}
+          startedAt={generationRun.startedAt}
+          finishedAt={generationRun.finishedAt}
+          profileName={plannerProfile.name}
+          model={plannerProfile.model}
+          apiMode={generationRun.attempt?.apiMode ?? plannerProfile.apiMode}
+          attempt={generationRun.attempt}
+          responseText={generationRun.responseText}
+          error={generationRun.error}
+          running={isGenerating}
+          onClose={() => setShowGenerationDetails(false)}
+          onStop={stopGeneration}
+        />
       )}
     </main>
   )

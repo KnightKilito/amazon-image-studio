@@ -2,17 +2,25 @@
 id: changelog
 title: 版本日志
 navTitle: 版本日志
-description: 当前版本 v0.3.0，以及根据 Git 提交历史整理的主要功能更新。
+description: 当前版本 v0.4.0，以及根据 Git 提交历史整理的主要功能更新。
 eyebrow: 发布记录
 icon: history
 order: 40
 tags:
-  - v0.3.0
+  - v0.4.0
   - 发布记录
   - 更新摘要
 ---
 
-## 当前版本：v0.3.0
+## v0.4.0
+
+发布日期：2026-08-14
+
+- 新增listing编辑页。
+- 手机A+页复用高级A+功能模块。
+- 细化品牌故事策划。
+
+## v0.3.0
 
 发布日期：2026-08-10
 

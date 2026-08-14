@@ -17,12 +17,33 @@ const BILINGUAL_SCHEMA = {
   required: ['en', 'zh'],
 } as const
 
+const ITEM_NAME_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    en: { type: 'string', maxLength: 75 },
+    zh: { type: 'string' },
+  },
+  required: ['en', 'zh'],
+} as const
+
+const ITEM_HIGHLIGHT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    en: { type: 'string', maxLength: 125 },
+    zh: { type: 'string' },
+  },
+  required: ['en', 'zh'],
+} as const
+
 const LISTING_COPY_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    itemName: BILINGUAL_SCHEMA,
-    itemHighlight: BILINGUAL_SCHEMA,
+    titleAnalysis: { type: 'string', minLength: 80 },
+    itemName: ITEM_NAME_SCHEMA,
+    itemHighlight: ITEM_HIGHLIGHT_SCHEMA,
     bullets: {
       type: 'array',
       minItems: 5,
@@ -40,7 +61,7 @@ const LISTING_COPY_SCHEMA = {
     missingFacts: { type: 'array', items: { type: 'string' } },
     complianceWarnings: { type: 'array', items: { type: 'string' } },
   },
-  required: ['itemName', 'itemHighlight', 'bullets', 'longDescription', 'coreKeywords', 'backendSearchTerms', 'missingFacts', 'complianceWarnings'],
+  required: ['titleAnalysis', 'itemName', 'itemHighlight', 'bullets', 'longDescription', 'coreKeywords', 'backendSearchTerms', 'missingFacts', 'complianceWarnings'],
 } as const
 
 function formatInput(input: ListingCopyInput) {
@@ -68,24 +89,36 @@ function buildSystemPrompt(options: { prompts: ListingCopyPrompts; marketplace: 
   const context = AMAZON_MARKETPLACE_CONTEXT[options.marketplace]
   return [
     `Title instructions:\n${options.prompts.title.trim()}`,
+    'Fixed title restriction: Item Name and Item Highlight must not contain English commas, Chinese commas, or the standalone English word "and".',
+    'Title planning output: titleAnalysis must be a substantial professional decision brief in Simplified Chinese with readable Markdown. Explain the product identity chain, the strongest supplied or clearly visible recognition nodes, COSMO-style category and attribute relationships, which terms belong in Item Name versus Item Highlight, character-budget tradeoffs, and any commercially valuable but uncertain term worth confirming. Write an evidence-backed rationale for the seller, not a generic summary. Keep the final Item Name and Item Highlight only in their dedicated fields.',
     `Five-bullet instructions:\n${options.prompts.bullets.trim()}`,
     `Long-description instructions:\n${options.prompts.longDescription.trim()}`,
     `Target marketplace: ${context.label}, ${context.domain}. Primary copy language: ${context.primaryLanguage}. Currency context: ${context.currency}.`,
+    'Creative direction: write with the confidence, rhythm, imagery, and emotional pull of a senior US ecommerce copywriter. Freely translate confirmed or clearly visible design into aesthetic impact, styling inspiration, mood, and plausible occasions. These persuasive interpretations are encouraged and are not the same as inventing technical specifications.',
+    'Compliance interpretation: distinguish ordinary qualitative ecommerce language from objective tested or guaranteed claims. Terms such as anti-slip, grippy, strong grip, comfortable, all-day comfort, stable, easy to walk in, or balanced elevation may be used as everyday buyer-facing benefits when supplied facts or clearly visible design support the impression. A textured, grooved, lugged, or rubber outsole can reasonably support anti-slip or strong-grip wording as common product-design knowledge. For high heels, consider the visible platform height and effective foot pitch together; do not flag heel height alone when a substantial platform visibly offsets the slope.',
+    'Compliance red line: without supplied evidence, do not claim certified slip resistance, a named safety standard, quantified traction or comfort improvement, prevention of slips or falls, guaranteed stability, medical or orthopedic effects, or an absolute outcome. complianceWarnings must contain only a concrete policy, legal, contradiction, certification, or materially deceptive-claim risk. Do not create a warning merely because no laboratory test or certification was supplied for ordinary qualitative marketing language.',
     options.textOnly
-      ? 'No reference images are available in this attempt. Use only supplied product facts and never infer appearance, construction, materials, accessories, claims, certifications, sizing, or package contents.'
-      : 'Reference images may be used only to confirm visible product facts. Do not invent facts that are not explicitly supplied or clearly visible.',
+      ? 'Factual boundary: product specifications, materials, measurements, performance, certifications, and construction must come from supplied facts. Omit unsupported specifications from customer-facing copy and place only commercially useful gaps in missingFacts.'
+      : 'Factual boundary: product specifications, materials, measurements, performance, certifications, and construction must come from supplied facts or clearly visible evidence. Omit unsupported specifications from customer-facing copy and place only commercially useful gaps in missingFacts.',
     options.repairIssues?.length
       ? `Repair every validation issue below while preserving all supported facts:\n- ${options.repairIssues.join('\n- ')}`
       : '',
-    'Item Name and Item Highlight are separate fields. Never concatenate them. Item Name English must contain at most 75 visible characters including spaces and punctuation. Item Highlight English must contain at most 125.',
-    'Return exactly five bilingual bullet objects. Return longDescription as plain text only; do not return HTML.',
+    'Customer-facing boundary: itemName, itemHighlight, bullets, and longDescription are finished sales copy. Never discuss missing inputs, uncertainty, source data, or the information-gathering process in those fields; reserve that discussion for titleAnalysis or missingFacts.',
+    'Return exactly five bilingual bullet objects. In each language every bullet must begin with its matching number 1 through 5, a specific benefit-led heading in square brackets, then a colon. Do not use generic headings such as Product Form, Basic Information, or Missing Information.',
+    'Return longDescription as Markdown-flavored plain text, never HTML. Follow the user-editable long-description instructions for voice and structure; use **bold emphasis** and lists when they improve persuasion and readability.',
     'Return coreKeywords as bilingual terms. backendSearchTerms.en must be a natural space-separated Seller Central search term string without competitor brands, ASINs, irrelevant words, or mechanical repetition.',
     'Return missingFacts and complianceWarnings as Simplified Chinese string arrays. If none, return empty arrays.',
     'Return only one valid JSON object matching the required schema. Do not use Markdown fences, comments, or text outside JSON.',
   ].filter(Boolean).join('\n\n')
 }
 
-function buildUserText(input: ListingCopyInput, previousRaw?: string) {
+function buildUserText(input: ListingCopyInput, previousRaw?: string, refinementInstruction?: string, repairIssues?: string[]) {
+  if (previousRaw && repairIssues?.length) {
+    return `Use these authoritative product facts while repairing the previous JSON response:\n\n${formatInput(input) || '(No product facts supplied)'}\n\nPrevious JSON response:\n${previousRaw}\n\nReturn the complete corrected object.`
+  }
+  if (previousRaw && refinementInstruction?.trim()) {
+    return `Revise the current Listing JSON according to the seller's follow-up request. Preserve strong content and fields that the seller did not ask to change. Reconsider the original reference images together with the authoritative product facts; return the complete revised object, not a patch.\n\nSeller follow-up request:\n${refinementInstruction.trim()}\n\nAuthoritative product facts:\n${formatInput(input) || '(No product facts supplied)'}\n\nCurrent Listing JSON:\n${previousRaw}`
+  }
   return previousRaw
     ? `Use these authoritative product facts while repairing the previous JSON response:\n\n${formatInput(input) || '(No product facts supplied)'}\n\nPrevious JSON response:\n${previousRaw}\n\nReturn the complete corrected object.`
     : `Create the Amazon listing copy from these authoritative product facts:\n\n${formatInput(input) || '(No product facts supplied)'}`
@@ -130,6 +163,7 @@ export function normalizeListingCopyPayload(payload: unknown): ListingCopyResult
   const paddedBullets = Array.from({ length: 5 }, (_, index) => bullets[index] ?? { en: '', zh: '' })
   const coreKeywords = Array.isArray(record.coreKeywords) ? record.coreKeywords.map(readBilingual).filter((item) => item.en || item.zh) : []
   return {
+    titleAnalysis: readString(record.titleAnalysis),
     itemName: readBilingual(record.itemName),
     itemHighlight: readBilingual(record.itemHighlight),
     bullets: paddedBullets as ListingCopyResult['bullets'],
@@ -148,6 +182,7 @@ async function performRequest(options: {
   profile: ApiProfile
   referenceImageDataUrls: string[]
   previousRaw?: string
+  refinementInstruction?: string
   repairIssues?: string[]
   signal?: AbortSignal
   onAttemptStart?: (attempt: PlannerAttemptInfo) => void
@@ -157,7 +192,7 @@ async function performRequest(options: {
   const profile = options.profile
   const apiMode: ApiMode = profile.apiMode === 'chat' ? 'chat' : 'responses'
   const chat = apiMode === 'chat'
-  const textOnly = isOfficialDeepSeekPlannerProfile(profile) || Boolean(options.previousRaw) || options.referenceImageDataUrls.length === 0
+  const textOnly = isOfficialDeepSeekPlannerProfile(profile) || options.referenceImageDataUrls.length === 0
   const images = textOnly ? [] : options.referenceImageDataUrls
   const model = profile.model.trim() || (chat ? DEFAULT_CHAT_MODEL : DEFAULT_RESPONSES_MODEL)
   const proxyConfig = readClientDevProxyConfig()
@@ -168,8 +203,15 @@ async function performRequest(options: {
     textOnly,
     repairIssues: options.repairIssues,
   })
-  const userText = buildUserText(options.input, options.previousRaw)
-  options.onAttemptStart?.({ label: options.previousRaw ? '自动修复文案' : images.length ? '带参考图生成文案' : '生成文案', apiMode, streaming: Boolean(profile.streamImages) })
+  const userText = buildUserText(options.input, options.previousRaw, options.refinementInstruction, options.repairIssues)
+  const attemptLabel = options.repairIssues?.length
+    ? '自动修复文案'
+    : options.refinementInstruction?.trim()
+      ? '根据追问优化当前文案'
+      : images.length
+        ? '带参考图生成文案'
+        : '生成文案'
+  options.onAttemptStart?.({ label: attemptLabel, apiMode, streaming: Boolean(profile.streamImages) })
   options.onStatusChange?.('waiting')
   const response = await fetch(
     chat
@@ -209,12 +251,14 @@ async function performRequest(options: {
 export async function generateListingCopy(options: Parameters<typeof performRequest>[0]) {
   let firstRaw = ''
   let firstIssues: string[] = []
+  let usableReferenceImages = options.referenceImageDataUrls
   try {
     try {
       firstRaw = await performRequest(options)
     } catch (error) {
       if (options.signal?.aborted || !options.referenceImageDataUrls.length) throw error
       options.onAttemptStart?.({ label: '参考图请求失败，纯文本重试', apiMode: options.profile.apiMode === 'chat' ? 'chat' : 'responses', streaming: Boolean(options.profile.streamImages) })
+      usableReferenceImages = []
       firstRaw = await performRequest({ ...options, referenceImageDataUrls: [] })
     }
     const firstResult = normalizeListingCopyPayload(parseJsonObject(firstRaw))
@@ -226,7 +270,14 @@ export async function generateListingCopy(options: Parameters<typeof performRequ
     firstIssues = [`JSON 解析失败：${error instanceof Error ? error.message : String(error)}`]
   }
 
-  const repairedRaw = await performRequest({ ...options, referenceImageDataUrls: [], previousRaw: firstRaw || '{}', repairIssues: firstIssues })
+  let repairedRaw = ''
+  try {
+    repairedRaw = await performRequest({ ...options, referenceImageDataUrls: usableReferenceImages, previousRaw: firstRaw || '{}', repairIssues: firstIssues })
+  } catch (error) {
+    if (options.signal?.aborted || !usableReferenceImages.length) throw error
+    options.onAttemptStart?.({ label: '带图修复失败，纯文本重试', apiMode: options.profile.apiMode === 'chat' ? 'chat' : 'responses', streaming: Boolean(options.profile.streamImages) })
+    repairedRaw = await performRequest({ ...options, referenceImageDataUrls: [], previousRaw: firstRaw || '{}', repairIssues: firstIssues })
+  }
   const repairedResult = normalizeListingCopyPayload(parseJsonObject(repairedRaw))
   return {
     result: repairedResult,

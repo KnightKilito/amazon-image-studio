@@ -171,17 +171,65 @@ function escapeHtml(value: string) {
     .replace(/'/g, '&#039;')
 }
 
+function renderInlineMarkdown(value: string) {
+  return escapeHtml(value).replace(/\*\*([^*\r\n]+)\*\*/g, '<strong>$1</strong>')
+}
+
+function readBoldSectionHeading(value: string) {
+  const match = value.match(/^\*\*(.+?[:：])\*\*$/)
+  return match?.[1]?.replace(/[:：]$/, '') ?? ''
+}
+
 export function listingDescriptionToHtml(value: string) {
-  return value
-    .trim()
-    .split(/\n\s*\n/)
-    .map((paragraph) => `<p>${escapeHtml(paragraph).replace(/\n/g, '<br>')}</p>`)
-    .join('\n')
+  const blocks = value.trim().split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean)
+  if (!blocks.length) return ''
+
+  const html: string[] = []
+  let index = 0
+  if (blocks.length > 1 && !blocks[0].includes('\n') && blocks[0].length <= 160) {
+    const boldTitle = blocks[0].match(/^\*\*([^*\r\n]+)\*\*$/)?.[1]
+    const markdownTitle = blocks[0].match(/^#{1,3}\s+(.+)$/)?.[1]
+    html.push(`<h2>${renderInlineMarkdown(boldTitle ?? markdownTitle ?? blocks[0])}</h2>`)
+    index = 1
+  }
+
+  for (; index < blocks.length; index += 1) {
+    const lines = blocks[index].split(/\n/).map((line) => line.trim()).filter(Boolean)
+    if (!lines.length) continue
+    const isList = lines.every((line) => /^(?:[•*-]|\d+[.)])\s+/.test(line))
+    if (isList) {
+      html.push(`<ul>${lines.map((line) => `<li>${renderInlineMarkdown(line.replace(/^(?:[•*-]|\d+[.)])\s+/, ''))}</li>`).join('')}</ul>`)
+      continue
+    }
+    const boldSectionHeading = readBoldSectionHeading(lines[0])
+    const markdownSectionHeading = lines[0].match(/^#{2,4}\s+(.+)$/)?.[1] ?? ''
+    if (lines.length === 1 && markdownSectionHeading) {
+      html.push(`<h3>${renderInlineMarkdown(markdownSectionHeading)}</h3>`)
+      continue
+    }
+    if (lines.length === 1 && boldSectionHeading) {
+      html.push(`<h3>${escapeHtml(boldSectionHeading)}</h3>`)
+      continue
+    }
+    if (lines.length === 1 && /[:：]$/.test(lines[0]) && lines[0].length <= 80) {
+      html.push(`<h3>${renderInlineMarkdown(lines[0].replace(/[:：]$/, ''))}</h3>`)
+      continue
+    }
+    if (lines.length > 1 && (markdownSectionHeading || boldSectionHeading || /[:：]$/.test(lines[0])) && lines.slice(1).every((line) => /^(?:[•*-]|\d+[.)])\s+/.test(line))) {
+      const heading = markdownSectionHeading || boldSectionHeading || lines[0].replace(/[:：]$/, '')
+      html.push(`<h3>${renderInlineMarkdown(heading)}</h3>`)
+      html.push(`<ul>${lines.slice(1).map((line) => `<li>${renderInlineMarkdown(line.replace(/^(?:[•*-]|\d+[.)])\s+/, ''))}</li>`).join('')}</ul>`)
+      continue
+    }
+    html.push(`<p>${lines.map(renderInlineMarkdown).join('<br>')}</p>`)
+  }
+  return html.join('\n')
 }
 
 export function createEmptyListingCopyResult(): ListingCopyResult {
   const empty = (): BilingualText => ({ en: '', zh: '' })
   return {
+    titleAnalysis: '',
     itemName: empty(),
     itemHighlight: empty(),
     bullets: [empty(), empty(), empty(), empty(), empty()],
@@ -195,24 +243,53 @@ export function createEmptyListingCopyResult(): ListingCopyResult {
 
 export function validateListingCopyResult(result: ListingCopyResult) {
   const issues: string[] = []
+  if (!(result.titleAnalysis ?? '').trim()) issues.push('标题策划说明为空')
+  else if ((result.titleAnalysis ?? '').trim().length < 80) issues.push('标题策划说明过短，未充分解释商品身份与关键词取舍')
   if (!result.itemName.en.trim()) issues.push('Item Name 英文为空')
   if (countVisibleCharacters(result.itemName.en) > ITEM_NAME_MAX_CHARACTERS) issues.push(`Item Name 超过 ${ITEM_NAME_MAX_CHARACTERS} 字符`)
+  if (/[,，]/.test(result.itemName.en)) issues.push('Item Name 不能包含逗号')
+  if (/\band\b/i.test(result.itemName.en)) issues.push('Item Name 不能包含 and')
   if (!result.itemHighlight.en.trim()) issues.push('Item Highlight 英文为空')
   if (countVisibleCharacters(result.itemHighlight.en) > ITEM_HIGHLIGHT_MAX_CHARACTERS) issues.push(`Item Highlight 超过 ${ITEM_HIGHLIGHT_MAX_CHARACTERS} 字符`)
+  if (/[,，]/.test(result.itemHighlight.en)) issues.push('Item Highlight 不能包含逗号')
+  if (/\band\b/i.test(result.itemHighlight.en)) issues.push('Item Highlight 不能包含 and')
   if (result.bullets.length !== 5) issues.push('五点描述数量不是 5 条')
   result.bullets.forEach((bullet, index) => {
     if (!bullet.en.trim() || !bullet.zh.trim()) issues.push(`第 ${index + 1} 条五点描述不完整`)
+    const prefix = new RegExp(`^\\s*${index + 1}\\.\\s*\\[[^\\]\\r\\n]+\\]\\s*[:：]`)
+    if (bullet.en.trim() && !prefix.test(bullet.en)) issues.push(`第 ${index + 1} 条英文五点缺少序号、方括号小标题或冒号`)
+    if (bullet.zh.trim() && !prefix.test(bullet.zh)) issues.push(`第 ${index + 1} 条中文五点缺少序号、方括号小标题或冒号`)
+    if (/\[(?:product form|basic information|missing information)\]/i.test(bullet.en) || /\[(?:产品形式|基本信息|缺失信息)\]/.test(bullet.zh)) {
+      issues.push(`第 ${index + 1} 条五点使用了资料字段式小标题`)
+    }
   })
   if (!result.longDescription.en.trim() || !result.longDescription.zh.trim()) issues.push('长描述不完整')
+  const publicCopyFields: Array<[string, string]> = [
+    ['Item Name', `${result.itemName.en}\n${result.itemName.zh}`],
+    ['Item Highlight', `${result.itemHighlight.en}\n${result.itemHighlight.zh}`],
+    ...result.bullets.map((bullet, index) => [`第 ${index + 1} 条五点`, `${bullet.en}\n${bullet.zh}`] as [string, string]),
+    ['长描述', `${result.longDescription.en}\n${result.longDescription.zh}`],
+  ]
+  const internalAuditLanguage = /\b(?:not provided|not specified|not supplied|not included|cannot confirm|unable to confirm|missing information|information (?:is|was) unavailable|details? (?:are|is|were|was) unavailable|(?:product )?(?:data|information) (?:does not|did not) (?:include|specify))\b|未提供|未说明|未包含|未给出|资料不足|信息不足|无法确认|不能确认|信息缺失|尚未提供|没有提供|暂无(?:相关)?信息|适合需要(?:明确|了解)|消费者可根据.{0,24}(?:实际|个人).{0,12}需求/i
+  publicCopyFields.forEach(([label, value]) => {
+    if (internalAuditLanguage.test(value)) issues.push(`${label} 包含面向内部的缺失信息措辞`)
+  })
   if (result.itemName.en.trim().toLowerCase() === result.itemHighlight.en.trim().toLowerCase()) issues.push('Item Highlight 与 Item Name 重复')
   return issues
+}
+
+export function formatListingCopyBullets(result: ListingCopyResult, language: keyof BilingualText) {
+  return result.bullets.map((bullet, index) => {
+    const value = bullet[language].trim()
+    return /^\s*\d+\.\s*/.test(value) ? value : `${index + 1}. ${value}`
+  }).join('\n')
 }
 
 export function formatAllEnglishListingCopy(result: ListingCopyResult) {
   return [
     `Item Name\n${result.itemName.en}`,
     `Item Highlight\n${result.itemHighlight.en}`,
-    `Bullet Points\n${result.bullets.map((bullet, index) => `${index + 1}. ${bullet.en}`).join('\n')}`,
+    `Bullet Points\n${formatListingCopyBullets(result, 'en')}`,
     `Long Description\n${result.longDescription.en}`,
     `Core Keywords\n${result.coreKeywords.map((keyword) => keyword.en).filter(Boolean).join(', ')}`,
     `Backend Search Terms\n${result.backendSearchTerms.en}`,

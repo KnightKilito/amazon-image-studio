@@ -541,6 +541,8 @@ export interface ListingCopyPrompts {
 }
 
 export interface ListingCopyResult {
+  /** 面向卖家的标题策划说明；旧历史版本可能不存在。 */
+  titleAnalysis?: string
   itemName: BilingualText
   itemHighlight: BilingualText
   bullets: ListingCopyBullets

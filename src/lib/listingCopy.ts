@@ -180,16 +180,46 @@ function readBoldSectionHeading(value: string) {
   return match?.[1]?.replace(/[:：]$/, '') ?? ''
 }
 
-export function listingDescriptionToHtml(value: string) {
-  const blocks = value.trim().split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean)
+export function normalizeListingLongDescriptionText(value: string) {
+  return value
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<li\b[^>]*>/gi, '• ')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<\/(?:p|div|h[1-6])>/gi, '\n\n')
+    .replace(/<(?:p|div|h[1-6])\b[^>]*>/gi, '')
+    .replace(/<\/?(?:strong|b|em|i)\b[^>]*>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/^\s*#{1,6}\s+/gm, '')
+    .replace(/\*\*([^*\r\n]+)\*\*/g, '$1')
+    .replace(/__([^_\r\n]+)__/g, '$1')
+    .replace(/^\s*[*-]\s+/gm, '• ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+export function normalizeListingCopyResult(result: ListingCopyResult): ListingCopyResult {
+  return {
+    ...result,
+    longDescription: {
+      en: normalizeListingLongDescriptionText(result.longDescription.en),
+      zh: normalizeListingLongDescriptionText(result.longDescription.zh),
+    },
+  }
+}
+
+export function listingDescriptionToHtml(value: string, options: { allowMarkdown?: boolean } = {}) {
+  const source = options.allowMarkdown ? value.trim() : normalizeListingLongDescriptionText(value)
+  const renderInline = options.allowMarkdown ? renderInlineMarkdown : escapeHtml
+  const blocks = source.split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean)
   if (!blocks.length) return ''
 
   const html: string[] = []
   let index = 0
   if (blocks.length > 1 && !blocks[0].includes('\n') && blocks[0].length <= 160) {
-    const boldTitle = blocks[0].match(/^\*\*([^*\r\n]+)\*\*$/)?.[1]
-    const markdownTitle = blocks[0].match(/^#{1,3}\s+(.+)$/)?.[1]
-    html.push(`<h2>${renderInlineMarkdown(boldTitle ?? markdownTitle ?? blocks[0])}</h2>`)
+    const boldTitle = options.allowMarkdown ? blocks[0].match(/^\*\*([^*\r\n]+)\*\*$/)?.[1] : undefined
+    const markdownTitle = options.allowMarkdown ? blocks[0].match(/^#{1,3}\s+(.+)$/)?.[1] : undefined
+    html.push(`<h2>${renderInline(boldTitle ?? markdownTitle ?? blocks[0])}</h2>`)
     index = 1
   }
 
@@ -198,13 +228,13 @@ export function listingDescriptionToHtml(value: string) {
     if (!lines.length) continue
     const isList = lines.every((line) => /^(?:[•*-]|\d+[.)])\s+/.test(line))
     if (isList) {
-      html.push(`<ul>${lines.map((line) => `<li>${renderInlineMarkdown(line.replace(/^(?:[•*-]|\d+[.)])\s+/, ''))}</li>`).join('')}</ul>`)
+      html.push(`<ul>${lines.map((line) => `<li>${renderInline(line.replace(/^(?:[•*-]|\d+[.)])\s+/, ''))}</li>`).join('')}</ul>`)
       continue
     }
-    const boldSectionHeading = readBoldSectionHeading(lines[0])
-    const markdownSectionHeading = lines[0].match(/^#{2,4}\s+(.+)$/)?.[1] ?? ''
+    const boldSectionHeading = options.allowMarkdown ? readBoldSectionHeading(lines[0]) : ''
+    const markdownSectionHeading = options.allowMarkdown ? lines[0].match(/^#{2,4}\s+(.+)$/)?.[1] ?? '' : ''
     if (lines.length === 1 && markdownSectionHeading) {
-      html.push(`<h3>${renderInlineMarkdown(markdownSectionHeading)}</h3>`)
+      html.push(`<h3>${renderInline(markdownSectionHeading)}</h3>`)
       continue
     }
     if (lines.length === 1 && boldSectionHeading) {
@@ -212,16 +242,16 @@ export function listingDescriptionToHtml(value: string) {
       continue
     }
     if (lines.length === 1 && /[:：]$/.test(lines[0]) && lines[0].length <= 80) {
-      html.push(`<h3>${renderInlineMarkdown(lines[0].replace(/[:：]$/, ''))}</h3>`)
+      html.push(`<h3>${renderInline(lines[0].replace(/[:：]$/, ''))}</h3>`)
       continue
     }
     if (lines.length > 1 && (markdownSectionHeading || boldSectionHeading || /[:：]$/.test(lines[0])) && lines.slice(1).every((line) => /^(?:[•*-]|\d+[.)])\s+/.test(line))) {
       const heading = markdownSectionHeading || boldSectionHeading || lines[0].replace(/[:：]$/, '')
-      html.push(`<h3>${renderInlineMarkdown(heading)}</h3>`)
-      html.push(`<ul>${lines.slice(1).map((line) => `<li>${renderInlineMarkdown(line.replace(/^(?:[•*-]|\d+[.)])\s+/, ''))}</li>`).join('')}</ul>`)
+      html.push(`<h3>${renderInline(heading)}</h3>`)
+      html.push(`<ul>${lines.slice(1).map((line) => `<li>${renderInline(line.replace(/^(?:[•*-]|\d+[.)])\s+/, ''))}</li>`).join('')}</ul>`)
       continue
     }
-    html.push(`<p>${lines.map(renderInlineMarkdown).join('<br>')}</p>`)
+    html.push(`<p>${lines.map(renderInline).join('<br>')}</p>`)
   }
   return html.join('\n')
 }

@@ -8,12 +8,23 @@ import {
 
 export type APlusUpscaleFormat = 'premium' | 'mobile'
 
+export interface ImageUpscaleTargetSize {
+  width: number
+  height: number
+}
+
+export const MAX_CUSTOM_UPSCALE_EDGE = 16384
+export const MAX_CUSTOM_UPSCALE_PIXELS = 64_000_000
+
 export interface ProportionalUpscalePlan {
   sourceWidth: number
   sourceHeight: number
   targetWidth: number
   targetHeight: number
   scale: number
+  scaleX: number
+  scaleY: number
+  proportional: boolean
   needsUpscale: boolean
 }
 
@@ -41,7 +52,47 @@ export function getProportionalUpscalePlan(
     targetWidth: Math.ceil(sourceWidth * scale),
     targetHeight: Math.ceil(sourceHeight * scale),
     scale,
+    scaleX: scale,
+    scaleY: scale,
+    proportional: true,
     needsUpscale: scale > 1,
+  }
+}
+
+export function getCustomUpscalePlan(
+  sourceWidth: number,
+  sourceHeight: number,
+  targetSize: ImageUpscaleTargetSize,
+): ProportionalUpscalePlan {
+  const { width: targetWidth, height: targetHeight } = targetSize
+  if (![sourceWidth, sourceHeight, targetWidth, targetHeight].every((value) => Number.isFinite(value) && Number.isInteger(value) && value > 0)) {
+    throw new Error('请输入有效的整数宽度和高度。')
+  }
+  if (targetWidth < sourceWidth || targetHeight < sourceHeight) {
+    throw new Error(`自定义尺寸不能小于原图 ${sourceWidth} × ${sourceHeight}。`)
+  }
+  if (targetWidth === sourceWidth && targetHeight === sourceHeight) {
+    throw new Error('目标尺寸必须大于原图尺寸。')
+  }
+  if (targetWidth > MAX_CUSTOM_UPSCALE_EDGE || targetHeight > MAX_CUSTOM_UPSCALE_EDGE) {
+    throw new Error(`单边尺寸不能超过 ${MAX_CUSTOM_UPSCALE_EDGE} 像素。`)
+  }
+  if (targetWidth * targetHeight > MAX_CUSTOM_UPSCALE_PIXELS) {
+    throw new Error('目标图片不能超过 6400 万像素。')
+  }
+
+  const scaleX = targetWidth / sourceWidth
+  const scaleY = targetHeight / sourceHeight
+  return {
+    sourceWidth,
+    sourceHeight,
+    targetWidth,
+    targetHeight,
+    scale: Math.max(scaleX, scaleY),
+    scaleX,
+    scaleY,
+    proportional: Math.abs(scaleX - scaleY) < 1e-9,
+    needsUpscale: scaleX > 1 || scaleY > 1,
   }
 }
 
@@ -50,9 +101,15 @@ export function getAPlusUpscalePlan(sourceWidth: number, sourceHeight: number, f
   return getProportionalUpscalePlan(sourceWidth, sourceHeight, minimum.width, minimum.height, 2)
 }
 
-export async function upscaleImageDataUrlForAPlus(dataUrl: string, format: APlusUpscaleFormat) {
+export async function upscaleImageDataUrlForAPlus(
+  dataUrl: string,
+  format: APlusUpscaleFormat,
+  targetSize?: ImageUpscaleTargetSize,
+) {
   const image = await loadImage(dataUrl)
-  const plan = getAPlusUpscalePlan(image.naturalWidth, image.naturalHeight, format)
+  const plan = targetSize
+    ? getCustomUpscalePlan(image.naturalWidth, image.naturalHeight, targetSize)
+    : getAPlusUpscalePlan(image.naturalWidth, image.naturalHeight, format)
   const canvas = document.createElement('canvas')
   canvas.width = plan.targetWidth
   canvas.height = plan.targetHeight

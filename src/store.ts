@@ -67,7 +67,7 @@ import { getTaskHistoryCategory, HISTORY_PAGE_SIZE, normalizeHistoryPageSize } f
 import { getTaskDisplayPrompt } from './lib/taskPromptDisplay'
 import { isAmazonListingMainSlot } from './lib/listingPlanner'
 import { sliceImageDataUrlVertically, type APlusSliceFormat } from './lib/imageSlicing'
-import { upscaleImageDataUrlForAPlus, type APlusUpscaleFormat } from './lib/imageUpscaling'
+import { upscaleImageDataUrlForAPlus, type APlusUpscaleFormat, type ImageUpscaleTargetSize } from './lib/imageUpscaling'
 import { getMobileMotherImageSize, getPremiumMotherImageSize, MAX_PREMIUM_MOTHER_SLICES, MIN_PREMIUM_MOTHER_SLICES } from './lib/premiumAPlusLayout'
 import { fetchAdminSettings, readAdminToken, saveAdminSettings } from './lib/adminApi'
 import { navigateToAppPage } from './lib/appNavigation'
@@ -4505,22 +4505,25 @@ export async function createAPlusUpscaleTask(
   sourceTask: TaskRecord,
   sourceImageId: string,
   format: APlusUpscaleFormat,
+  targetSize?: ImageUpscaleTargetSize,
 ): Promise<TaskRecord> {
-  return createAPlusBatchUpscaleTask(sourceTask, [sourceImageId], format)
+  return createAPlusBatchUpscaleTask(sourceTask, [sourceImageId], format, targetSize)
 }
 
 /** 批量等比放大同一 A+ 任务中的输出图片，并保存到同一条新任务。 */
 export function createAPlusUpscaleTaskFromImage(
   sourceImageId: string,
   format: APlusUpscaleFormat,
+  targetSize?: ImageUpscaleTargetSize,
 ) {
-  return createAPlusUpscaleTask(findSourceTaskForImage(sourceImageId), sourceImageId, format)
+  return createAPlusUpscaleTask(findSourceTaskForImage(sourceImageId), sourceImageId, format, targetSize)
 }
 
 export async function createAPlusBatchUpscaleTask(
   sourceTask: TaskRecord,
   sourceImageIds: string[],
   format: APlusUpscaleFormat,
+  targetSize?: ImageUpscaleTargetSize,
 ): Promise<TaskRecord> {
   const uniqueSourceImageIds = [...new Set(sourceImageIds)]
   if (uniqueSourceImageIds.length === 0) throw new Error('当前任务没有可放大的图片。')
@@ -4533,7 +4536,7 @@ export async function createAPlusBatchUpscaleTask(
     for (const sourceImageId of uniqueSourceImageIds) {
       const sourceDataUrl = await ensureImageCached(sourceImageId)
       if (!sourceDataUrl) throw new Error('无法读取部分图片，请刷新后重试。')
-      const result = await upscaleImageDataUrlForAPlus(sourceDataUrl, format)
+      const result = await upscaleImageDataUrlForAPlus(sourceDataUrl, format, targetSize)
       const imageId = await storeImage(result.dataUrl, 'derived')
       cacheImage(imageId, result.dataUrl)
       storedOutputs.push({
@@ -4545,6 +4548,7 @@ export async function createAPlusBatchUpscaleTask(
     const now = Date.now()
     const outputSize = storedOutputs[0].size
     const formatLabel = format === 'mobile' ? '手机 A+' : '高级 A+'
+    const upscaleLabel = targetSize ? '自定义尺寸放大' : '等比放大'
     const actualParamsByImage = Object.fromEntries(storedOutputs.map(({ imageId, size }) => [
       imageId,
       { size, output_format: 'png' as const, quality: 'high' as const, output_compression: null },
@@ -4579,8 +4583,8 @@ export async function createAPlusBatchUpscaleTask(
         aPlusType: format,
         ...(!sourceTask.derivation && aPlusPlanContext ? { aPlusPlanContext } : {}),
         amazonSlot: sourceTask.category?.amazonSlot
-          ? `${sourceTask.category.amazonSlot} · ${storedOutputs.length > 1 ? '批量' : ''}等比放大`
-          : `${formatLabel} · ${storedOutputs.length > 1 ? '批量' : ''}等比放大`,
+          ? `${sourceTask.category.amazonSlot} · ${storedOutputs.length > 1 ? '批量' : ''}${upscaleLabel}`
+          : `${targetSize ? '图片编辑' : formatLabel} · ${storedOutputs.length > 1 ? '批量' : ''}${upscaleLabel}`,
       },
     }
 
@@ -4763,6 +4767,19 @@ export async function editOutputs(task: TaskRecord, selectedOutputImageId?: stri
     category: createNextSubmitTaskCategory(task),
   })
   showToast('已准备编辑输出图', 'success')
+}
+
+export function clearImageEditorInputs() {
+  const {
+    clearInputImages,
+    setEditorActiveImageId,
+    setEditorActiveTaskId,
+    resetEditorCanvasDraft,
+  } = useStore.getState()
+  clearInputImages()
+  setEditorActiveImageId(null)
+  setEditorActiveTaskId(null)
+  resetEditorCanvasDraft()
 }
 
 export async function openImageEditor(imageId: string) {

@@ -98,13 +98,16 @@ vi.mock('./lib/imageEditorAnnotations', async () => {
   }
 })
 vi.mock('./lib/imageUpscaling', () => ({
-  upscaleImageDataUrlForAPlus: vi.fn(async (dataUrl: string) => ({
+  upscaleImageDataUrlForAPlus: vi.fn(async (dataUrl: string, _format: string, targetSize?: { width: number; height: number }) => ({
     dataUrl: `${dataUrl}-upscaled`,
     sourceWidth: 300,
     sourceHeight: 225,
-    targetWidth: 600,
-    targetHeight: 450,
+    targetWidth: targetSize?.width ?? 600,
+    targetHeight: targetSize?.height ?? 450,
     scale: 2,
+    scaleX: targetSize ? targetSize.width / 300 : 2,
+    scaleY: targetSize ? targetSize.height / 225 : 2,
+    proportional: targetSize ? targetSize.width / 300 === targetSize.height / 225 : true,
     needsUpscale: true,
   })),
 }))
@@ -144,9 +147,10 @@ vi.mock('./lib/agentApi', () => ({
 import { clearAmazonPlannerSessions, clearImages, clearListingCopySessions, clearTasks, getAllAmazonPlannerSessions, getAllImages, getAllListingCopySessions, getImage, putAmazonPlannerSession, putImage, putListingCopySession } from './lib/db'
 import { callImageApi } from './lib/api'
 import { createImageEditorVisualGuideDataUrl } from './lib/imageEditorAnnotations'
+import { upscaleImageDataUrlForAPlus } from './lib/imageUpscaling'
 import { getTaskDisplayPrompt } from './lib/taskPromptDisplay'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
-import { addTaskOutputsToInputImages, cleanStaleAgentInputDrafts, clearData, convertOutputToAPlusFormat, createAPlusBatchUpscaleTask, createAPlusSliceTaskFromImage, createAPlusUpscaleTaskFromImage, editOutputs, exportData, generatePlannerStyleReferenceImage, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, openImageEditor, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitImageEditorTask, submitTask, useStore } from './store'
+import { addTaskOutputsToInputImages, cleanStaleAgentInputDrafts, clearData, clearImageEditorInputs, convertOutputToAPlusFormat, createAPlusBatchUpscaleTask, createAPlusSliceTaskFromImage, createAPlusUpscaleTaskFromImage, editOutputs, exportData, generatePlannerStyleReferenceImage, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, openImageEditor, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitImageEditorTask, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -498,6 +502,31 @@ describe('mask draft lifecycle in store actions', () => {
     expect(state.pendingTaskCategory).toBeNull()
   })
 
+  it('fully clears the editor main image state while preserving prompt and style reference', () => {
+    useStore.setState({
+      prompt: 'keep this instruction',
+      inputImages: [imageA],
+      styleReferenceImage: imageB,
+      editorActiveImageId: imageA.id,
+      editorActiveTaskId: 'active-result-task',
+      editorCanvasDraft: {
+        sourceImageId: imageA.id,
+        annotations: [{ id: 'old-mark', kind: 'rectangle', color: '#ef4444', width: 0.0065, points: [{ x: 0.1, y: 0.1 }, { x: 0.3, y: 0.3 }] }],
+        updatedAt: 1,
+      },
+    })
+
+    clearImageEditorInputs()
+
+    const state = useStore.getState()
+    expect(state.inputImages).toEqual([])
+    expect(state.editorActiveImageId).toBeNull()
+    expect(state.editorActiveTaskId).toBeNull()
+    expect(state.editorCanvasDraft).toMatchObject({ sourceImageId: null, annotations: [] })
+    expect(state.prompt).toBe('keep this instruction')
+    expect(state.styleReferenceImage).toEqual(imageB)
+  })
+
   it('submits annotated editor inputs in source, guide, reference, and style order', async () => {
     const styleImage = { id: 'editor-style', dataUrl: 'data:image/png;base64,editor-style' }
     await Promise.all([putImage(imageA), putImage(imageB), putImage(styleImage)])
@@ -703,6 +732,31 @@ describe('mask draft lifecycle in store actions', () => {
       aPlusType: 'mobile',
     })
     expect(useStore.getState().tasks[0]?.id).toBe(derivedTask.id)
+  })
+
+  it('creates an exact custom-size upscale task from the editor image', async () => {
+    await putImage(imageB)
+    vi.mocked(upscaleImageDataUrlForAPlus).mockClear()
+    useStore.setState({ tasks: [], appPage: 'editor' })
+
+    const derivedTask = await createAPlusUpscaleTaskFromImage(imageB.id, 'premium', {
+      width: 1800,
+      height: 1350,
+    })
+
+    expect(upscaleImageDataUrlForAPlus).toHaveBeenCalledWith(imageB.dataUrl, 'premium', {
+      width: 1800,
+      height: 1350,
+    })
+    expect(derivedTask.params).toMatchObject({
+      size: '1800x1350',
+      output_format: 'png',
+      quality: 'high',
+    })
+    expect(derivedTask.category).toMatchObject({
+      workflow: 'amazon-aplus',
+      amazonSlot: '图片编辑 · 自定义尺寸放大',
+    })
   })
 
   it('keeps the source image reference on a derived A+ slice task', async () => {

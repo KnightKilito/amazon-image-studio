@@ -26,11 +26,14 @@ describe('listing copy prompts and source viewer', () => {
     expect(DEFAULT_LISTING_BULLETS_PROMPT).toContain('1. [16 cm Statement Stiletto]:')
     expect(DEFAULT_LISTING_BULLETS_PROMPT).toContain('审美表达、情绪价值和合理的穿搭场景可以充分发挥')
     expect(DEFAULT_LISTING_BULLETS_PROMPT).toContain('不要使用 Product Form')
-    expect(DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT).toContain('**Perfect For:**')
-    expect(DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT).toContain('**规格说明：**')
+    expect(DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT).toContain('Perfect For: / 完美适用于：')
+    expect(DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT).toContain('Specifications: / 规格说明：')
     expect(DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT).toContain('高级创意文案')
     expect(DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT).toContain('精致、华丽、有层次、有情绪张力')
     expect(DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT).toContain('穿上这份闪耀与锋芒')
+    expect(DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT).toContain('不输出 Markdown 语法或 HTML 标签')
+    expect(DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT).not.toContain('**')
+    expect(DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT).not.toContain('加粗')
     expect(DEFAULT_LISTING_COPY_PROMPTS).toEqual({
       title: DEFAULT_LISTING_TITLE_PROMPT,
       bullets: DEFAULT_LISTING_BULLETS_PROMPT,
@@ -60,5 +63,17 @@ describe('listing copy prompts and source viewer', () => {
     expect(normalized.title).toBe('Keep my title strategy')
     expect(normalized.bullets).toBe(DEFAULT_LISTING_BULLETS_PROMPT)
     expect(normalized.longDescription).toBe(DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT)
+  })
+
+  it('migrates the former Markdown long-description default to clean plain text', () => {
+    const normalized = normalizeListingCopyPrompts({
+      title: 'custom title',
+      bullets: 'custom bullets',
+      longDescription: '你是一位为时尚与生活方式品牌撰稿的高级创意文案。\n\n以一个有画面感的加粗大标题开场，并展开销售故事。\n\n返回 Markdown 纯文本，不输出 HTML。',
+    })
+    expect(normalized.title).toBe('custom title')
+    expect(normalized.bullets).toBe('custom bullets')
+    expect(normalized.longDescription).toBe(DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT)
+    expect(normalized.longDescription).not.toContain('**')
   })
 })

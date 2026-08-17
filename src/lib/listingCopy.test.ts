@@ -7,6 +7,7 @@ import {
   formatAllEnglishListingCopy,
   formatListingCopyBullets,
   listingDescriptionToHtml,
+  normalizeListingLongDescriptionText,
   validateListingCopyResult,
 } from './listingCopy'
 
@@ -47,8 +48,9 @@ describe('listing copy rules', () => {
     expect(issues).toContain('第 1 条中文五点缺少序号、方括号小标题或冒号')
   })
 
-  it('escapes long description HTML', () => {
-    expect(listingDescriptionToHtml('<script>alert(1)</script>\nnext')).toBe('<p>&lt;script&gt;alert(1)&lt;/script&gt;<br>next</p>')
+  it('removes unsupported long-description markup before rendering', () => {
+    expect(normalizeListingLongDescriptionText('<p>Elegant <strong>summer</strong></p><br>next')).toBe('Elegant summer\n\nnext')
+    expect(listingDescriptionToHtml('<script>alert(1)</script>\nnext')).toBe('<p>alert(1)<br>next</p>')
   })
 
   it('renders a safe heading and list for rich-text preview', () => {
@@ -57,14 +59,14 @@ describe('listing copy rules', () => {
     )
   })
 
-  it('renders safe Markdown emphasis and bold section headings', () => {
+  it('cleans legacy Markdown from long descriptions before preview', () => {
     expect(listingDescriptionToHtml('**Polished Summer**\n\n**A refined silhouette** for daily styling.\n\n**Perfect For:**\n\n• **Office** looks\n\n**Step out with confidence.**')).toBe(
-      '<h2>Polished Summer</h2>\n<p><strong>A refined silhouette</strong> for daily styling.</p>\n<h3>Perfect For</h3>\n<ul><li><strong>Office</strong> looks</li></ul>\n<p><strong>Step out with confidence.</strong></p>',
+      '<h2>Polished Summer</h2>\n<p>A refined silhouette for daily styling.</p>\n<h3>Perfect For</h3>\n<ul><li>Office looks</li></ul>\n<p>Step out with confidence.</p>',
     )
   })
 
   it('renders Markdown headings safely for the title planning brief', () => {
-    expect(listingDescriptionToHtml('### 商品身份判断\n\n**Women → Mules** 是核心商品身份。\n\n### 关键词取舍\n\n主标题优先品类。')).toBe(
+    expect(listingDescriptionToHtml('### 商品身份判断\n\n**Women → Mules** 是核心商品身份。\n\n### 关键词取舍\n\n主标题优先品类。', { allowMarkdown: true })).toBe(
       '<h2>商品身份判断</h2>\n<p><strong>Women → Mules</strong> 是核心商品身份。</p>\n<h3>关键词取舍</h3>\n<p>主标题优先品类。</p>',
     )
   })

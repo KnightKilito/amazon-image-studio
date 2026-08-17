@@ -83,7 +83,7 @@ export const DEFAULT_LISTING_BULLETS_PROMPT = `你是一位懂时尚审美、消
 
 文风要自信而不胆怯。不要为了规避风险把句子写成“适合需要某项信息的消费者”，也不要向买家交代哪些资料没填。缺失内容放入 missingFacts 即可。只有材质、尺寸、结构、性能、认证等客观事实必须有依据；审美表达、情绪价值和合理的穿搭场景可以充分发挥。英文按自然的美国营销语言创作，中文保持同等感染力，不要生硬直译。`
 
-export const DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT = `你是一位为时尚与生活方式品牌撰稿的高级创意文案。请把这件商品写成一个买家愿意停下来阅读、能够想象自己穿上或使用它的故事。目标是精致、华丽、有层次、有情绪张力，而不是谨慎的参数汇总。
+const PREVIOUS_MARKDOWN_LISTING_LONG_DESCRIPTION_PROMPT = `你是一位为时尚与生活方式品牌撰稿的高级创意文案。请把这件商品写成一个买家愿意停下来阅读、能够想象自己穿上或使用它的故事。目标是精致、华丽、有层次、有情绪张力，而不是谨慎的参数汇总。
 
 以一个有画面感的加粗大标题开场，再用一句加粗短句定下气质。正文用 3–5 个自然段层层推进：从第一眼的视觉吸引力写到关键设计，从材质与结构写到造型价值，再把商品带入真实而令人向往的场景。多使用具体、生动且不过分浮夸的词汇，让轮廓、光泽、花卉、透明感、鞋跟、线条或色彩真正“被看见”；可以用 **加粗短语** 突出核心卖点。
 
@@ -94,6 +94,18 @@ export const DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT = `你是一位为时尚与
 结尾必须像品牌广告语一样优雅、有余韵，让买家产生行动冲动。例如：“穿上这份闪耀与锋芒，让每一步都成为目光停留的理由。”英文和中文应分别符合各自语言的审美，不要像逐字翻译。
 
 创作空间要充分：清晰可见的设计可以延伸为审美效果，品类与风格可以延伸为合理的穿搭灵感和场景想象。事实红线只针对未经证实的材质、尺寸、结构、性能、认证和功效；不要因为某个次要字段缺失就压低整篇文案的感染力，也不要在买家文案中讨论缺失资料。返回 Markdown 纯文本，不输出 HTML。`
+
+export const DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT = `你是一位为时尚与生活方式品牌撰稿的高级创意文案。请把这件商品写成一个买家愿意停下来阅读、能够想象自己穿上或使用它的故事。目标是精致、华丽、有层次、有情绪张力，而不是谨慎的参数汇总。
+
+以一个有画面感的独立大标题开场，再用一句独立短句定下气质。正文用 3–5 个自然段层层推进：从第一眼的视觉吸引力写到关键设计，从材质与结构写到造型价值，再把商品带入真实而令人向往的场景。多使用具体、生动且不过分浮夸的词汇，让轮廓、光泽、花卉、透明感、鞋跟、线条或色彩真正“被看见”。通过标题、独立短句、自然分段和项目符号突出重点，不使用任何 Markdown 或 HTML 标记。
+
+根据内容自然加入：
+Perfect For: / 完美适用于：用项目符号给出富有画面的穿搭或使用场景。
+Specifications: / 规格说明：用项目符号整理已经确认的客观信息。
+
+结尾必须像品牌广告语一样优雅、有余韵，让买家产生行动冲动。例如：“穿上这份闪耀与锋芒，让每一步都成为目光停留的理由。”英文和中文应分别符合各自语言的审美，不要像逐字翻译。
+
+创作空间要充分：清晰可见的设计可以延伸为审美效果，品类与风格可以延伸为合理的穿搭灵感和场景想象。事实红线只针对未经证实的材质、尺寸、结构、性能、认证和功效；不要因为某个次要字段缺失就压低整篇文案的感染力，也不要在买家文案中讨论缺失资料。返回可直接提交的纯文本，不输出 Markdown 语法或 HTML 标签。`
 
 export const DEFAULT_LISTING_COPY_PROMPTS: ListingCopyPrompts = {
   title: DEFAULT_LISTING_TITLE_PROMPT,
@@ -119,6 +131,12 @@ function isRestrainedDefaultLongDescriptionPrompt(value: string) {
     && value.includes('绝对禁止在长描述中出现')
 }
 
+function isMarkdownDefaultLongDescriptionPrompt(value: string) {
+  return value.startsWith('你是一位为时尚与生活方式品牌撰稿的高级创意文案')
+    && value.includes('以一个有画面感的加粗大标题开场')
+    && value.includes('返回 Markdown 纯文本，不输出 HTML')
+}
+
 export function cloneDefaultListingCopyPrompts(): ListingCopyPrompts {
   return { ...DEFAULT_LISTING_COPY_PROMPTS }
 }
@@ -134,7 +152,7 @@ export function normalizeListingCopyPrompts(
     return {
       title: !title || title === PREVIOUS_DEFAULT_LISTING_TITLE_PROMPT ? DEFAULT_LISTING_TITLE_PROMPT : title,
       bullets: !bullets || bullets === PREVIOUS_DEFAULT_LISTING_BULLETS_PROMPT || isRestrainedDefaultBulletsPrompt(bullets) ? DEFAULT_LISTING_BULLETS_PROMPT : bullets,
-      longDescription: !longDescription || longDescription === PREVIOUS_DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT || isRestrainedDefaultLongDescriptionPrompt(longDescription) ? DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT : longDescription,
+      longDescription: !longDescription || longDescription === PREVIOUS_DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT || longDescription === PREVIOUS_MARKDOWN_LISTING_LONG_DESCRIPTION_PROMPT || isMarkdownDefaultLongDescriptionPrompt(longDescription) || isRestrainedDefaultLongDescriptionPrompt(longDescription) ? DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT : longDescription,
     }
   }
 

@@ -21,6 +21,7 @@ import {
   formatAllEnglishListingCopy,
   formatListingCopyBullets,
   listingDescriptionToHtml,
+  normalizeListingCopyResult,
   validateListingCopyResult,
 } from '../lib/listingCopy'
 import {
@@ -37,7 +38,7 @@ import {
   getAllListingCopySessions,
   putListingCopySession,
 } from '../lib/db'
-import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
+import { copyRichTextToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { applyGuestUnifiedApiUrl, createInputImageFromFile, ensureImageCached, useStore } from '../store'
 import Select, { COMPACT_SELECT_CLASS } from './Select'
 import PlannerRunDetailsModal, { type PlannerRunStatus } from './PlannerRunDetailsModal'
@@ -243,10 +244,20 @@ function MoneyValue({ value }: { value: number | null | undefined }) {
   return <>{value == null ? '待补全' : `$${value.toFixed(2)}`}</>
 }
 
-function SafeHtmlPreview({ label, html }: { label: string; html: string }) {
+function SafeHtmlPreview({ label, html, plainText }: { label: string; html: string; plainText: string }) {
+  const showToast = useStore((state) => state.showToast)
+  const copyPreview = async () => {
+    if (!html || !plainText.trim()) return
+    try {
+      const mode = await copyRichTextToClipboard(html, plainText)
+      showToast(mode === 'rich' ? `${label}富文本已复制` : `${label}纯文本已复制`, 'success')
+    } catch (error) {
+      showToast(getClipboardFailureMessage('复制预览失败，请复制下方纯文本或 HTML', error), 'error')
+    }
+  }
   return (
     <div className="min-w-0 rounded-xl border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-gray-900">
-      <div className="mb-3 text-xs font-bold text-gray-500 dark:text-gray-400">{label}</div>
+      <div className="mb-3 flex items-center justify-between gap-2"><div className="text-xs font-bold text-gray-500 dark:text-gray-400">{label}</div><button type="button" onClick={() => void copyPreview()} disabled={!html || !plainText.trim()} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-30 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-300 dark:hover:bg-white/[0.06]"><CopyIcon className="h-4 w-4" />复制富文本</button></div>
       {html ? (
         <article
           className="min-h-56 break-words text-sm leading-7 text-gray-700 dark:text-gray-300 [&_h2]:mb-4 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:leading-8 [&_h2]:text-gray-900 dark:[&_h2]:text-white [&_h3]:mb-2 [&_h3]:mt-5 [&_h3]:text-base [&_h3]:font-bold [&_h3]:text-gray-900 dark:[&_h3]:text-white [&_li]:mb-1 [&_p]:mb-4 [&_ul]:mb-4 [&_ul]:list-disc [&_ul]:pl-5"
@@ -324,7 +335,7 @@ export default function ListingCopyWorkspace() {
         setInput(cloneInput(draft.input))
         setProfitInput(cloneProfit(draft.profitInput))
         setPrompts(normalizeListingCopyPrompts(draft.prompts, draft.prompt))
-        setResult(draft.result)
+        setResult(draft.result ? normalizeListingCopyResult(draft.result) : null)
         const images = (await Promise.all((draft.referenceImageIds ?? []).map(async (id) => {
           const dataUrl = await ensureImageCached(id)
           return dataUrl ? { id, dataUrl } : null
@@ -409,8 +420,9 @@ export default function ListingCopyWorkspace() {
     setInput(cloneInput(session.input))
     setProfitInput(cloneProfit(session.profitInput))
     setPrompts(normalizeListingCopyPrompts(session.prompts, session.prompt))
-    setResult(session.result)
-    setValidationIssues(session.result ? validateListingCopyResult(session.result) : [])
+    const restoredResult = session.result ? normalizeListingCopyResult(session.result) : null
+    setResult(restoredResult)
+    setValidationIssues(restoredResult ? validateListingCopyResult(restoredResult) : [])
     const images = (await Promise.all((session.referenceImageIds ?? []).map(async (id) => {
       const dataUrl = await ensureImageCached(id)
       return dataUrl ? { id, dataUrl } : null
@@ -584,7 +596,7 @@ export default function ListingCopyWorkspace() {
           <section className={`${CARD_CLASS} p-4 sm:p-5`}>
             <div className="mb-4 flex items-center justify-between"><div><h3 className="font-bold text-gray-900 dark:text-white">产品资料与成本</h3><p className="mt-1 text-xs text-gray-400">只填写能够确认的事实，未提供的信息不会让 AI 猜测。</p></div><Select value={input.preset} onChange={(value) => updateInput('preset', value === 'general' ? 'general' : 'footwear')} options={[{ value: 'footwear', label: '鞋靴预设' }, { value: 'general', label: '通用商品' }]} ariaLabel="商品预设" className={`${COMPACT_SELECT_CLASS} w-28`} /></div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="sm:col-span-2"><TextField label="产品介绍" value={input.productDescription} onChange={(value) => updateInput('productDescription', value)} rows={4} placeholder="产品是什么、解决什么需求、最重要的真实特点…" /></div>
+              <div className="sm:col-span-2"><TextField label="产品介绍" value={input.productDescription} onChange={(value) => updateInput('productDescription', value)} rows={8} placeholder="产品是什么、解决什么需求、最重要的真实特点…" /></div>
               <TextField label="品牌 / 型号" value={input.brand} onChange={(value) => updateInput('brand', value)} />
               <TextField label="核心品类" value={input.category} onChange={(value) => updateInput('category', value)} placeholder="例如 Women's Mule Sandals" />
               <TextField label="材质" value={input.material} onChange={(value) => updateInput('material', value)} />
@@ -655,7 +667,7 @@ export default function ListingCopyWorkspace() {
             <div className="space-y-3">
               <PromptEditor label="标题提示词" description="默认仅使用《标题Prompt.txt》原文；系统只额外禁止逗号和独立单词 and，不再追加其他标题说明。" value={prompts.title} onChange={(value) => setPrompts((current) => ({ ...current, title: value }))} onReset={() => setPrompts((current) => ({ ...current, title: DEFAULT_LISTING_COPY_PROMPTS.title }))} rows={9} tone="emerald" />
               <PromptEditor label="五点描述提示词" description="按《SKU标题.docx》的销售文风：严格五条，用具体利益型小标题把真实参数转化为购买理由。" value={prompts.bullets} onChange={(value) => setPrompts((current) => ({ ...current, bullets: value }))} onReset={() => setPrompts((current) => ({ ...current, bullets: DEFAULT_LISTING_COPY_PROMPTS.bullets }))} rows={16} tone="blue" />
-              <PromptEditor label="长描述提示词" description="按《SKU标题.docx》的成品风格：加粗大标题、卖点叙事、适用场景、规格说明和优雅收尾。" value={prompts.longDescription} onChange={(value) => setPrompts((current) => ({ ...current, longDescription: value }))} onReset={() => setPrompts((current) => ({ ...current, longDescription: DEFAULT_LISTING_COPY_PROMPTS.longDescription }))} rows={18} tone="violet" />
+              <PromptEditor label="长描述提示词" description="按《SKU标题.docx》的成品风格：独立大标题、卖点叙事、适用场景、规格说明和优雅收尾；AI 只返回无 Markdown/HTML 标签的纯文本。" value={prompts.longDescription} onChange={(value) => setPrompts((current) => ({ ...current, longDescription: value }))} onReset={() => setPrompts((current) => ({ ...current, longDescription: DEFAULT_LISTING_COPY_PROMPTS.longDescription }))} rows={18} tone="violet" />
             </div>
             <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-xs leading-5 text-gray-500 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-400"><span className="font-semibold text-gray-700 dark:text-gray-200">系统固定契约：</span>标题只额外禁用逗号和独立单词 and；五点与长描述必须是买家销售文案，缺失资料只能进入内部清单，不能出现在买家可见内容中。JSON 结构和禁止编造规则始终保留。</div>
             <button type="button" onClick={() => setShowSystemKnowledgeBase(true)} className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50/60 px-4 text-sm font-semibold text-blue-700 transition hover:bg-blue-100/70 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200 dark:hover:bg-blue-400/15"><EyeIcon className="h-4 w-4" />查看内置知识库</button>
@@ -683,16 +695,16 @@ export default function ListingCopyWorkspace() {
           {!result ? <div className="rounded-xl border border-dashed border-gray-300 py-16 text-center dark:border-white/[0.12]"><div className="text-sm font-medium text-gray-500 dark:text-gray-300">生成结果会显示在这里</div><div className="mt-1 text-xs text-gray-400">Item Name 与 Item Highlight 始终独立，不会拼接。</div></div> : <div className="space-y-3">
             {showRefinement && <section className="rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-blue-50/60 p-4 dark:border-violet-400/20 dark:from-violet-500/10 dark:via-gray-900 dark:to-blue-500/10"><div className="flex items-start justify-between gap-3"><div><h4 className="text-sm font-bold text-gray-900 dark:text-white">继续优化当前文案</h4><p className="mt-1 text-xs leading-5 text-gray-500 dark:text-gray-400">AI 会同时参考当前结果、原始产品资料和产品图，只修改你提出的部分，并把新结果保存为一个历史版本。</p></div><button type="button" aria-label="关闭优化当前文案" onClick={() => setShowRefinement(false)} className="rounded-lg p-1.5 text-gray-400 transition hover:bg-white hover:text-gray-700 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"><CloseIcon className="h-4 w-4" /></button></div><textarea value={refinementInstruction} onChange={(event) => setRefinementInstruction(event.target.value)} rows={4} placeholder="例如：保留标题，把五点和长描述写得更华丽；结合凹凸橡胶鞋底突出防滑与强抓地；结合高防水台说明16厘米高跟的实际坡度与稳定感。" className={`${FIELD_CLASS} mt-3 resize-y pr-3`} /><div className="mt-3 flex flex-wrap items-center justify-end gap-2"><button type="button" onClick={() => { setShowRefinement(false); setRefinementInstruction('') }} disabled={isGenerating} className="h-9 rounded-xl border border-gray-200 px-3 text-xs font-semibold text-gray-600 hover:bg-white disabled:opacity-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]">取消</button><button type="button" onClick={() => void runGeneration(refinementInstruction)} disabled={isGenerating || !refinementInstruction.trim()} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-xl bg-violet-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"><EditIcon className="h-4 w-4" />{isRefining ? status || '正在优化…' : '提交优化要求'}</button></div></section>}
             {validationIssues.length > 0 && <div className="rounded-xl border border-red-200 bg-red-50 p-3 dark:border-red-400/20 dark:bg-red-400/10"><div className="text-xs font-bold text-red-700 dark:text-red-200">需要人工检查</div><ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs text-red-600 dark:text-red-300">{validationIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul></div>}
-            {(result.titleAnalysis ?? '').trim() && <section className="overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-violet-50/70 dark:border-blue-400/20 dark:from-blue-500/10 dark:via-gray-900 dark:to-violet-500/10"><div className="flex items-center justify-between gap-3 border-b border-blue-100 px-4 py-3 dark:border-blue-400/15"><div><h4 className="text-sm font-bold text-gray-900 dark:text-white">AI 标题策划分析</h4><p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">商品身份、图片识别节点、关键词分层与标题取舍</p></div><CopyButton value={result.titleAnalysis ?? ''} label="复制策划分析" showLabel onCopied={() => showToast('标题策划分析已复制', 'success')} /></div><article className="break-words px-4 py-4 text-sm leading-7 text-gray-700 dark:text-gray-300 [&_h2]:mb-3 [&_h2]:text-lg [&_h2]:font-bold [&_h2]:text-gray-900 dark:[&_h2]:text-white [&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:font-bold [&_h3]:text-gray-900 dark:[&_h3]:text-white [&_li]:mb-1 [&_p]:mb-3 [&_strong]:font-bold [&_strong]:text-gray-900 dark:[&_strong]:text-white [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5" dangerouslySetInnerHTML={{ __html: listingDescriptionToHtml(result.titleAnalysis ?? '') }} /></section>}
+            {(result.titleAnalysis ?? '').trim() && <section className="overflow-hidden rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 via-white to-violet-50/70 dark:border-blue-400/20 dark:from-blue-500/10 dark:via-gray-900 dark:to-violet-500/10"><div className="flex items-center justify-between gap-3 border-b border-blue-100 px-4 py-3 dark:border-blue-400/15"><div><h4 className="text-sm font-bold text-gray-900 dark:text-white">AI 标题策划分析</h4><p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">商品身份、图片识别节点、关键词分层与标题取舍</p></div><CopyButton value={result.titleAnalysis ?? ''} label="复制策划分析" showLabel onCopied={() => showToast('标题策划分析已复制', 'success')} /></div><article className="break-words px-4 py-4 text-sm leading-7 text-gray-700 dark:text-gray-300 [&_h2]:mb-3 [&_h2]:text-lg [&_h2]:font-bold [&_h2]:text-gray-900 dark:[&_h2]:text-white [&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:font-bold [&_h3]:text-gray-900 dark:[&_h3]:text-white [&_li]:mb-1 [&_p]:mb-3 [&_strong]:font-bold [&_strong]:text-gray-900 dark:[&_strong]:text-white [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5" dangerouslySetInnerHTML={{ __html: listingDescriptionToHtml(result.titleAnalysis ?? '', { allowMarkdown: true }) }} /></section>}
             <BilingualEditor label="主标题 Item Name" value={result.itemName} englishLimit={ITEM_NAME_MAX_CHARACTERS} onChange={(value) => updateBilingual('itemName', value)} />
             <BilingualEditor label="辅助标题 Item Highlight" value={result.itemHighlight} englishLimit={ITEM_HIGHLIGHT_MAX_CHARACTERS} onChange={(value) => updateBilingual('itemHighlight', value)} />
             <section className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-gray-50/70 p-3 dark:border-white/[0.08] dark:bg-gray-950/60 sm:flex-row sm:items-center sm:justify-between"><div><h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100">五点描述</h4><p className="mt-1 text-[11px] text-gray-400">可整组复制，也可继续逐条编辑和复制。</p></div><div className="flex flex-wrap gap-2"><CopyButton value={formatListingCopyBullets(result, 'en')} label="复制五点英文" showLabel onCopied={() => showToast('五点英文已复制', 'success')} /><CopyButton value={formatListingCopyBullets(result, 'zh')} label="复制五点中文" showLabel onCopied={() => showToast('五点中文已复制', 'success')} /></div></section>
             {result.bullets.map((bullet, index) => <BilingualEditor key={index} label={`五点描述 ${index + 1}`} value={bullet} rows={4} onChange={(value) => setResult((current) => current ? { ...current, bullets: current.bullets.map((item, itemIndex) => itemIndex === index ? value : item) as ListingCopyResult['bullets'] } : current)} />)}
-            <BilingualEditor label="长描述（纯文本）" value={result.longDescription} rows={15} onChange={(value) => updateBilingual('longDescription', value)} />
-            <section className="rounded-xl border border-gray-200 bg-white p-3 dark:border-white/[0.08] dark:bg-gray-900"><h4 className="mb-3 text-sm font-semibold text-gray-800 dark:text-gray-100">长描述富文本预览</h4><div className="grid gap-3 lg:grid-cols-2"><SafeHtmlPreview label="英文预览" html={listingDescriptionToHtml(result.longDescription.en)} /><SafeHtmlPreview label="中文预览" html={listingDescriptionToHtml(result.longDescription.zh)} /></div></section>
+            <BilingualEditor label="长描述（纯文本｜推荐提交）" value={result.longDescription} rows={15} onChange={(value) => updateBilingual('longDescription', value)} />
+            <section className="rounded-xl border border-gray-200 bg-white p-3 dark:border-white/[0.08] dark:bg-gray-900"><div className="mb-3"><h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100">长描述富文本预览</h4><p className="mt-1 text-[11px] text-gray-400">复制富文本会同时写入 HTML 与纯文本；Amazon 官方已不支持描述 HTML，直接提交时优先复制上方纯文本。</p></div><div className="grid gap-3 lg:grid-cols-2"><SafeHtmlPreview label="英文预览" html={listingDescriptionToHtml(result.longDescription.en)} plainText={result.longDescription.en} /><SafeHtmlPreview label="中文预览" html={listingDescriptionToHtml(result.longDescription.zh)} plainText={result.longDescription.zh} /></div></section>
             <BilingualEditor label="核心关键词" value={coreKeywordsText} rows={3} onChange={(value) => setResult((current) => current ? { ...current, coreKeywords: value.en.split(/[,\n]/).map((en, index) => ({ en: en.trim(), zh: value.zh.split(/[，,\n]/)[index]?.trim() ?? '' })).filter((item) => item.en || item.zh) } : current)} />
             <BilingualEditor label="Backend Search Terms" value={result.backendSearchTerms} rows={3} onChange={(value) => updateBilingual('backendSearchTerms', value)} />
-            <section className="rounded-xl border border-gray-200 bg-gray-50/70 p-3 dark:border-white/[0.08] dark:bg-gray-950/60"><h4 className="mb-3 text-sm font-semibold text-gray-800 dark:text-gray-100">安全 HTML 长描述</h4><div className="grid gap-3 lg:grid-cols-2">{([{ label: '英文 HTML', value: listingDescriptionToHtml(result.longDescription.en) }, { label: '中文 HTML', value: listingDescriptionToHtml(result.longDescription.zh) }] as const).map((item) => <FieldShell key={item.label} label={item.label} value={item.value}><textarea readOnly value={item.value} rows={13} className={`${FIELD_CLASS} min-h-72 resize-y bg-gray-50 font-mono text-xs leading-5 dark:bg-gray-950`} /></FieldShell>)}</div><div className="mt-4"><div className="mb-3 text-sm font-semibold text-gray-800 dark:text-gray-100">富文本效果预览</div><div className="grid gap-3 lg:grid-cols-2"><SafeHtmlPreview label="英文预览" html={listingDescriptionToHtml(result.longDescription.en)} /><SafeHtmlPreview label="中文预览" html={listingDescriptionToHtml(result.longDescription.zh)} /></div></div></section>
+            <section className="rounded-xl border border-gray-200 bg-gray-50/70 p-3 dark:border-white/[0.08] dark:bg-gray-950/60"><div className="mb-3"><h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100">兼容 HTML 长描述</h4><p className="mt-1 text-[11px] text-gray-400">由纯文本在本地安全生成，仅用于仍接受富文本的外部工具；Amazon 商品描述不建议提交 HTML 标签。</p></div><div className="grid gap-3 lg:grid-cols-2">{([{ label: '英文 HTML', value: listingDescriptionToHtml(result.longDescription.en) }, { label: '中文 HTML', value: listingDescriptionToHtml(result.longDescription.zh) }] as const).map((item) => <FieldShell key={item.label} label={item.label} value={item.value}><textarea readOnly value={item.value} rows={13} className={`${FIELD_CLASS} min-h-72 resize-y bg-gray-50 font-mono text-xs leading-5 dark:bg-gray-950`} /></FieldShell>)}</div><div className="mt-4"><div className="mb-3 text-sm font-semibold text-gray-800 dark:text-gray-100">富文本效果预览</div><div className="grid gap-3 lg:grid-cols-2"><SafeHtmlPreview label="英文预览" html={listingDescriptionToHtml(result.longDescription.en)} plainText={result.longDescription.en} /><SafeHtmlPreview label="中文预览" html={listingDescriptionToHtml(result.longDescription.zh)} plainText={result.longDescription.zh} /></div></div></section>
             {(result.missingFacts.length > 0 || result.complianceWarnings.length > 0) && <div className="grid gap-3 lg:grid-cols-2"><div className="rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-400/20 dark:bg-amber-400/10"><div className="text-xs font-bold text-amber-700 dark:text-amber-200">缺失信息</div><ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-amber-700 dark:text-amber-300">{result.missingFacts.length ? result.missingFacts.map((item) => <li key={item}>{item}</li>) : <li>无</li>}</ul></div><div className="rounded-xl border border-orange-200 bg-orange-50 p-3 dark:border-orange-400/20 dark:bg-orange-400/10"><div className="text-xs font-bold text-orange-700 dark:text-orange-200">合规提醒</div><ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-orange-700 dark:text-orange-300">{result.complianceWarnings.length ? result.complianceWarnings.map((item) => <li key={item}>{item}</li>) : <li>无</li>}</ul></div></div>}
           </div>}
         </section>

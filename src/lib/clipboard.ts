@@ -15,6 +15,25 @@ export async function copyTextToClipboard(text: string) {
   throw asyncClipboardError ?? new Error('Clipboard API is not available')
 }
 
+export async function copyRichTextToClipboard(html: string, plainText: string): Promise<'rich' | 'plain'> {
+  if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([plainText], { type: 'text/plain' }),
+        }),
+      ])
+      return 'rich'
+    } catch {
+      // Some embedded browsers expose ClipboardItem but block rich clipboard writes.
+    }
+  }
+
+  await copyTextToClipboard(plainText)
+  return 'plain'
+}
+
 export async function copyBlobToClipboard(blob: Blob | Promise<Blob>) {
   if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
     throw new Error('Clipboard image API is not available')

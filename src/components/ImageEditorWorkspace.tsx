@@ -10,7 +10,7 @@ import {
 } from '../store'
 import { getImageDimensions } from '../lib/canvasImage'
 import { getPendingImageEditorResultAutoPreview } from '../lib/imageEditorSelection'
-import { getAPlusUpscalePlan, type APlusUpscaleFormat } from '../lib/imageUpscaling'
+import { getAPlusUpscalePlan, getCustomUpscalePlan, MAX_CUSTOM_UPSCALE_EDGE, type APlusUpscaleFormat, type ImageUpscaleTargetSize } from '../lib/imageUpscaling'
 import { downloadImageIds } from '../lib/downloadImages'
 import type { APlusOutputConversionTarget } from '../store'
 import type { APlusSliceFormat } from '../lib/imageSlicing'
@@ -19,6 +19,8 @@ import ImageAnnotationCanvas from './ImageAnnotationCanvas'
 import ImageSliceDialog from './ImageSliceDialog'
 import Select from './Select'
 import TaskGrid from './TaskGrid'
+
+type UpscaleMode = 'proportional' | 'custom'
 
 function EditorImageThumb({ imageId, dataUrl, label, active, onClick }: {
   imageId: string
@@ -95,6 +97,7 @@ export default function ImageEditorWorkspace() {
   const setEditorActiveImageId = useStore((s) => s.setEditorActiveImageId)
   const setEditorActiveTaskId = useStore((s) => s.setEditorActiveTaskId)
   const setEditorCanvasDraft = useStore((s) => s.setEditorCanvasDraft)
+  const resetEditorCanvasDraft = useStore((s) => s.resetEditorCanvasDraft)
   const addInputImage = useStore((s) => s.addInputImage)
   const setInputImages = useStore((s) => s.setInputImages)
   const maskDraft = useStore((s) => s.maskDraft)
@@ -113,24 +116,43 @@ export default function ImageEditorWorkspace() {
   const [sliceBusy, setSliceBusy] = useState(false)
   const [localBusy, setLocalBusy] = useState(false)
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
+  const [upscaleMode, setUpscaleMode] = useState<UpscaleMode>('proportional')
+  const [customUpscaleWidth, setCustomUpscaleWidth] = useState('')
+  const [customUpscaleHeight, setCustomUpscaleHeight] = useState('')
 
   const activeTask = useMemo(
     () => tasks.find((task) => task.id === editorActiveTaskId) ?? null,
     [editorActiveTaskId, tasks],
   )
   const outputImageIds = activeTask?.outputImages ?? []
-  const currentImageId = editorActiveImageId ?? inputImages[0]?.id ?? styleReferenceImage?.id ?? outputImageIds[0] ?? null
+  const currentImageId = editorActiveImageId ?? inputImages[0]?.id ?? outputImageIds[0] ?? null
   const currentInputImage = inputImages.find((image) => image.id === currentImageId)
   const currentPreviewImage = currentInputImage
     ?? (styleReferenceImage?.id === currentImageId ? styleReferenceImage : undefined)
   const mainSourceImageId = editorCanvasDraft.sourceImageId
   const currentSourceIsInput = Boolean(currentInputImage && currentImageId === mainSourceImageId)
+  const currentOutputImageId = currentImageId && outputImageIds.includes(currentImageId) ? currentImageId : null
   const imageLimit = Math.max(1, adminAccess.referenceImageUploadLimit)
   const imageCount = inputImages.length + (styleReferenceImage ? 1 : 0)
   const canUpload = imageCount < imageLimit
-  const upscalePlan = dimensions.width && dimensions.height
+  const proportionalUpscalePlan = dimensions.width && dimensions.height
     ? getAPlusUpscalePlan(dimensions.width, dimensions.height, sliceFormat as APlusUpscaleFormat)
     : null
+  const customUpscale = useMemo(() => {
+    if (!dimensions.width || !dimensions.height) return { plan: null, error: '' }
+    try {
+      return {
+        plan: getCustomUpscalePlan(dimensions.width, dimensions.height, {
+          width: Number(customUpscaleWidth),
+          height: Number(customUpscaleHeight),
+        }),
+        error: '',
+      }
+    } catch (error) {
+      return { plan: null, error: error instanceof Error ? error.message : '自定义尺寸无效。' }
+    }
+  }, [customUpscaleHeight, customUpscaleWidth, dimensions.height, dimensions.width])
+  const selectedUpscalePlan = upscaleMode === 'custom' ? customUpscale.plan : proportionalUpscalePlan
 
   useEffect(() => {
     if (!currentImageId) {
@@ -161,16 +183,33 @@ export default function ImageEditorWorkspace() {
   }, [currentImageId, currentPreviewImage?.dataUrl])
 
   useEffect(() => {
+    if (!dimensions.width || !dimensions.height) {
+      setCustomUpscaleWidth('')
+      setCustomUpscaleHeight('')
+      return
+    }
+    const plan = getAPlusUpscalePlan(dimensions.width, dimensions.height, sliceFormat as APlusUpscaleFormat)
+    setCustomUpscaleWidth(String(plan.targetWidth))
+    setCustomUpscaleHeight(String(plan.targetHeight))
+  }, [currentImageId, dimensions.height, dimensions.width, sliceFormat])
+
+  useEffect(() => {
     if (!editorActiveImageId && inputImages[0]) {
       setEditorActiveImageId(inputImages[0].id)
     }
   }, [editorActiveImageId, inputImages, setEditorActiveImageId])
 
   useEffect(() => {
-    if (!mainSourceImageId && inputImages[0]) {
-      setEditorCanvasDraft({ sourceImageId: inputImages[0].id, annotations: [] })
+    if (!mainSourceImageId) {
+      if (inputImages[0]) setEditorCanvasDraft({ sourceImageId: inputImages[0].id, annotations: [] })
+      return
     }
-  }, [inputImages, mainSourceImageId, setEditorCanvasDraft])
+    if (inputImages.some((image) => image.id === mainSourceImageId)) return
+
+    const nextSourceImageId = inputImages[0]?.id ?? null
+    resetEditorCanvasDraft(nextSourceImageId)
+    if (editorActiveImageId === mainSourceImageId) setEditorActiveImageId(nextSourceImageId)
+  }, [editorActiveImageId, inputImages, mainSourceImageId, resetEditorCanvasDraft, setEditorActiveImageId, setEditorCanvasDraft])
 
   useEffect(() => {
     const pendingPreview = getPendingImageEditorResultAutoPreview(
@@ -257,14 +296,45 @@ export default function ImageEditorWorkspace() {
     })
   }
 
+  const handlePromoteResult = (imageId: string) => {
+    const applyResultSource = () => {
+      void openImageEditor(imageId)
+    }
+    if (editorCanvasDraft.annotations.length === 0) {
+      applyResultSource()
+      return
+    }
+    setConfirmDialog({
+      title: '将结果图设为当前主图？',
+      message: '继续编辑结果图会清空当前画布标注、遮罩、风格参考和残留提示词。',
+      confirmText: '设为当前主图',
+      cancelText: '取消',
+      tone: 'warning',
+      action: applyResultSource,
+    })
+  }
+
   const handleLocalUpscale = async () => {
     if (!currentImageId || localBusy) return
+    let targetSize: ImageUpscaleTargetSize | undefined
+    if (upscaleMode === 'custom') {
+      if (!customUpscale.plan) {
+        showToast(customUpscale.error || '请填写有效的自定义尺寸', 'error')
+        return
+      }
+      targetSize = {
+        width: customUpscale.plan.targetWidth,
+        height: customUpscale.plan.targetHeight,
+      }
+    }
     setLocalBusy(true)
     try {
-      const task = await createAPlusUpscaleTaskFromImage(currentImageId, sliceFormat)
+      const task = await createAPlusUpscaleTaskFromImage(currentImageId, sliceFormat, targetSize)
       setEditorActiveTaskId(task.id)
       setEditorActiveImageId(task.outputImages[0] ?? currentImageId)
-      showToast(`已保存 ${sliceFormat === 'mobile' ? '手机' : '高级'} A+ 等比放大结果`, 'success')
+      showToast(targetSize
+        ? `已保存 ${targetSize.width} × ${targetSize.height} 自定义尺寸放大结果`
+        : `已保存 ${sliceFormat === 'mobile' ? '手机' : '高级'} A+ 等比放大结果`, 'success')
     } catch (error) {
       showToast(error instanceof Error ? error.message : '图片放大失败', 'error')
     } finally {
@@ -395,8 +465,14 @@ export default function ImageEditorWorkspace() {
               {currentImageId !== mainSourceImageId && (
                 <div className="absolute left-5 top-5 flex items-center gap-2 rounded-xl bg-black/60 p-1 pl-2 text-[11px] text-white shadow-lg backdrop-blur-sm">
                   <span>素材预览 · 画布工具仅用于当前主图</span>
-                  {currentInputImage && (
-                    <button type="button" onClick={() => handlePromoteInput(currentInputImage.id)} className="rounded-lg bg-white/15 px-2 py-1 font-semibold transition hover:bg-white/25">
+                  {(currentInputImage || currentOutputImageId) && (
+                    <button
+                      type="button"
+                      onClick={() => currentInputImage
+                        ? handlePromoteInput(currentInputImage.id)
+                        : currentOutputImageId && handlePromoteResult(currentOutputImageId)}
+                      className="rounded-lg bg-white/15 px-2 py-1 font-semibold transition hover:bg-white/25"
+                    >
                       设为当前主图
                     </button>
                   )}
@@ -455,8 +531,8 @@ export default function ImageEditorWorkspace() {
             <ToolButton onClick={handleOpenMask} disabled={!currentImageId || !currentSourceIsInput} title="在当前输入图片上绘制局部重绘遮罩">
               打开遮罩编辑
             </ToolButton>
-            <ToolButton onClick={() => { if (currentImageId) void openImageEditor(currentImageId) }} disabled={!currentImageId || Boolean(currentInputImage)}>
-              将当前结果作为输入继续编辑
+            <ToolButton onClick={() => { if (currentOutputImageId) handlePromoteResult(currentOutputImageId) }} disabled={!currentOutputImageId}>
+              将当前结果设为主图继续编辑
             </ToolButton>
             <div className="grid grid-cols-2 gap-2">
               <ToolButton onClick={handlePreview} disabled={!currentImageId}>
@@ -469,8 +545,60 @@ export default function ImageEditorWorkspace() {
             <ToolButton onClick={() => setShowSliceDialog(true)} disabled={!currentImageId || sliceBusy}>
               切割 A+ 母图
             </ToolButton>
-            <ToolButton onClick={() => void handleLocalUpscale()} disabled={!currentImageId || localBusy}>
-              {localBusy ? '正在处理图片…' : upscalePlan ? `等比放大至 ${upscalePlan.targetWidth} × ${upscalePlan.targetHeight}` : '等比放大图片'}
+            <div className="space-y-2 rounded-xl border border-gray-200/70 bg-white/60 p-2.5 dark:border-white/[0.06] dark:bg-white/[0.025]">
+              <label className="block">
+                <span className="mb-1 block text-[10px] font-medium text-gray-500 dark:text-gray-400">放大方式</span>
+                <Select
+                  value={upscaleMode}
+                  onChange={(value) => setUpscaleMode(value as UpscaleMode)}
+                  options={[
+                    { label: '等比放大（默认）', value: 'proportional' },
+                    { label: '自定义尺寸', value: 'custom' },
+                  ]}
+                  className="w-full rounded-xl border border-gray-200/60 bg-white/70 px-3 py-1.5 text-xs shadow-sm transition-all duration-200 hover:bg-white dark:border-white/[0.08] dark:bg-white/[0.03] dark:hover:bg-white/[0.06]"
+                />
+              </label>
+              {upscaleMode === 'custom' && (
+                <div className="space-y-1.5">
+                  <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
+                    <label className="min-w-0">
+                      <span className="mb-1 block text-[10px] text-gray-500 dark:text-gray-400">宽度（px）</span>
+                      <input
+                        type="number"
+                        min={dimensions.width || 1}
+                        max={MAX_CUSTOM_UPSCALE_EDGE}
+                        step={1}
+                        value={customUpscaleWidth}
+                        onChange={(event) => setCustomUpscaleWidth(event.target.value)}
+                        className="w-full rounded-xl border border-gray-200 bg-white px-2.5 py-2 text-xs text-gray-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-500/10 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-100"
+                      />
+                    </label>
+                    <span className="pb-2 text-xs text-gray-400">×</span>
+                    <label className="min-w-0">
+                      <span className="mb-1 block text-[10px] text-gray-500 dark:text-gray-400">高度（px）</span>
+                      <input
+                        type="number"
+                        min={dimensions.height || 1}
+                        max={MAX_CUSTOM_UPSCALE_EDGE}
+                        step={1}
+                        value={customUpscaleHeight}
+                        onChange={(event) => setCustomUpscaleHeight(event.target.value)}
+                        className="w-full rounded-xl border border-gray-200 bg-white px-2.5 py-2 text-xs text-gray-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-500/10 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-100"
+                      />
+                    </label>
+                  </div>
+                  <p className={`text-[10px] leading-relaxed ${customUpscale.error ? 'text-red-500 dark:text-red-300' : 'text-gray-400'}`}>
+                    {customUpscale.error || '严格输出所填宽高；与原图比例不同时画面会被拉伸。'}
+                  </p>
+                </div>
+              )}
+            </div>
+            <ToolButton onClick={() => void handleLocalUpscale()} disabled={!currentImageId || localBusy || !selectedUpscalePlan}>
+              {localBusy
+                ? '正在处理图片…'
+                : selectedUpscalePlan
+                  ? `${upscaleMode === 'custom' ? '自定义尺寸放大' : '等比放大'}至 ${selectedUpscalePlan.targetWidth} × ${selectedUpscalePlan.targetHeight}`
+                  : '放大图片'}
             </ToolButton>
             <div className="grid grid-cols-2 gap-2 pt-1">
               <ToolButton onClick={() => void handlePrepareConversion('premium')} disabled={!currentImageId}>

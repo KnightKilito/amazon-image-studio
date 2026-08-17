@@ -13,8 +13,8 @@ function validPayload(itemName = 'Women Mule Sandals with Block Heel') {
     itemHighlight: { en: 'Slip-On Comfort with Rubber Outsole for Office Wear', zh: '便捷套脚穿着配橡胶鞋底适合通勤' },
     bullets: Array.from({ length: 5 }, (_, index) => ({ en: `${index + 1}. [Signature Feature ${index + 1}]: Supported benefit for polished everyday styling.`, zh: `${index + 1}. [特色卖点 ${index + 1}]：真实设计带来精致日常搭配价值。` })),
     longDescription: {
-      en: '**Polished Ease for Every Step**\n\n**A refined silhouette brings effortless character to everyday styling.** This factual description turns confirmed design details into a clear reason to buy.\n\n**Perfect For:**\n• Office-ready looks\n• Weekend plans\n• Dinner styling\n\n**Specifications:**\n• Category: Mule sandals\n• Heel: Block heel\n\n**Step into the day with a polished finish that feels distinctly your own.**',
-      zh: '**从容步履：精致穆勒凉鞋**\n\n**利落轮廓为日常造型注入不费力的精致感。** 这段文案将已经确认的设计信息转化为清晰的购买价值。\n\n**完美适用于：**\n• 办公室通勤造型\n• 周末休闲安排\n• 晚餐约会穿搭\n\n**规格说明：**\n• 品类：穆勒凉鞋\n• 鞋跟：粗跟\n\n**穿上这份恰到好处的精致，让每一步都展现自己的从容风格。**',
+      en: 'Polished Ease for Every Step\n\nA refined silhouette brings effortless character to everyday styling. This factual description turns confirmed design details into a clear reason to buy.\n\nPerfect For:\n• Office-ready looks\n• Weekend plans\n• Dinner styling\n\nSpecifications:\n• Category: Mule sandals\n• Heel: Block heel\n\nStep into the day with a polished finish that feels distinctly your own.',
+      zh: '从容步履：精致穆勒凉鞋\n\n利落轮廓为日常造型注入不费力的精致感。这段文案将已经确认的设计信息转化为清晰的购买价值。\n\n完美适用于：\n• 办公室通勤造型\n• 周末休闲安排\n• 晚餐约会穿搭\n\n规格说明：\n• 品类：穆勒凉鞋\n• 鞋跟：粗跟\n\n穿上这份恰到好处的精致，让每一步都展现自己的从容风格。',
     },
     coreKeywords: [{ en: 'mule sandals', zh: '穆勒凉鞋' }, { en: 'block heel shoes', zh: '粗跟鞋' }, { en: 'slip on shoes', zh: '一脚蹬鞋' }],
     backendSearchTerms: { en: 'office slip on footwear casual block heel', zh: '通勤套脚休闲粗跟鞋' },
@@ -58,6 +58,8 @@ describe('generateListingCopy', () => {
     expect(body.instructions).toContain('请大胆写出五条让买家产生拥有欲')
     expect(body.instructions).toContain('Long-description instructions:')
     expect(body.instructions).toContain('Perfect For:')
+    expect(body.instructions).toContain('Return longDescription as clean plain text with no Markdown syntax and no HTML tags')
+    expect(body.instructions).toContain('Never use **, __, # headings, <br>, <p>, <strong>')
     expect(body.instructions).toContain('Fixed title restriction:')
     expect(body.instructions).toContain('Title planning output: titleAnalysis')
     expect(body.instructions).toContain('Creative direction:')
@@ -164,6 +166,21 @@ describe('generateListingCopy', () => {
     expect(generated.repaired).toBe(false)
     expect(generated.validationIssues).toEqual([])
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('normalizes accidental Markdown and HTML from the AI long description', async () => {
+    const payload = validPayload()
+    payload.longDescription = {
+      en: '**Polished Summer**\n\n<p>A refined <strong>silhouette</strong>.</p>\n\n**Perfect For:**\n* Dinner styling',
+      zh: '**精致夏日**\n\n<p>利落的<strong>鞋履轮廓</strong>。</p>\n\n**完美适用于：**\n* 晚宴造型',
+    }
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => jsonResponse(payload))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const generated = await generateListingCopy(baseOptions)
+    expect(generated.result.longDescription.en).toBe('Polished Summer\n\nA refined silhouette.\n\nPerfect For:\n• Dinner styling')
+    expect(generated.result.longDescription.zh).toBe('精致夏日\n\n利落的鞋履轮廓。\n\n完美适用于：\n• 晚宴造型')
+    expect(generated.validationIssues).toEqual([])
   })
 
   it('revises the current result from a seller follow-up while keeping facts and images in context', async () => {

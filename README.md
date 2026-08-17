@@ -11,6 +11,7 @@
 - 🪶 Listing 图片策划：默认 `MAIN + PT01-PT06`，可自定义为 `7-12` 张。
 - 📝 Listing 文案：生成美国站 Item Name、Item Highlight、五点、长描述、关键词与中文对照，并测算 FBM/FBA 利润。
 - ✒️ A+ 图片策划：支持普通、标准、高级、手机 A+ 与独立品牌故事；高级 A+ 的独立模块和自由编排均可同步策划 From the brand。
+- 🖼️ 图片编辑：支持 AI 编辑、输入主图切换、局部遮罩、A+ 母图切割、本地等比放大和高级/手机 A+ 转换准备。
 - 💾 参考图、遮罩编辑、视觉风格、历史记录、批量下载与本地 IndexedDB 存储。
 - 🧠 支持 OpenAI / OpenAI 兼容接口、OpenRouter，以及独立的 Chat Completions / Responses 策划配置。
 - 📒 内置 Amazon 主图、附图与 A+ 尺寸规则；生成时会带入目标分辨率与合规约束。
@@ -56,9 +57,10 @@ npm run dev
 ## 📖 使用流程
 
 1. 在右上角设置中分别配置生图 API 与 AI 策划 API。
-2. 进入 `Listing 文案`，填写产品事实、成本和重量，按需上传参考图，生成中英文文案与建议定价。
-3. 返回首页选择 `Listing 图` 或 `A+ 图`，粘贴文案并执行 AI 策划，在右侧选择图片位、检查 Prompt Preview。
-4. 逐张提交生成；文案版本和图片结果均保存在本地历史中，可恢复、筛选、复用、编辑或下载。
+2. 进入 [`Listing 文案`](src/docs/05-listing-copy.md)，填写产品事实、成本和重量，按需上传参考图，生成并检查中英文文案、标题分析与建议定价。
+3. 返回首页选择 `Listing 图` 或 `A+ 图`，粘贴已确认的文案并执行 AI 策划；高级 A+ 可选择独立模块、自由编排和是否同步策划 From the brand。
+4. 在 [`图片编辑`](src/docs/06-image-editor.md) 中继续处理素材：可做 AI 局部编辑、遮罩、A+ 母图切割或本地等比放大。
+5. 逐张提交生成；文案版本、图片结果和本地处理派生任务均保存在本地历史中，可恢复、筛选、复用、编辑或下载。
 
 生图建议使用 `Images API (/v1/images)` 与 `gpt-image-2`。策划使用文本或多模态模型，建议选择 `Chat Completions (/chat/completions)` 或 `Responses API (/v1/responses)`。DeepSeek 官方 Chat Completions 不接收参考图，应用会自动以纯文本请求策划。
 

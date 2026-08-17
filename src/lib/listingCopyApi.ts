@@ -4,7 +4,7 @@ import { DEFAULT_CHAT_MODEL, DEFAULT_RESPONSES_MODEL, isOfficialDeepSeekPlannerP
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import { getApiErrorMessage } from './imageApiShared'
 import { readPlannerResponseText, type PlannerAttemptInfo, type PlannerRequestStatus } from './listingPlannerApi'
-import { validateListingCopyResult } from './listingCopy'
+import { normalizeListingLongDescriptionText, validateListingCopyResult } from './listingCopy'
 import type { AmazonMarketplace } from '../types'
 
 const BILINGUAL_SCHEMA = {
@@ -105,7 +105,7 @@ function buildSystemPrompt(options: { prompts: ListingCopyPrompts; marketplace: 
       : '',
     'Customer-facing boundary: itemName, itemHighlight, bullets, and longDescription are finished sales copy. Never discuss missing inputs, uncertainty, source data, or the information-gathering process in those fields; reserve that discussion for titleAnalysis or missingFacts.',
     'Return exactly five bilingual bullet objects. In each language every bullet must begin with its matching number 1 through 5, a specific benefit-led heading in square brackets, then a colon. Do not use generic headings such as Product Form, Basic Information, or Missing Information.',
-    'Return longDescription as Markdown-flavored plain text, never HTML. Follow the user-editable long-description instructions for voice and structure; use **bold emphasis** and lists when they improve persuasion and readability.',
+    'Return longDescription as clean plain text with no Markdown syntax and no HTML tags. Use blank lines, an unmarked opening title line, plain section headings ending with a colon, and bullet characters when they improve readability. Never use **, __, # headings, <br>, <p>, <strong>, or other formatting markup.',
     'Return coreKeywords as bilingual terms. backendSearchTerms.en must be a natural space-separated Seller Central search term string without competitor brands, ASINs, irrelevant words, or mechanical repetition.',
     'Return missingFacts and complianceWarnings as Simplified Chinese string arrays. If none, return empty arrays.',
     'Return only one valid JSON object matching the required schema. Do not use Markdown fences, comments, or text outside JSON.',
@@ -167,7 +167,13 @@ export function normalizeListingCopyPayload(payload: unknown): ListingCopyResult
     itemName: readBilingual(record.itemName),
     itemHighlight: readBilingual(record.itemHighlight),
     bullets: paddedBullets as ListingCopyResult['bullets'],
-    longDescription: readBilingual(record.longDescription),
+    longDescription: (() => {
+      const value = readBilingual(record.longDescription)
+      return {
+        en: normalizeListingLongDescriptionText(value.en),
+        zh: normalizeListingLongDescriptionText(value.zh),
+      }
+    })(),
     coreKeywords,
     backendSearchTerms: readBilingual(record.backendSearchTerms),
     missingFacts: Array.isArray(record.missingFacts) ? record.missingFacts.map(readString).filter(Boolean) : [],

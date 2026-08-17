@@ -33,3 +33,7 @@
 - 新开的当前本地页面显示：五点提示词以“懂时尚审美、消费者心理与 Amazon 转化”开头，长描述提示词以“时尚与生活方式品牌的高级创意文案”开头；它们与 `DEFAULT_LISTING_BULLETS_PROMPT` / `DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT` 完全一致，已是页面恢复按钮和新草稿使用的默认值。
 - 当前合规规则只笼统写“性能必须有依据”，没有区分普通营销描述和需测试/认证的客观承诺，容易让模型把 `anti-slip`、`strong grip`、`all-day comfort`、`stable and easy to walk` 一律当成不可用性能宣称，并在 `complianceWarnings` 里制造无价值警告。
 - 最合适的方案不是在“修正合规规则”和“继续对话”之间二选一：合规规则负责首次生成不误判；继续优化入口负责用户对某一款商品的具体补充。定向优化会带上当前完整 JSON、原始资料和参考图，并要求保留用户未点名的优质字段。
+- Bing 已直接索引 Amazon Seller Central 官方公告《Remove HTML tags from your listings》：Amazon 表示为安全性和非 HTML 设备兼容，自 2021-07-30 后停止支持商品详情页 product description 中的 HTML 标签。该政策不是“未来可能发生”，而是 2021 年已宣布实施；即使现实中少量标签偶尔仍能渲染，也不应作为官方长期兼容能力。
+- 官方公告直链：`https://sellercentral.amazon.com/seller-forums/discussions/t/d2712113d23ba4ccaede5a1bfd81f945`。产品实现应将 Amazon 可直接提交的纯文本视为主输出，受控 HTML 仅作为兼容外部富文本工具的派生格式，并明确标注不建议直接提交到 Amazon。
+- 旧历史与模型偶发格式偏差需要本地归一化：去除 `**`、`__`、`#` 标题和 HTML 标签，保留段落、普通标题行与 `•` 列表；标题策划分析另行允许 Markdown，不与长描述共用默认解析模式。
+- 富文本预览复制应同时写入 `text/html` 和 `text/plain`，富文本编辑器可保留结构，普通文本框自动获得无标签文本；不支持富文本剪贴板的浏览器回退为纯文本复制。

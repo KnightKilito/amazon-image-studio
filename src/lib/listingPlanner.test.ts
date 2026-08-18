@@ -739,6 +739,93 @@ describe('callAmazonPlannerApi', () => {
     expect(result.plans).toHaveLength(7)
   })
 
+  it('waits for an explicit user retry after the planner response stream is interrupted', async () => {
+    const encoder = new TextEncoder()
+    const partialText = '{"product":'
+    let pullCount = 0
+    const interruptedStream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pullCount++ === 0) {
+          controller.enqueue(encoder.encode([
+            `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: partialText })}`,
+            '',
+            '',
+          ].join('\n')))
+          return
+        }
+        controller.error(new TypeError('stream read error'))
+      },
+    })
+    const apiPayload = createApiPayload('Recovered non-streaming tumbler')
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => {
+      if (fetchMock.mock.calls.length === 1) {
+        return new Response(interruptedStream, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        })
+      }
+      return new Response(JSON.stringify({ output_text: JSON.stringify(apiPayload) }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const attempts: unknown[] = []
+    const deltas: string[] = []
+    const request = {
+      listingText: SAMPLE_LISTING,
+      baseDraft: DEFAULT_AMAZON_PROMPT_DRAFT,
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+        streamImages: true,
+      }),
+      onAttemptStart: (attempt) => attempts.push(attempt),
+      onTextDelta: (delta) => deltas.push(delta),
+    } satisfies Parameters<typeof callAmazonPlannerApi>[0]
+
+    await expect(callAmazonPlannerApi(request)).rejects.toThrow('流式响应读取中断：stream read error')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).stream).toBe(true)
+
+    const result = await callAmazonPlannerApi(request)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)).stream).toBe(true)
+    expect(attempts).toEqual([
+      { label: 'AI 策划', apiMode: 'responses', streaming: true },
+      { label: 'AI 策划', apiMode: 'responses', streaming: true },
+    ])
+    expect(deltas).toEqual([partialText])
+    expect(result.parsed.title).toBe('Recovered non-streaming tumbler')
+    expect(result.plans).toHaveLength(7)
+  })
+
+  it('does not automatically retry when the provider sends stream read error as an SSE error event', async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => (
+      new Response(`data: ${JSON.stringify({ error: { message: 'stream read error' } })}\n\n`, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      })
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: DEFAULT_AMAZON_PROMPT_DRAFT,
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+        streamImages: true,
+      }),
+    })).rejects.toThrow('stream read error')
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('plans a product-specific AI visual direction when AI style mode is selected', async () => {
     const apiPayload = { ...createApiPayload(), aiVisualStyle: AI_VISUAL_STYLE_PAYLOAD }
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({

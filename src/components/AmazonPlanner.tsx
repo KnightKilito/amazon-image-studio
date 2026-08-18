@@ -43,7 +43,7 @@ import {
   type AmazonPlannerMode,
   type AmazonStyleDensityMode,
 } from '../lib/listingPlanner'
-import { callAmazonPlannerApi, type PlannerApiResult, type PlannerAttemptInfo, type PlannerRequestStatus } from '../lib/listingPlannerApi'
+import { callAmazonPlannerApi, isPlannerStreamReadError, type PlannerApiResult, type PlannerAttemptInfo, type PlannerRequestStatus } from '../lib/listingPlannerApi'
 import { deleteAmazonPlannerSession, getAllAmazonPlannerSessions, putAmazonPlannerSession } from '../lib/db'
 import { prepareReferenceImagePayload, type PlannerReferenceImagePayload } from '../lib/referenceImagePayload'
 import {
@@ -392,6 +392,7 @@ export default function AmazonPlanner() {
   const clearStyleReferenceImage = useStore((s) => s.clearStyleReferenceImage)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const showToast = useStore((s) => s.showToast)
+  const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const plannerAbortControllerRef = useRef<AbortController | null>(null)
@@ -1450,7 +1451,21 @@ export default function AmazonPlanner() {
       const detail = getPlannerFailureDetail(err)
       setPlannerError(detail)
       setPlannerRun((current) => ({ ...current, finishedAt: Date.now(), status: 'error', error: detail }))
-      showToast('AI 策划失败，请查看详情', 'error')
+      if (isPlannerStreamReadError(err)) {
+        showToast('上游流式输出已中断', 'error')
+        setConfirmDialog({
+          title: '流式输出已中断',
+          message: '上游接口在流式输出过程中意外中断，当前收到的策划内容不完整。\n\n是否按当前配置重新发起本次策划？重试会产生一次新的接口请求，可能产生额外费用。',
+          confirmText: '重新策划',
+          cancelText: '暂不重试',
+          tone: 'warning',
+          action: () => {
+            void createAiPlan()
+          },
+        })
+      } else {
+        showToast('AI 策划失败，请查看详情', 'error')
+      }
     } finally {
       if (plannerAbortControllerRef.current === controller) {
         plannerAbortControllerRef.current = null

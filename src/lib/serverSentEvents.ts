@@ -6,6 +6,22 @@ export function looksLikeServerSentEvents(text: string): boolean {
   return /^(?:event|data):\s*/m.test(text.trimStart())
 }
 
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message.trim()
+  const message = String(error).trim()
+  return message && message !== '[object Object]' ? message : '连接被意外中断'
+}
+
+export class ServerSentEventReadError extends Error {
+  readonly originalError: unknown
+
+  constructor(error: unknown) {
+    super(`流式响应读取中断：${getErrorMessage(error)}`)
+    this.name = 'ServerSentEventReadError'
+    this.originalError = error
+  }
+}
+
 function isRecordValue(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
@@ -84,19 +100,30 @@ export async function readJsonServerSentEvents(
   const decoder = new TextDecoder()
   let buffer = ''
 
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
+  try {
+    while (true) {
+      let chunk: ReadableStreamReadResult<Uint8Array>
+      try {
+        chunk = await reader.read()
+      } catch (error) {
+        throw new ServerSentEventReadError(error)
+      }
 
-    let separatorIndex = buffer.search(/\r?\n\r?\n/)
-    while (separatorIndex >= 0) {
-      const block = buffer.slice(0, separatorIndex)
-      const separator = buffer.match(/\r?\n\r?\n/)?.[0] ?? '\n\n'
-      buffer = buffer.slice(separatorIndex + separator.length)
-      await processServerSentEventBlock(block, onEvent)
-      separatorIndex = buffer.search(/\r?\n\r?\n/)
+      const { value, done } = chunk
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      let separatorIndex = buffer.search(/\r?\n\r?\n/)
+      while (separatorIndex >= 0) {
+        const block = buffer.slice(0, separatorIndex)
+        const separator = buffer.match(/\r?\n\r?\n/)?.[0] ?? '\n\n'
+        buffer = buffer.slice(separatorIndex + separator.length)
+        await processServerSentEventBlock(block, onEvent)
+        separatorIndex = buffer.search(/\r?\n\r?\n/)
+      }
     }
+  } finally {
+    reader.releaseLock()
   }
 
   buffer += decoder.decode()

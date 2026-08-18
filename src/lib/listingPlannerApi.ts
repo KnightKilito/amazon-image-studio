@@ -21,7 +21,7 @@ import {
   type AmazonPlannerMode,
   type ListingParseResult,
 } from './listingPlanner'
-import { isEventStreamResponse, looksLikeServerSentEvents, readJsonServerSentEvents, readJsonServerSentEventText } from './serverSentEvents'
+import { isEventStreamResponse, looksLikeServerSentEvents, readJsonServerSentEvents, readJsonServerSentEventText, ServerSentEventReadError } from './serverSentEvents'
 import type { SizeTier } from './size'
 
 interface PlannerApiPayload {
@@ -977,6 +977,12 @@ class PlannerHttpError extends Error {
   }
 }
 
+export function isPlannerStreamReadError(err: unknown): boolean {
+  if (err instanceof ServerSentEventReadError) return true
+  const message = err instanceof Error ? err.message : String(err)
+  return /\bstream(?:ing)?\s+read\s+error\b/i.test(message)
+}
+
 function shouldRetryPlannerWithoutReferenceImages(err: unknown): boolean {
   if (err instanceof PlannerEmptyTextError) return true
   if (!(err instanceof PlannerHttpError)) return false
@@ -1137,7 +1143,7 @@ export async function callAmazonPlannerApi(options: {
     return await performPlannerRequest(false, options.profile.apiMode, false, canRetryWithoutReferences ? '带参考图策划' : 'AI 策划')
   } catch (err) {
     errors.push({ label: canRetryWithoutReferences ? 'Reference image attempt' : 'Planner attempt', error: err })
-    if (options.signal?.aborted || !shouldRetryPlannerWithoutReferenceImages(err)) throw err
+    if (options.signal?.aborted || isPlannerStreamReadError(err) || !shouldRetryPlannerWithoutReferenceImages(err)) throw err
     if (!canRetryWithoutReferences && options.profile.apiMode === 'chat') throw err
   }
 
@@ -1146,7 +1152,7 @@ export async function callAmazonPlannerApi(options: {
       return await performPlannerRequest(true, options.profile.apiMode, false, '纯文本重试')
     } catch (retryErr) {
       errors.push({ label: 'Text-only retry', error: retryErr })
-      if (options.signal?.aborted || !shouldRetryPlannerWithoutReferenceImages(retryErr)) {
+      if (options.signal?.aborted || isPlannerStreamReadError(retryErr) || !shouldRetryPlannerWithoutReferenceImages(retryErr)) {
         throw combinePlannerRetryErrors(errors)
       }
     }

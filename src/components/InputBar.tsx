@@ -10,6 +10,7 @@ import { isAPlusMotherImageSize } from '../lib/aPlusLayout'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { getSafeBoundingClientRect } from '../lib/domRect'
+import { resolveInputImageDropIndex, type InputImageDropRect } from '../lib/inputImageDrag'
 import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
 import { getFilteredTaskHistory } from '../lib/taskHistory'
 import { useHintTooltip } from '../hooks/useHintTooltip'
@@ -19,6 +20,8 @@ import SizePickerModal from './SizePickerModal'
 import ViewportTooltip from './ViewportTooltip'
 import { CloseIcon, ImportIcon } from './icons'
 
+const INPUT_IMAGE_SORT_MIME = 'application/x-amazon-image-order'
+const INPUT_IMAGE_SORT_TEXT_PREFIX = 'input-image-order:'
 
 function getMentionTagTextLength(el: Element) {
   return el.textContent?.length ?? 0
@@ -520,6 +523,7 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
   const textareaRef = useRef<HTMLDivElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
   const imagesRef = useRef<HTMLDivElement>(null)
+  const imageGridRef = useRef<HTMLDivElement>(null)
   const paramsPanelRef = useRef<HTMLDivElement>(null)
   const prevHeightRef = useRef(42)
   const editorPromptHeightRef = useRef(220)
@@ -1239,7 +1243,10 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
 
   // 拖拽图片 - 监听整个页面
   useEffect(() => {
+    const isInputImageSort = (e: DragEvent) => e.dataTransfer?.types.includes(INPUT_IMAGE_SORT_MIME) ?? false
+
     const handleDragEnter = (e: DragEvent) => {
+      if (isInputImageSort(e)) return
       e.preventDefault()
       e.stopPropagation()
       dragCounter.current++
@@ -1249,11 +1256,13 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
     }
 
     const handleDragOver = (e: DragEvent) => {
+      if (isInputImageSort(e)) return
       e.preventDefault()
       e.stopPropagation()
     }
 
     const handleDragLeave = (e: DragEvent) => {
+      if (isInputImageSort(e)) return
       e.preventDefault()
       e.stopPropagation()
       dragCounter.current--
@@ -1263,6 +1272,7 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
     }
 
     const handleDrop = (e: DragEvent) => {
+      if (isInputImageSort(e)) return
       e.preventDefault()
       e.stopPropagation()
       dragCounter.current = 0
@@ -1527,30 +1537,28 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
 
   const selectClass = 'px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] hover:bg-white dark:hover:bg-white/[0.06] text-xs transition-all duration-200 shadow-sm'
 
-  const getTouchDropIndex = (touch: React.Touch) => {
-    const target = document
-      .elementFromPoint(touch.clientX, touch.clientY)
-      ?.closest<HTMLElement>('[data-input-image-index]')
-    if (!target) return null
-    const idx = Number(target.dataset.inputImageIndex)
-    if (!Number.isInteger(idx)) return null
-    const rect = getSafeBoundingClientRect(target)
-    if (!rect) return null
-    return touch.clientX < rect.left + rect.width / 2 ? idx : idx + 1
+  const getImageDropIndexAtPoint = (clientX: number, clientY: number) => {
+    const grid = imageGridRef.current
+    const gridRect = getSafeBoundingClientRect(grid)
+    if (!grid || !gridRect || clientX < gridRect.left || clientX > gridRect.right || clientY < gridRect.top || clientY > gridRect.bottom) {
+      return null
+    }
+
+    const rects = Array.from(grid.querySelectorAll<HTMLElement>('[data-input-image-index]'))
+      .map((element): InputImageDropRect | null => {
+        const index = Number(element.dataset.inputImageIndex)
+        const rect = getSafeBoundingClientRect(element)
+        if (!Number.isInteger(index) || !rect) return null
+        return { index, left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
+      })
+      .filter((rect): rect is InputImageDropRect => rect !== null)
+
+    return resolveInputImageDropIndex(rects, clientX, clientY)
   }
 
   const normalizeImageDropIndex = (idx: number) => {
     const minIdx = maskTargetImage ? 1 : 0
     return Math.max(minIdx, Math.min(inputImages.length, idx))
-  }
-
-  const isBeforeMaskDropArea = (clientX: number) => {
-    if (!maskTargetImage) return false
-    const maskEl = document.querySelector<HTMLElement>('[data-input-image-index="0"]')
-    if (!maskEl) return false
-    const rect = getSafeBoundingClientRect(maskEl)
-    if (!rect) return false
-    return clientX < rect.left + rect.width / 2
   }
 
   const resetImageDrag = () => {
@@ -1578,14 +1586,22 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
   }, [touchDragPreview])
 
   const getDataTransferDragIndex = (e: React.DragEvent) => {
-    const value = e.dataTransfer.getData('text/plain')
+    const customValue = e.dataTransfer.getData(INPUT_IMAGE_SORT_MIME)
+    const textValue = e.dataTransfer.getData('text/plain')
+    const value = customValue || (textValue.startsWith(INPUT_IMAGE_SORT_TEXT_PREFIX)
+      ? textValue.slice(INPUT_IMAGE_SORT_TEXT_PREFIX.length)
+      : '')
     const idx = Number(value)
     return Number.isInteger(idx) ? idx : null
   }
 
-  const setImageDragTarget = (idx: number | null, clientX?: number) => {
+  const isInputImageSortDataTransfer = (dataTransfer: DataTransfer) => (
+    imageDragIndexRef.current !== null || dataTransfer.types.includes(INPUT_IMAGE_SORT_MIME)
+  )
+
+  const setImageDragTarget = (idx: number | null) => {
     const fromIdx = imageDragIndexRef.current
-    if (fromIdx !== null && maskTargetImage && (idx === 0 || (clientX != null && isBeforeMaskDropArea(clientX)))) {
+    if (fromIdx !== null && maskTargetImage && idx === 0) {
       showImageHint(maskTargetImage.id)
       imageDragOverIndexRef.current = null
       setImageDragOverIndex(null)
@@ -1600,6 +1616,25 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
     setImageDragOverIndex(nextIdx)
   }
 
+  const handleImageGridDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!isInputImageSortDataTransfer(e.dataTransfer)) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'move'
+    setImageDragTarget(getImageDropIndexAtPoint(e.clientX, e.clientY))
+  }
+
+  const handleImageGridDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!isInputImageSortDataTransfer(e.dataTransfer)) return
+    e.preventDefault()
+    e.stopPropagation()
+    const fromIdx = imageDragIndexRef.current ?? getDataTransferDragIndex(e)
+    setImageDragTarget(getImageDropIndexAtPoint(e.clientX, e.clientY))
+    const toIdx = imageDragOverIndexRef.current
+    if (fromIdx !== null && toIdx !== null) moveInputImage(fromIdx, toIdx)
+    resetImageDrag()
+  }
+
   const renderImageThumb = (img: (typeof inputImages)[number], idx: number) => {
     const isMaskTarget = maskDraft?.targetImageId === img.id
     const canEdit = !maskTargetImage || isMaskTarget
@@ -1611,6 +1646,7 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
     const showDropAfter = imageDragOverIndex === inputImages.length && isLast && imageDragIndex !== idx
 
     const handleDragStart = (e: React.DragEvent) => {
+      e.stopPropagation()
       if (isMaskTarget) {
         showImageHintUntilRelease(img.id)
         e.preventDefault()
@@ -1620,7 +1656,8 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
       imageDragIndexRef.current = idx
       setImageDragIndex(idx)
       e.dataTransfer.effectAllowed = 'move'
-      e.dataTransfer.setData('text/plain', String(idx))
+      e.dataTransfer.setData(INPUT_IMAGE_SORT_MIME, String(idx))
+      e.dataTransfer.setData('text/plain', `${INPUT_IMAGE_SORT_TEXT_PREFIX}${idx}`)
       const preview = document.createElement('div')
       preview.style.cssText = 'position:fixed;left:-1000px;top:-1000px;width:52px;height:52px;border-radius:12px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.25);'
       const previewImg = document.createElement('img')
@@ -1630,26 +1667,6 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
       document.body.appendChild(preview)
       imageDragPreviewRef.current = preview
       e.dataTransfer.setDragImage(preview, 26, 26)
-    }
-
-    const handleDragOver = (e: React.DragEvent) => {
-      e.preventDefault()
-      e.dataTransfer.dropEffect = 'move'
-      const fromIdx = imageDragIndexRef.current
-      if (fromIdx === null || fromIdx === idx) return
-      const rect = getSafeBoundingClientRect(e.currentTarget)
-      if (!rect) return
-      setImageDragTarget(e.clientX < rect.left + rect.width / 2 ? idx : idx + 1, e.clientX)
-    }
-
-    const handleDrop = (e: React.DragEvent) => {
-      e.preventDefault()
-      const fromIdx = imageDragIndexRef.current ?? getDataTransferDragIndex(e)
-      const toIdx = imageDragOverIndexRef.current
-      if (fromIdx !== null && toIdx !== null) {
-        moveInputImage(fromIdx, toIdx)
-      }
-      resetImageDrag()
     }
 
     const handleTouchStart = (e: React.TouchEvent) => {
@@ -1684,13 +1701,17 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
       e.preventDefault()
       setImageDragIndex(touchDrag.index)
       setTouchDragPreview({ src: displaySrc, x: touch.clientX, y: touch.clientY })
-      const dropIndex = getTouchDropIndex(touch)
-      setImageDragTarget(dropIndex, touch.clientX)
+      const dropIndex = getImageDropIndexAtPoint(touch.clientX, touch.clientY)
+      setImageDragTarget(dropIndex)
     }
 
     const handleTouchEnd = (e: React.TouchEvent) => {
       const touchDrag = imageTouchDragRef.current
       clearImageHintTimer()
+      const touch = e.changedTouches[0]
+      if (touchDrag.index !== null && touch) {
+        setImageDragTarget(getImageDropIndexAtPoint(touch.clientX, touch.clientY))
+      }
       if (touchDrag.index !== null && imageDragOverIndexRef.current !== null) {
         e.preventDefault()
         moveInputImage(touchDrag.index, imageDragOverIndexRef.current)
@@ -1717,8 +1738,6 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
         draggable={!isMobile}
         onMouseLeave={hideImageHint}
         onDragStart={handleDragStart}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
         onDragEnd={resetImageDrag}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
@@ -1796,6 +1815,8 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
           {canEdit && (
             <button 
               className="absolute inset-0 w-full h-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-20 focus:outline-none border-none"
+              draggable={!isMobile}
+              onDragStart={handleDragStart}
               onClick={(e) => {
                 e.stopPropagation()
                 handleEditReferenceImage(img, idx, isMaskTarget)
@@ -1963,7 +1984,12 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
   const renderImageThumbs = () => {
     return (
       <div ref={imagesRef} className="lg:max-h-44 lg:overflow-y-auto lg:overscroll-contain lg:pr-1 custom-scrollbar">
-        <div className="grid grid-cols-[repeat(auto-fill,52px)] justify-between gap-x-2 gap-y-3 mb-3">
+        <div
+          ref={imageGridRef}
+          className="grid grid-cols-[repeat(auto-fill,52px)] justify-between gap-x-2 gap-y-3 mb-3"
+          onDragOver={handleImageGridDragOver}
+          onDrop={handleImageGridDrop}
+        >
           {inputImages.map((img, idx) => renderImageThumb(img, idx))}
           {renderStyleReferenceSlot()}
           {renderUploadReferenceButton()}

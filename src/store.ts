@@ -2105,12 +2105,50 @@ async function recoverFalTask(taskId: string) {
   }
 }
 
+export function mergeRestoredInputImages(
+  persistedInputImages: readonly InputImage[],
+  restoredInputImages: readonly InputImage[],
+  latestInputImages: readonly InputImage[],
+): InputImage[] {
+  const persistedIds = new Set(persistedInputImages.map((image) => image.id))
+  const restoredById = new Map(restoredInputImages.map((image) => [image.id, image]))
+
+  return latestInputImages.flatMap((latestImage) => {
+    if (!persistedIds.has(latestImage.id) || latestImage.dataUrl) return [latestImage]
+    const restoredImage = restoredById.get(latestImage.id)
+    return restoredImage?.dataUrl ? [{ ...latestImage, dataUrl: restoredImage.dataUrl }] : []
+  })
+}
+
+export function mergeRestoredInputImage(
+  persistedInputImage: InputImage | null,
+  restoredInputImage: InputImage | null,
+  latestInputImage: InputImage | null,
+): InputImage | null {
+  if (!latestInputImage || latestInputImage.dataUrl) return latestInputImage
+  if (!persistedInputImage || latestInputImage.id !== persistedInputImage.id) return latestInputImage
+  if (!restoredInputImage?.dataUrl || restoredInputImage.id !== latestInputImage.id) return null
+  return { ...latestInputImage, dataUrl: restoredInputImage.dataUrl }
+}
+
+function areInputImagesEqual(left: readonly InputImage[], right: readonly InputImage[]) {
+  return left.length === right.length && left.every((image, index) => (
+    image.id === right[index]?.id && image.dataUrl === right[index]?.dataUrl
+  ))
+}
+
+function areInputImagesEqualOrNull(left: InputImage | null, right: InputImage | null) {
+  return left?.id === right?.id && left?.dataUrl === right?.dataUrl
+}
+
 /** 初始化：从 IndexedDB 加载任务，按需恢复输入图片，并清理孤立图片 */
 export async function initStore() {
-  const [storedTasks, plannerSessions, listingCopySessions] = await Promise.all([
+  // 图片 key 与持久化状态一同取入口快照，初始化期间新存入的图片不参与本轮孤儿清理。
+  const [storedTasks, plannerSessions, listingCopySessions, startupImageIds] = await Promise.all([
     getAllTasks(),
     getAllAmazonPlannerSessions(),
     getAllListingCopySessions(),
+    getAllImageIds(),
   ])
   const { tasks, interruptedTasks } = markInterruptedOpenAIRunningTasks(storedTasks)
   await Promise.all(interruptedTasks.map((task) => putTask(task)))
@@ -2164,11 +2202,16 @@ export async function initStore() {
   }
   addEditorCanvasDraftReferencedImageIds(referencedIds, state.editorCanvasDraft)
 
-  // 只枚举 key 清理孤立图片，避免启动时把所有 4K 原图读进内存。
-  const imageIds = await getAllImageIds()
+  // 删除前刷新组件本地维护的会话引用，并复核实时 Store，避免并发编辑被启动快照覆盖。
+  const [latestPlannerSessions, latestListingCopySessions] = await Promise.all([
+    getAllAmazonPlannerSessions(),
+    getAllListingCopySessions(),
+  ])
+  addAmazonPlannerSessionReferencedImageIds(referencedIds, latestPlannerSessions)
+  addListingCopySessionReferencedImageIds(referencedIds, latestListingCopySessions)
   const referencedImageIds: string[] = []
-  for (const imgId of imageIds) {
-    if (referencedIds.has(imgId)) {
+  for (const imgId of startupImageIds) {
+    if (referencedIds.has(imgId) || isImageReferencedByState(useStore.getState(), imgId)) {
       referencedImageIds.push(imgId)
     } else {
       await deleteImage(imgId)
@@ -2176,8 +2219,14 @@ export async function initStore() {
   }
   scheduleThumbnailBackfill(referencedImageIds)
   const editorSourceImageId = useStore.getState().editorCanvasDraft.sourceImageId
-  if (editorSourceImageId && !imageIds.includes(editorSourceImageId)) {
-    useStore.getState().resetEditorCanvasDraft()
+  if (editorSourceImageId && !startupImageIds.includes(editorSourceImageId)) {
+    const storedEditorSourceImage = await getImage(editorSourceImageId)
+    if (
+      !storedEditorSourceImage
+      && useStore.getState().editorCanvasDraft.sourceImageId === editorSourceImageId
+    ) {
+      useStore.getState().resetEditorCanvasDraft()
+    }
   }
 
   const restoredInputImages: InputImage[] = []
@@ -2193,8 +2242,10 @@ export async function initStore() {
       cacheImage(img.id, storedImage.dataUrl)
     }
   }
-  if (restoredInputImages.length !== persistedInputImages.length || restoredInputImages.some((img, index) => img.dataUrl !== persistedInputImages[index]?.dataUrl)) {
-    useStore.getState().setInputImages(restoredInputImages)
+  const latestInputImages = useStore.getState().inputImages
+  const mergedInputImages = mergeRestoredInputImages(persistedInputImages, restoredInputImages, latestInputImages)
+  if (!areInputImagesEqual(mergedInputImages, latestInputImages)) {
+    useStore.getState().setInputImages(mergedInputImages)
   }
 
   if (styleReferenceImage) {
@@ -2209,8 +2260,14 @@ export async function initStore() {
         cacheImage(styleReferenceImage.id, storedImage.dataUrl)
       }
     }
-    if (restoredStyleReferenceImage?.dataUrl !== styleReferenceImage.dataUrl) {
-      useStore.getState().setStyleReferenceImage(restoredStyleReferenceImage)
+    const latestStyleReferenceImage = useStore.getState().styleReferenceImage
+    const mergedStyleReferenceImage = mergeRestoredInputImage(
+      styleReferenceImage,
+      restoredStyleReferenceImage,
+      latestStyleReferenceImage,
+    )
+    if (!areInputImagesEqualOrNull(mergedStyleReferenceImage, latestStyleReferenceImage)) {
+      useStore.getState().setStyleReferenceImage(mergedStyleReferenceImage)
     }
   }
 
@@ -2241,21 +2298,34 @@ export async function initStore() {
         }
       }
     }
-    const shouldClearMask = Boolean(galleryInputDraft.maskDraft) && !restoredGalleryImages.some((img) => img.id === galleryInputDraft.maskDraft?.targetImageId)
+    const latestState = useStore.getState()
+    const latestGalleryDraft = latestState.appMode === 'gallery'
+      ? getCurrentAgentInputDraft(latestState)
+      : latestState.galleryInputDraft ?? clearInputDraftState()
+    const mergedGalleryImages = mergeRestoredInputImages(
+      galleryInputDraft.inputImages,
+      restoredGalleryImages,
+      latestGalleryDraft.inputImages,
+    )
+    const mergedGalleryStyleReferenceImage = mergeRestoredInputImage(
+      galleryInputDraft.styleReferenceImage,
+      restoredGalleryStyleReferenceImage,
+      latestGalleryDraft.styleReferenceImage,
+    )
+    const shouldClearMask = Boolean(latestGalleryDraft.maskDraft) && !mergedGalleryImages.some((img) => img.id === latestGalleryDraft.maskDraft?.targetImageId)
     const restoredGalleryDraft: AgentInputDraft = {
-      ...galleryInputDraft,
-      inputImages: restoredGalleryImages,
-      styleReferenceImage: restoredGalleryStyleReferenceImage,
-      prompt: remapImageMentionsForOrder(galleryInputDraft.prompt, galleryInputDraft.inputImages, restoredGalleryImages),
+      ...latestGalleryDraft,
+      inputImages: mergedGalleryImages,
+      styleReferenceImage: mergedGalleryStyleReferenceImage,
+      prompt: remapImageMentionsForOrder(latestGalleryDraft.prompt, latestGalleryDraft.inputImages, mergedGalleryImages),
       ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
     }
     const galleryDraftsChanged =
-      restoredGalleryImages.length !== galleryInputDraft.inputImages.length ||
-      restoredGalleryImages.some((img, index) => img.dataUrl !== galleryInputDraft.inputImages[index]?.dataUrl) ||
-      restoredGalleryStyleReferenceImage?.dataUrl !== galleryInputDraft.styleReferenceImage?.dataUrl ||
+      !areInputImagesEqual(mergedGalleryImages, latestGalleryDraft.inputImages) ||
+      !areInputImagesEqualOrNull(mergedGalleryStyleReferenceImage, latestGalleryDraft.styleReferenceImage) ||
+      restoredGalleryDraft.prompt !== latestGalleryDraft.prompt ||
       shouldClearMask
     if (galleryDraftsChanged) {
-      const latestState = useStore.getState()
       const nextGalleryInputDraft = isEmptyAgentInputDraft(restoredGalleryDraft) ? null : restoredGalleryDraft
       useStore.setState({
         galleryInputDraft: nextGalleryInputDraft,
@@ -2266,8 +2336,7 @@ export async function initStore() {
     }
   }
 
-  const restoredAgentInputDrafts: Record<string, AgentInputDraft> = {}
-  let agentDraftsChanged = false
+  const hydratedAgentInputDrafts: Record<string, AgentInputDraft> = {}
   for (const [conversationId, draft] of Object.entries(agentInputDrafts)) {
     const restoredDraftImages: InputImage[] = []
     for (const img of draft.inputImages) {
@@ -2296,30 +2365,68 @@ export async function initStore() {
       }
     }
 
-    const shouldClearMask = Boolean(draft.maskDraft) && !restoredDraftImages.some((img) => img.id === draft.maskDraft?.targetImageId)
-    const restoredDraft: AgentInputDraft = {
+    hydratedAgentInputDrafts[conversationId] = {
       ...draft,
       inputImages: restoredDraftImages,
       styleReferenceImage: restoredDraftStyleReferenceImage,
-      prompt: remapImageMentionsForOrder(draft.prompt, draft.inputImages, restoredDraftImages),
-      ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
     }
-    if (!isEmptyAgentInputDraft(restoredDraft)) restoredAgentInputDrafts[conversationId] = restoredDraft
-    if (
-      restoredDraftImages.length !== draft.inputImages.length ||
-      restoredDraftImages.some((img, index) => img.dataUrl !== draft.inputImages[index]?.dataUrl) ||
-      restoredDraftStyleReferenceImage?.dataUrl !== draft.styleReferenceImage?.dataUrl ||
-      shouldClearMask
-    ) {
+  }
+
+  const latestState = useStore.getState()
+  const latestAgentInputDrafts = saveActiveAgentInputDrafts(latestState)
+  const mergedAgentInputDrafts: Record<string, AgentInputDraft> = {}
+  let agentDraftsChanged = false
+  for (const [conversationId, latestDraft] of Object.entries(latestAgentInputDrafts)) {
+    const persistedDraft = agentInputDrafts[conversationId]
+    const hydratedDraft = hydratedAgentInputDrafts[conversationId]
+    let mergedDraft = latestDraft
+
+    if (persistedDraft && hydratedDraft) {
+      const mergedDraftImages = mergeRestoredInputImages(
+        persistedDraft.inputImages,
+        hydratedDraft.inputImages,
+        latestDraft.inputImages,
+      )
+      const mergedDraftStyleReferenceImage = mergeRestoredInputImage(
+        persistedDraft.styleReferenceImage,
+        hydratedDraft.styleReferenceImage,
+        latestDraft.styleReferenceImage,
+      )
+      const mergedPrompt = remapImageMentionsForOrder(latestDraft.prompt, latestDraft.inputImages, mergedDraftImages)
+      const shouldClearMask = Boolean(latestDraft.maskDraft)
+        && !mergedDraftImages.some((img) => img.id === latestDraft.maskDraft?.targetImageId)
+      const hydrationChanged =
+        !areInputImagesEqual(mergedDraftImages, latestDraft.inputImages) ||
+        !areInputImagesEqualOrNull(mergedDraftStyleReferenceImage, latestDraft.styleReferenceImage) ||
+        mergedPrompt !== latestDraft.prompt ||
+        shouldClearMask
+
+      if (hydrationChanged) {
+        mergedDraft = {
+          ...latestDraft,
+          inputImages: mergedDraftImages,
+          styleReferenceImage: mergedDraftStyleReferenceImage,
+          prompt: mergedPrompt,
+          ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
+        }
+        agentDraftsChanged = true
+      }
+    }
+
+    if (!isEmptyAgentInputDraft(mergedDraft)) {
+      mergedAgentInputDrafts[conversationId] = mergedDraft
+    } else if (!isEmptyAgentInputDraft(latestDraft)) {
       agentDraftsChanged = true
     }
   }
+  if (Object.keys(mergedAgentInputDrafts).length !== Object.keys(latestAgentInputDrafts).length) {
+    agentDraftsChanged = true
+  }
   if (agentDraftsChanged) {
-    const latestState = useStore.getState()
     useStore.setState({
-      agentInputDrafts: restoredAgentInputDrafts,
+      agentInputDrafts: mergedAgentInputDrafts,
       ...(latestState.appMode === 'agent'
-        ? restoreAgentInputDraftState(restoredAgentInputDrafts, latestState.activeAgentConversationId)
+        ? restoreAgentInputDraftState(mergedAgentInputDrafts, latestState.activeAgentConversationId)
         : {}),
     })
   }

@@ -73,10 +73,11 @@ import type { AmazonMarketplace } from '../types'
 import BrandStoryModuleEditor from './BrandStoryModuleEditor'
 import PlannerRunDetailsModal, { type PlannerRunStatus } from './PlannerRunDetailsModal'
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, EditIcon, EyeIcon, HistoryIcon, PhotoIcon, PlusIcon, RefreshIcon, TrashIcon } from './icons'
+import { clearAmazonPlannerResultSnapshot } from '../lib/amazonPlannerReset'
 
 const FIELD_CLASS = 'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-100 dark:placeholder:text-gray-500'
 const LABEL_CLASS = 'mb-1.5 block text-xs font-medium text-gray-500 dark:text-gray-400'
-const PLAN_LIST_CLASS = 'grid max-h-[420px] gap-2 overflow-y-auto overscroll-contain pr-1 custom-scrollbar sm:max-h-[480px]'
+const PLAN_LIST_CLASS = 'grid max-h-[min(65vh,500px)] gap-2 overflow-y-auto overscroll-contain pr-1 custom-scrollbar sm:max-h-[min(70vh,600px)]'
 const GUIDE_HINT_CLASS = 'mb-3 rounded-lg border border-blue-200 bg-white/85 px-3 py-2 text-xs font-medium leading-relaxed text-blue-800 shadow-sm dark:border-blue-400/25 dark:bg-blue-400/10 dark:text-blue-100'
 const DEEPSEEK_PLANNER_NOTICE = '当前 AI 策划配置为 DeepSeek 官方接口。DeepSeek 策划阶段不会读取参考图，系统会仅用 Listing 文本和你填写的商品信息生成策划；参考图仍会在正式生图时随生图请求发送。请把产品颜色、形状、结构、配件、Logo、套装数量等关键特征写进 Listing 或商品信息中。'
 const STYLE_PREVIEW_WIDTH = 420
@@ -1677,7 +1678,67 @@ export default function AmazonPlanner() {
     saveAPlusModuleSpecsByType(next)
   }
 
+  const clearPlannerResults = (options: { notify?: boolean } = {}) => {
+    const clearedResult = clearAmazonPlannerResultSnapshot({
+      listingText,
+      draft,
+      referenceImages: inputImages,
+      listingImageCount,
+      aPlusConfiguration: {
+        aPlusType,
+        aPlusModuleSpecsByType,
+        aPlusLayoutStates,
+        premiumBrandStoryEnabled,
+        premiumBrandStoryCardCount,
+        standaloneBrandStoryCardCount,
+      },
+      visualStyleMode,
+      styleDensityMode,
+      imagePlans,
+      aPlusPlans,
+      seriesStyleGuides,
+      selectedPlanIndex,
+      selectedAPlusPlanIndex,
+    })
+    stylePresetAbortControllerRef.current?.abort()
+    stylePresetAbortControllerRef.current = null
+    aiStyleAbortControllerRef.current?.abort()
+    aiStyleAbortControllerRef.current = null
+    setIsLoadingStylePreset(false)
+    setIsGeneratingAiStyleImage(false)
+    setImagePlans(clearedResult.imagePlans)
+    setAPlusPlans(clearedResult.aPlusPlans)
+    setSeriesStyleGuides(clearedResult.seriesStyleGuides)
+    setSelectedStylePresetId(visualStyleMode === 'builtin' ? DEFAULT_STYLE_PRESET_ID : null)
+    setSelectedStyleReference(null)
+    setAiVisualStyle(null)
+    setAiStyleReference(null)
+    setStylePreview(null)
+    setStyleError('')
+    setSelectedPlanIndex(clearedResult.selectedPlanIndex)
+    setSelectedAPlusPlanIndex(clearedResult.selectedAPlusPlanIndex)
+    setPlannerError('')
+    setPlannerRun({
+      startedAt: null,
+      finishedAt: null,
+      status: 'preparing',
+      attempt: null,
+      responseText: '',
+      error: '',
+    })
+    setShowPlannerRunDetails(false)
+    setReferencePayloadNotice('')
+    setCurrentPlannerSessionId(null)
+    setActionProgress({})
+    setActionPromptModes({})
+    setMobileActionDock(null)
+    if (options.notify !== false) {
+      showToast('已清空策划案，标题、商品资料、参考图和 A+ 前置规划均已保留', 'success')
+    }
+  }
+
   const clearListingPlan = () => {
+    clearPlannerResults({ notify: false })
     setListingText('')
     setListingImageCount(DEFAULT_LISTING_IMAGE_COUNT)
     setAPlusModuleSpecsByType({})
@@ -1685,23 +1746,9 @@ export default function AmazonPlanner() {
     setPremiumBrandStoryEnabled(true)
     setPremiumBrandStoryCardCount(DEFAULT_BRAND_STORY_CARD_COUNT)
     setStandaloneBrandStoryCardCount(DEFAULT_BRAND_STORY_CARD_COUNT)
-    setImagePlans([])
-    setAPlusPlans([])
-    setSeriesStyleGuides({ listing: '', aplus: '' })
     setSelectedStylePresetId(DEFAULT_STYLE_PRESET_ID)
-    setSelectedStyleReference(null)
     setVisualStyleMode('builtin')
-    setAiVisualStyle(null)
-    setAiStyleReference(null)
     setStyleDensityMode('rich')
-    setStylePreview(null)
-    setStyleError('')
-    setSelectedPlanIndex(null)
-    setSelectedAPlusPlanIndex(null)
-    setPlannerError('')
-    setCurrentPlannerSessionId(null)
-    setActionProgress({})
-    setActionPromptModes({})
   }
 
   const restorePlannerSession = async (session: AmazonPlannerSession) => {
@@ -2290,13 +2337,25 @@ export default function AmazonPlanner() {
                     查看返回
                   </button>
                 )}
-                {(listingText.trim() || imagePlans.length > 0 || aPlusPlans.length > 0) && (
+                {!isPlanning && hasPlanOptions && (
+                  <button
+                    type="button"
+                    onClick={() => clearPlannerResults()}
+                    title="保留标题、商品资料、参考图和 A+ 前置规划，只清空本轮策划结果"
+                    className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-amber-200 bg-white px-3 text-sm font-medium text-amber-700 transition hover:bg-amber-50 hover:text-amber-800 dark:border-amber-400/20 dark:bg-gray-900 dark:text-amber-300 dark:hover:bg-amber-400/10"
+                  >
+                    <TrashIcon className="h-4 w-4" />
+                    清空策划案
+                  </button>
+                )}
+                {!isPlanning && listingText.trim() && (
                   <button
                     type="button"
                     onClick={clearListingPlan}
+                    title="清空标题、五点描述并重置策划配置"
                     className="inline-flex h-10 items-center rounded-xl px-3 text-sm font-medium text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
                   >
-                    清空
+                    清空输入
                   </button>
                 )}
                 <button

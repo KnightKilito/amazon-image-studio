@@ -10,7 +10,7 @@ import { isAPlusMotherImageSize } from '../lib/aPlusLayout'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { getSafeBoundingClientRect } from '../lib/domRect'
-import { resolveInputImageDropIndex, type InputImageDropRect } from '../lib/inputImageDrag'
+import { hasInputImageDragPassedThreshold, resolveInputImageDragSourceIndex, resolveInputImageDropIndex, type InputImageDropRect } from '../lib/inputImageDrag'
 import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
 import { getFilteredTaskHistory } from '../lib/taskHistory'
 import { useHintTooltip } from '../hooks/useHintTooltip'
@@ -19,9 +19,6 @@ import Select from './Select'
 import SizePickerModal from './SizePickerModal'
 import ViewportTooltip from './ViewportTooltip'
 import { CloseIcon, ImportIcon } from './icons'
-
-const INPUT_IMAGE_SORT_MIME = 'application/x-amazon-image-order'
-const INPUT_IMAGE_SORT_TEXT_PREFIX = 'input-image-order:'
 
 function getMentionTagTextLength(el: Element) {
   return el.textContent?.length ?? 0
@@ -540,18 +537,25 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
   const [showSizePicker, setShowSizePicker] = useState(false)
   const [showMobileUploadMenu, setShowMobileUploadMenu] = useState(false)
   const [maskPreviewUrl, setMaskPreviewUrl] = useState('')
-  const [imageDragIndex, setImageDragIndex] = useState<number | null>(null)
+  const [imageDragId, setImageDragId] = useState<string | null>(null)
   const [imageDragOverIndex, setImageDragOverIndex] = useState<number | null>(null)
   const [atImageMenuIndex, setAtImageMenuIndex] = useState(0)
   const [atImageMenuDismissed, setAtImageMenuDismissed] = useState(false)
-  const [touchDragPreview, setTouchDragPreview] = useState<{ src: string; x: number; y: number } | null>(null)
+  const [imageDragPreview, setImageDragPreview] = useState<{ src: string; x: number; y: number } | null>(null)
   const handleRef = useRef<HTMLDivElement>(null)
   const dragTouchRef = useRef({ startY: 0, moved: false })
   const suppressHandleClickUntilRef = useRef(0)
-  const imageDragIndexRef = useRef<number | null>(null)
-  const imageTouchDragRef = useRef({ index: null as number | null, startX: 0, startY: 0, moved: false })
+  const imageDragIdRef = useRef<string | null>(null)
+  const imagePointerDragRef = useRef<{
+    pointerId: number | null
+    imageId: string | null
+    startX: number
+    startY: number
+    moved: boolean
+    sourceElement: HTMLElement | null
+  }>({ pointerId: null, imageId: null, startX: 0, startY: 0, moved: false, sourceElement: null })
+  const imagePointerCleanupRef = useRef<(() => void) | null>(null)
   const imageDragOverIndexRef = useRef<number | null>(null)
-  const imageDragPreviewRef = useRef<HTMLElement | null>(null)
   const suppressImageClickRef = useRef(false)
   const replaceImageTargetRef = useRef<{ index: number; id: string } | null>(null)
   const isUserInputRef = useRef(false)
@@ -1243,10 +1247,7 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
 
   // 拖拽图片 - 监听整个页面
   useEffect(() => {
-    const isInputImageSort = (e: DragEvent) => e.dataTransfer?.types.includes(INPUT_IMAGE_SORT_MIME) ?? false
-
     const handleDragEnter = (e: DragEvent) => {
-      if (isInputImageSort(e)) return
       e.preventDefault()
       e.stopPropagation()
       dragCounter.current++
@@ -1256,13 +1257,11 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
     }
 
     const handleDragOver = (e: DragEvent) => {
-      if (isInputImageSort(e)) return
       e.preventDefault()
       e.stopPropagation()
     }
 
     const handleDragLeave = (e: DragEvent) => {
-      if (isInputImageSort(e)) return
       e.preventDefault()
       e.stopPropagation()
       dragCounter.current--
@@ -1272,7 +1271,6 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
     }
 
     const handleDrop = (e: DragEvent) => {
-      if (isInputImageSort(e)) return
       e.preventDefault()
       e.stopPropagation()
       dragCounter.current = 0
@@ -1556,53 +1554,62 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
     return resolveInputImageDropIndex(rects, clientX, clientY)
   }
 
+  const getDraggedImageIndex = () => resolveInputImageDragSourceIndex(
+    useStore.getState().inputImages,
+    imageDragIdRef.current,
+  )
+
   const normalizeImageDropIndex = (idx: number) => {
-    const minIdx = maskTargetImage ? 1 : 0
-    return Math.max(minIdx, Math.min(inputImages.length, idx))
+    const currentState = useStore.getState()
+    const hasMaskTarget = Boolean(
+      currentState.maskDraft?.targetImageId
+      && currentState.inputImages.some((image) => image.id === currentState.maskDraft?.targetImageId),
+    )
+    const minIdx = hasMaskTarget ? 1 : 0
+    return Math.max(minIdx, Math.min(currentState.inputImages.length, idx))
+  }
+
+  const releaseImagePointerCapture = () => {
+    const { sourceElement, pointerId } = imagePointerDragRef.current
+    if (!sourceElement || pointerId === null) return
+    try {
+      if (sourceElement.hasPointerCapture(pointerId)) sourceElement.releasePointerCapture(pointerId)
+    } catch {
+      // The captured element may have disappeared if the image list changed mid-drag.
+    }
   }
 
   const resetImageDrag = () => {
-    setImageDragIndex(null)
+    releaseImagePointerCapture()
+    const cleanupPointerListeners = imagePointerCleanupRef.current
+    imagePointerCleanupRef.current = null
+    cleanupPointerListeners?.()
+    setImageDragId(null)
     setImageDragOverIndex(null)
-    imageDragIndexRef.current = null
+    imageDragIdRef.current = null
     imageDragOverIndexRef.current = null
-    imageTouchDragRef.current = { index: null, startX: 0, startY: 0, moved: false }
-    setTouchDragPreview(null)
-    imageDragPreviewRef.current?.remove()
-    imageDragPreviewRef.current = null
+    imagePointerDragRef.current = {
+      pointerId: null,
+      imageId: null,
+      startX: 0,
+      startY: 0,
+      moved: false,
+      sourceElement: null,
+    }
+    setImageDragPreview(null)
     hideImageHint()
   }
 
-  useEffect(() => {
-    if (!touchDragPreview) return
-    const previousOverflow = document.body.style.overflow
-    const previousOverscroll = document.body.style.overscrollBehavior
-    document.body.style.overflow = 'hidden'
-    document.body.style.overscrollBehavior = 'none'
-    return () => {
-      document.body.style.overflow = previousOverflow
-      document.body.style.overscrollBehavior = previousOverscroll
-    }
-  }, [touchDragPreview])
-
-  const getDataTransferDragIndex = (e: React.DragEvent) => {
-    const customValue = e.dataTransfer.getData(INPUT_IMAGE_SORT_MIME)
-    const textValue = e.dataTransfer.getData('text/plain')
-    const value = customValue || (textValue.startsWith(INPUT_IMAGE_SORT_TEXT_PREFIX)
-      ? textValue.slice(INPUT_IMAGE_SORT_TEXT_PREFIX.length)
-      : '')
-    const idx = Number(value)
-    return Number.isInteger(idx) ? idx : null
-  }
-
-  const isInputImageSortDataTransfer = (dataTransfer: DataTransfer) => (
-    imageDragIndexRef.current !== null || dataTransfer.types.includes(INPUT_IMAGE_SORT_MIME)
-  )
+  useEffect(() => () => {
+    imagePointerCleanupRef.current?.()
+    imagePointerCleanupRef.current = null
+  }, [])
 
   const setImageDragTarget = (idx: number | null) => {
-    const fromIdx = imageDragIndexRef.current
-    if (fromIdx !== null && maskTargetImage && idx === 0) {
-      showImageHint(maskTargetImage.id)
+    const fromIdx = getDraggedImageIndex()
+    const currentMaskTargetId = useStore.getState().maskDraft?.targetImageId
+    if (fromIdx !== null && currentMaskTargetId && idx === 0) {
+      showImageHint(currentMaskTargetId)
       imageDragOverIndexRef.current = null
       setImageDragOverIndex(null)
       return
@@ -1616,133 +1623,136 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
     setImageDragOverIndex(nextIdx)
   }
 
-  const handleImageGridDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    if (!isInputImageSortDataTransfer(e.dataTransfer)) return
-    e.preventDefault()
-    e.stopPropagation()
-    e.dataTransfer.dropEffect = 'move'
-    setImageDragTarget(getImageDropIndexAtPoint(e.clientX, e.clientY))
-  }
-
-  const handleImageGridDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    if (!isInputImageSortDataTransfer(e.dataTransfer)) return
-    e.preventDefault()
-    e.stopPropagation()
-    const fromIdx = imageDragIndexRef.current ?? getDataTransferDragIndex(e)
-    setImageDragTarget(getImageDropIndexAtPoint(e.clientX, e.clientY))
-    const toIdx = imageDragOverIndexRef.current
-    if (fromIdx !== null && toIdx !== null) moveInputImage(fromIdx, toIdx)
-    resetImageDrag()
-  }
-
   const renderImageThumb = (img: (typeof inputImages)[number], idx: number) => {
     const isMaskTarget = maskDraft?.targetImageId === img.id
     const canEdit = !maskTargetImage || isMaskTarget
     const imageHintText = isMaskTarget ? '遮罩图必须为第一张图' : ''
     const displaySrc = isMaskTarget && maskPreviewUrl ? maskPreviewUrl : img.dataUrl
-    const isImageDragging = imageDragIndex === idx
+    const isImageDragging = imageDragId === img.id
     const isLast = idx === inputImages.length - 1
-    const showDropBefore = imageDragOverIndex === idx && imageDragIndex !== idx
-    const showDropAfter = imageDragOverIndex === inputImages.length && isLast && imageDragIndex !== idx
+    const showDropBefore = imageDragOverIndex === idx && imageDragId !== img.id
+    const showDropAfter = imageDragOverIndex === inputImages.length && isLast && imageDragId !== img.id
 
-    const handleDragStart = (e: React.DragEvent) => {
-      e.stopPropagation()
-      if (isMaskTarget) {
-        showImageHintUntilRelease(img.id)
-        e.preventDefault()
-        return
-      }
-      hideImageHint()
-      imageDragIndexRef.current = idx
-      setImageDragIndex(idx)
-      e.dataTransfer.effectAllowed = 'move'
-      e.dataTransfer.setData(INPUT_IMAGE_SORT_MIME, String(idx))
-      e.dataTransfer.setData('text/plain', `${INPUT_IMAGE_SORT_TEXT_PREFIX}${idx}`)
-      const preview = document.createElement('div')
-      preview.style.cssText = 'position:fixed;left:-1000px;top:-1000px;width:52px;height:52px;border-radius:12px;overflow:hidden;box-shadow:0 4px 12px rgba(0,0,0,0.25);'
-      const previewImg = document.createElement('img')
-      previewImg.src = displaySrc
-      previewImg.style.cssText = 'width:52px;height:52px;object-fit:cover;display:block;'
-      preview.appendChild(previewImg)
-      document.body.appendChild(preview)
-      imageDragPreviewRef.current = preview
-      e.dataTransfer.setDragImage(preview, 26, 26)
-    }
+    const updateImagePointerDrag = (clientX: number, clientY: number) => {
+      const pointerDrag = imagePointerDragRef.current
+      if (pointerDrag.imageId !== img.id) return false
 
-    const handleTouchStart = (e: React.TouchEvent) => {
-      if (isMaskTarget) {
-        const touch = e.touches[0]
-        imageTouchDragRef.current = { index: idx, startX: touch.clientX, startY: touch.clientY, moved: false }
-        return
-      }
-      const touch = e.touches[0]
-      imageDragIndexRef.current = idx
-      imageTouchDragRef.current = { index: idx, startX: touch.clientX, startY: touch.clientY, moved: false }
-      setTouchDragPreview(null)
-    }
-
-    const handleTouchMove = (e: React.TouchEvent) => {
-      const touch = e.touches[0]
-      const touchDrag = imageTouchDragRef.current
-      if (touchDrag.index === null) return
-
-      if (isMaskTarget) {
-        if (Math.abs(touch.clientX - touchDrag.startX) > 6 || Math.abs(touch.clientY - touchDrag.startY) > 6) {
-          e.preventDefault()
-          showImageHintUntilRelease(img.id)
+      if (!pointerDrag.moved) {
+        if (!hasInputImageDragPassedThreshold(pointerDrag.startX, pointerDrag.startY, clientX, clientY)) {
+          return false
         }
-        return
+        pointerDrag.moved = true
+        if (pointerDrag.sourceElement && pointerDrag.pointerId !== null) {
+          try {
+            pointerDrag.sourceElement.setPointerCapture(pointerDrag.pointerId)
+          } catch {
+            // Window-level listeners below keep the drag alive when capture is unavailable.
+          }
+        }
+        suppressImageClickRef.current = true
+        clearImageHintTimer()
+
+        if (isMaskTarget) {
+          showImageHint(img.id)
+          return true
+        }
+
+        hideImageHint()
+        setImageDragId(img.id)
       }
 
-      touchDrag.moved = true
-      clearImageHintTimer()
-      setImageHintId(null)
-      suppressImageClickRef.current = true
-      e.preventDefault()
-      setImageDragIndex(touchDrag.index)
-      setTouchDragPreview({ src: displaySrc, x: touch.clientX, y: touch.clientY })
-      const dropIndex = getImageDropIndexAtPoint(touch.clientX, touch.clientY)
-      setImageDragTarget(dropIndex)
+      if (!isMaskTarget) {
+        setImageDragPreview({ src: displaySrc, x: clientX, y: clientY })
+        setImageDragTarget(getImageDropIndexAtPoint(clientX, clientY))
+      }
+      return true
     }
 
-    const handleTouchEnd = (e: React.TouchEvent) => {
-      const touchDrag = imageTouchDragRef.current
-      clearImageHintTimer()
-      const touch = e.changedTouches[0]
-      if (touchDrag.index !== null && touch) {
-        setImageDragTarget(getImageDropIndexAtPoint(touch.clientX, touch.clientY))
+    const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!e.isPrimary || e.button !== 0) return
+      resetImageDrag()
+
+      imageDragIdRef.current = img.id
+      imagePointerDragRef.current = {
+        pointerId: e.pointerId,
+        imageId: img.id,
+        startX: e.clientX,
+        startY: e.clientY,
+        moved: false,
+        sourceElement: e.currentTarget,
       }
-      if (touchDrag.index !== null && imageDragOverIndexRef.current !== null) {
-        e.preventDefault()
-        moveInputImage(touchDrag.index, imageDragOverIndexRef.current)
-        window.setTimeout(() => {
+
+      const finishPointerDrag = (event: PointerEvent, cancelled = false) => {
+        const pointerDrag = imagePointerDragRef.current
+        if (pointerDrag.pointerId !== event.pointerId || pointerDrag.imageId !== img.id) return
+
+        if (cancelled) {
           suppressImageClickRef.current = false
-        }, 0)
-      }
-      resetImageDrag()
-      hideLockedImageHint()
-    }
+          hideLockedImageHint()
+          resetImageDrag()
+          return
+        }
 
-    const handleTouchCancel = () => {
-      suppressImageClickRef.current = false
-      hideLockedImageHint()
-      resetImageDrag()
+        const didDrag = updateImagePointerDrag(event.clientX, event.clientY)
+        clearImageHintTimer()
+        if (didDrag) {
+          event.preventDefault()
+          if (!isMaskTarget) {
+            const fromIdx = getDraggedImageIndex()
+            const toIdx = imageDragOverIndexRef.current
+            if (fromIdx !== null && toIdx !== null) {
+              moveInputImage(fromIdx, toIdx)
+            }
+          }
+          window.setTimeout(() => {
+            suppressImageClickRef.current = false
+          }, 0)
+        }
+        resetImageDrag()
+        hideLockedImageHint()
+      }
+
+      const handleWindowPointerMove = (event: PointerEvent) => {
+        const pointerDrag = imagePointerDragRef.current
+        if (pointerDrag.pointerId !== event.pointerId || pointerDrag.imageId !== img.id) return
+        const didDrag = updateImagePointerDrag(event.clientX, event.clientY)
+        if (didDrag) event.preventDefault()
+      }
+      const handleWindowPointerUp = (event: PointerEvent) => finishPointerDrag(event)
+      const handleWindowPointerCancel = (event: PointerEvent) => finishPointerDrag(event, true)
+      const handleWindowBlur = () => {
+        suppressImageClickRef.current = false
+        hideLockedImageHint()
+        resetImageDrag()
+      }
+
+      window.addEventListener('pointermove', handleWindowPointerMove, { capture: true, passive: false })
+      window.addEventListener('pointerup', handleWindowPointerUp, true)
+      window.addEventListener('pointercancel', handleWindowPointerCancel, true)
+      window.addEventListener('blur', handleWindowBlur)
+      imagePointerCleanupRef.current = () => {
+        window.removeEventListener('pointermove', handleWindowPointerMove, true)
+        window.removeEventListener('pointerup', handleWindowPointerUp, true)
+        window.removeEventListener('pointercancel', handleWindowPointerCancel, true)
+        window.removeEventListener('blur', handleWindowBlur)
+      }
     }
 
     return (
       <div
         key={img.id}
         data-input-image-index={idx}
+        data-input-image-id={img.id}
         className={`relative group inline-block h-[52px] w-[52px] shrink-0 self-start transition-opacity ${isImageDragging ? 'opacity-40' : ''}`}
         style={{ touchAction: isMaskTarget ? 'auto' : 'none' }}
-        draggable={!isMobile}
         onMouseLeave={hideImageHint}
-        onDragStart={handleDragStart}
-        onDragEnd={resetImageDrag}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-        onTouchCancel={handleTouchCancel}
+        onPointerDown={handlePointerDown}
+        onClickCapture={(e) => {
+          if (!suppressImageClickRef.current) return
+          e.preventDefault()
+          e.stopPropagation()
+          suppressImageClickRef.current = false
+        }}
         onContextMenu={(e) => {
           e.preventDefault()
           const el = textareaRef.current
@@ -1815,8 +1825,6 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
           {canEdit && (
             <button 
               className="absolute inset-0 w-full h-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-20 focus:outline-none border-none"
-              draggable={!isMobile}
-              onDragStart={handleDragStart}
               onClick={(e) => {
                 e.stopPropagation()
                 handleEditReferenceImage(img, idx, isMaskTarget)
@@ -1987,20 +1995,18 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
         <div
           ref={imageGridRef}
           className="grid grid-cols-[repeat(auto-fill,52px)] justify-between gap-x-2 gap-y-3 mb-3"
-          onDragOver={handleImageGridDragOver}
-          onDrop={handleImageGridDrop}
         >
           {inputImages.map((img, idx) => renderImageThumb(img, idx))}
           {renderStyleReferenceSlot()}
           {renderUploadReferenceButton()}
           {inputImages.length > 0 && renderClearAllButton()}
         </div>
-        {touchDragPreview?.src && createPortal(
+        {imageDragPreview?.src && createPortal(
           <div
             className="fixed z-[140] h-[52px] w-[52px] overflow-hidden rounded-xl shadow-xl pointer-events-none opacity-90"
-            style={{ left: touchDragPreview.x, top: touchDragPreview.y, transform: 'translate(-50%, -50%)' }}
+            style={{ left: imageDragPreview.x, top: imageDragPreview.y, transform: 'translate(-50%, -50%)' }}
           >
-            <img src={touchDragPreview.src} className="h-full w-full object-cover" alt="" />
+            <img src={imageDragPreview.src} className="h-full w-full object-cover" alt="" />
           </div>,
           document.body,
         )}

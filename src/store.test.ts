@@ -150,10 +150,52 @@ import { createImageEditorVisualGuideDataUrl } from './lib/imageEditorAnnotation
 import { upscaleImageDataUrlForAPlus } from './lib/imageUpscaling'
 import { getTaskDisplayPrompt } from './lib/taskPromptDisplay'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
-import { addTaskOutputsToInputImages, cleanStaleAgentInputDrafts, clearData, clearImageEditorInputs, convertOutputToAPlusFormat, createAPlusBatchUpscaleTask, createAPlusSliceTaskFromImage, createAPlusUpscaleTaskFromImage, editOutputs, exportData, generatePlannerStyleReferenceImage, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, openImageEditor, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitImageEditorTask, submitTask, useStore } from './store'
+import { addTaskOutputsToInputImages, cleanStaleAgentInputDrafts, clearData, clearImageEditorInputs, convertOutputToAPlusFormat, createAPlusBatchUpscaleTask, createAPlusSliceTaskFromImage, createAPlusUpscaleTaskFromImage, editOutputs, exportData, generatePlannerStyleReferenceImage, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, mergeRestoredInputImage, mergeRestoredInputImages, openImageEditor, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitImageEditorTask, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
+
+describe('input image startup hydration', () => {
+  it('hydrates previews without overwriting a concurrent reorder, removal, or addition', () => {
+    const persisted = [
+      { id: 'image-a', dataUrl: '' },
+      { id: 'image-b', dataUrl: '' },
+      { id: 'image-c', dataUrl: '' },
+    ]
+    const restored = [
+      { id: 'image-a', dataUrl: 'data:image/png;base64,a' },
+      { id: 'image-b', dataUrl: 'data:image/png;base64,b' },
+      { id: 'image-c', dataUrl: 'data:image/png;base64,c' },
+    ]
+    const latest = [
+      { id: 'image-c', dataUrl: '' },
+      { id: 'image-a', dataUrl: '' },
+      { id: 'image-new', dataUrl: 'data:image/png;base64,new' },
+    ]
+
+    expect(mergeRestoredInputImages(persisted, restored, latest)).toEqual([
+      { id: 'image-c', dataUrl: 'data:image/png;base64,c' },
+      { id: 'image-a', dataUrl: 'data:image/png;base64,a' },
+      { id: 'image-new', dataUrl: 'data:image/png;base64,new' },
+    ])
+  })
+
+  it('hydrates a single preview only while the latest state still references the same placeholder', () => {
+    const persisted = { id: 'style-old', dataUrl: '' }
+    const restored = { id: 'style-old', dataUrl: 'data:image/png;base64,old' }
+
+    expect(mergeRestoredInputImage(persisted, restored, { id: 'style-old', dataUrl: '' })).toEqual(restored)
+    expect(mergeRestoredInputImage(persisted, restored, null)).toBeNull()
+    expect(mergeRestoredInputImage(persisted, restored, { id: 'style-new', dataUrl: '' })).toEqual({
+      id: 'style-new',
+      dataUrl: '',
+    })
+    expect(mergeRestoredInputImage(persisted, restored, { id: 'style-new', dataUrl: 'data:image/png;base64,new' })).toEqual({
+      id: 'style-new',
+      dataUrl: 'data:image/png;base64,new',
+    })
+  })
+})
 
 describe('history pagination state', () => {
   it('resets to the first page when history filters change', () => {

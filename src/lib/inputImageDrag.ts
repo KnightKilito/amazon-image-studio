@@ -6,6 +6,25 @@ export interface InputImageDropRect {
   bottom: number
 }
 
+export function resolveInputImageDragSourceIndex(
+  images: readonly { id: string }[],
+  imageId: string | null,
+): number | null {
+  if (!imageId) return null
+  const index = images.findIndex((image) => image.id === imageId)
+  return index >= 0 ? index : null
+}
+
+export function hasInputImageDragPassedThreshold(
+  startX: number,
+  startY: number,
+  clientX: number,
+  clientY: number,
+  threshold = 6,
+) {
+  return Math.hypot(clientX - startX, clientY - startY) >= threshold
+}
+
 interface InputImageDropRow {
   top: number
   bottom: number

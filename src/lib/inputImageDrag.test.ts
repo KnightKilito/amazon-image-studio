@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { resolveInputImageDropIndex, type InputImageDropRect } from './inputImageDrag'
+import {
+  hasInputImageDragPassedThreshold,
+  resolveInputImageDragSourceIndex,
+  resolveInputImageDropIndex,
+  type InputImageDropRect,
+} from './inputImageDrag'
 
 const rects: InputImageDropRect[] = [
   { index: 0, left: 0, right: 52, top: 0, bottom: 52 },
@@ -32,5 +37,21 @@ describe('resolveInputImageDropIndex', () => {
     expect(resolveInputImageDropIndex([
       { index: 0, left: 0, right: 0, top: 0, bottom: 0 },
     ], 10, 10)).toBeNull()
+  })
+})
+
+describe('input image pointer drag', () => {
+  it('resolves the dragged image by stable id after the list changes', () => {
+    const reordered = [{ id: 'third' }, { id: 'first' }, { id: 'second' }]
+
+    expect(resolveInputImageDragSourceIndex(reordered, 'second')).toBe(2)
+    expect(resolveInputImageDragSourceIndex(reordered, 'missing')).toBeNull()
+    expect(resolveInputImageDragSourceIndex(reordered, null)).toBeNull()
+  })
+
+  it('starts sorting only after the pointer crosses the movement threshold', () => {
+    expect(hasInputImageDragPassedThreshold(10, 10, 13, 14)).toBe(false)
+    expect(hasInputImageDragPassedThreshold(10, 10, 16, 10)).toBe(true)
+    expect(hasInputImageDragPassedThreshold(10, 10, 16, 18, 10)).toBe(true)
   })
 })

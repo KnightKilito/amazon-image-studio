@@ -323,6 +323,18 @@ export default function ListingCopyWorkspace() {
   const updateProfit = <K extends keyof ListingCopyProfitInput>(key: K, value: ListingCopyProfitInput[K]) => {
     setProfitInput((current) => ({ ...current, [key]: value }))
   }
+  const hasProductCopy = Object.entries(input).some(([key, value]) => key !== 'preset' && typeof value === 'string' && value.trim())
+  const clearProductCopy = () => {
+    setInput((current) => ({ ...DEFAULT_LISTING_COPY_INPUT, preset: current.preset }))
+    showToast('产品资料文案已清空', 'success')
+  }
+  const clearReferenceImages = () => {
+    setReferenceImages([])
+    setIsDraggingReferenceImages(false)
+    dragCounterRef.current = 0
+    if (fileInputRef.current) fileInputRef.current.value = ''
+    showToast('已上传的参考图已清空', 'success')
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -594,7 +606,17 @@ export default function ListingCopyWorkspace() {
 
         <div className="grid gap-5 xl:grid-cols-2">
           <section className={`${CARD_CLASS} p-4 sm:p-5`}>
-            <div className="mb-4 flex items-center justify-between"><div><h3 className="font-bold text-gray-900 dark:text-white">产品资料与成本</h3><p className="mt-1 text-xs text-gray-400">只填写能够确认的事实，未提供的信息不会让 AI 猜测。</p></div><Select value={input.preset} onChange={(value) => updateInput('preset', value === 'general' ? 'general' : 'footwear')} options={[{ value: 'footwear', label: '鞋靴预设' }, { value: 'general', label: '通用商品' }]} ariaLabel="商品预设" className={`${COMPACT_SELECT_CLASS} w-28`} /></div>
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div><h3 className="font-bold text-gray-900 dark:text-white">产品资料与成本</h3><p className="mt-1 text-xs text-gray-400">只填写能够确认的事实，未提供的信息不会让 AI 猜测。</p></div>
+              <div className="flex flex-wrap items-center gap-2">
+                {hasProductCopy && (
+                  <button type="button" onClick={clearProductCopy} className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 text-xs font-semibold text-red-600 transition hover:bg-red-50 dark:border-red-400/20 dark:bg-gray-950 dark:text-red-300 dark:hover:bg-red-400/10">
+                    <TrashIcon className="h-3.5 w-3.5" />清空文案
+                  </button>
+                )}
+                <Select value={input.preset} onChange={(value) => updateInput('preset', value === 'general' ? 'general' : 'footwear')} options={[{ value: 'footwear', label: '鞋靴预设' }, { value: 'general', label: '通用商品' }]} ariaLabel="商品预设" className={`${COMPACT_SELECT_CLASS} w-28`} />
+              </div>
+            </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="sm:col-span-2"><TextField label="产品介绍" value={input.productDescription} onChange={(value) => updateInput('productDescription', value)} rows={8} placeholder="产品是什么、解决什么需求、最重要的真实特点…" /></div>
               <TextField label="品牌 / 型号" value={input.brand} onChange={(value) => updateInput('brand', value)} />
@@ -637,7 +659,17 @@ export default function ListingCopyWorkspace() {
                 if (event.dataTransfer.files.length) void handleFiles(event.dataTransfer.files)
               }}
             >
-              <div className="mb-3 flex items-center justify-between"><div><h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">产品参考图</h4><p className="mt-1 text-[11px] text-gray-400">用于确认外观事实，最多 8 张；不会直接决定文案风格。</p></div><button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"><PhotoIcon className="h-4 w-4" />{isUploading ? '上传中…' : '上传参考图'}</button></div>
+              <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div><h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">产品参考图</h4><p className="mt-1 text-[11px] text-gray-400">用于确认外观事实，最多 8 张；不会直接决定文案风格。</p></div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {referenceImages.length > 0 && (
+                    <button type="button" onClick={clearReferenceImages} disabled={isUploading} className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-400/20 dark:bg-gray-950 dark:text-red-300 dark:hover:bg-red-400/10">
+                      <TrashIcon className="h-3.5 w-3.5" />清空图片
+                    </button>
+                  )}
+                  <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"><PhotoIcon className="h-4 w-4" />{isUploading ? '上传中…' : '上传参考图'}</button>
+                </div>
+              </div>
               <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(event: ChangeEvent<HTMLInputElement>) => { void handleFiles(event.target.files ?? []); event.target.value = '' }} />
               {referenceImages.length ? <><div className="grid grid-cols-4 gap-2 sm:grid-cols-6">{referenceImages.map((image, index) => <div key={image.id} className="group relative aspect-square overflow-hidden rounded-xl border border-gray-200 bg-gray-100 dark:border-white/[0.08] dark:bg-gray-950"><img src={image.dataUrl} alt={`产品参考图 ${index + 1}`} className="h-full w-full object-cover" /><button type="button" aria-label={`删除参考图 ${index + 1}`} onClick={() => setReferenceImages((current) => current.filter((item) => item.id !== image.id))} className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100"><CloseIcon className="h-3.5 w-3.5" /></button></div>)}</div><div className="mt-2 text-center text-[11px] text-gray-400">可继续把图片拖到此区域添加</div></> : <button type="button" onClick={() => fileInputRef.current?.click()} className={`flex w-full flex-col items-center justify-center rounded-xl border border-dashed py-8 text-sm transition ${isDraggingReferenceImages ? 'border-blue-400 bg-white/70 text-blue-600 dark:bg-gray-900/70' : 'border-gray-300 text-gray-400 hover:border-blue-300 hover:bg-blue-50/40 hover:text-blue-600 dark:border-white/[0.12] dark:hover:bg-blue-400/5'}`}><PhotoIcon className="mb-2 h-6 w-6" /><span>{isDraggingReferenceImages ? '松开即可上传图片' : '点击或拖拽上传产品参考图'}</span><span className="mt-1 text-[11px] font-normal opacity-75">支持一次拖入多张图片，不使用风格参考图</span></button>}
             </div>

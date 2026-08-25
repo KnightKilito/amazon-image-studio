@@ -111,6 +111,21 @@ vi.mock('./lib/imageUpscaling', () => ({
     needsUpscale: true,
   })),
 }))
+vi.mock('./lib/imageResizing', () => ({
+  resizeImageDataUrl: vi.fn(async (dataUrl: string, options: { width: number; height: number; mode: string; outputFormat: string; quality: number }) => ({
+    dataUrl: `data:image/${options.outputFormat};base64,resized-${dataUrl.slice(-1)}`,
+    sourceWidth: 1024,
+    sourceHeight: 768,
+    targetWidth: options.mode === 'contain' ? options.width : options.width,
+    targetHeight: options.mode === 'contain' ? Math.round(options.width * 0.75) : options.height,
+    scaleX: options.width / 1024,
+    scaleY: options.height / 768,
+    proportional: options.mode === 'contain',
+    byteSize: 1234,
+    outputFormat: options.outputFormat,
+    quality: options.outputFormat === 'png' ? null : options.quality,
+  })),
+}))
 vi.mock('./lib/imageSlicing', () => ({
   sliceImageDataUrlVertically: vi.fn(async (_dataUrl: string, sliceCount: number, format: 'premium' | 'mobile') => ({
     width: 120,
@@ -148,9 +163,10 @@ import { clearAmazonPlannerSessions, clearImages, clearListingCopySessions, clea
 import { callImageApi } from './lib/api'
 import { createImageEditorVisualGuideDataUrl } from './lib/imageEditorAnnotations'
 import { upscaleImageDataUrlForAPlus } from './lib/imageUpscaling'
+import { resizeImageDataUrl } from './lib/imageResizing'
 import { getTaskDisplayPrompt } from './lib/taskPromptDisplay'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
-import { addTaskOutputsToInputImages, cleanStaleAgentInputDrafts, clearData, clearImageEditorInputs, convertOutputToAPlusFormat, createAPlusBatchUpscaleTask, createAPlusSliceTaskFromImage, createAPlusUpscaleTaskFromImage, editOutputs, exportData, generatePlannerStyleReferenceImage, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, mergeRestoredInputImage, mergeRestoredInputImages, openImageEditor, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitImageEditorTask, submitTask, useStore } from './store'
+import { addTaskOutputsToInputImages, cleanStaleAgentInputDrafts, clearData, clearImageEditorInputs, convertOutputToAPlusFormat, createAPlusBatchUpscaleTask, createAPlusSliceTaskFromImage, createAPlusUpscaleTaskFromImage, createBatchImageResizeTask, editOutputs, exportData, generatePlannerStyleReferenceImage, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, mergeRestoredInputImage, mergeRestoredInputImages, openImageEditor, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitImageEditorTask, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -479,6 +495,16 @@ describe('mask draft lifecycle in store actions', () => {
     expect(useStore.getState().styleReferenceImage).toEqual(existingStyleImage)
   })
 
+  it('replaces an existing style reference after an explicit current-style fill', () => {
+    const existingStyleImage = { id: 'manual-style', dataUrl: 'data:image/png;base64,manual-style' }
+    const currentStyleImage = { id: 'current-style', dataUrl: 'data:image/png;base64,current-style' }
+    useStore.getState().setStyleReferenceImage(existingStyleImage)
+
+    useStore.getState().setStyleReferenceImage(currentStyleImage)
+
+    expect(useStore.getState().styleReferenceImage).toEqual(currentStyleImage)
+  })
+
   it('replaces the current draft with one output image when quick editing output', async () => {
     await putImage(imageB)
     const maskDraft = {
@@ -799,6 +825,37 @@ describe('mask draft lifecycle in store actions', () => {
       workflow: 'amazon-aplus',
       amazonSlot: '图片编辑 · 自定义尺寸放大',
     })
+  })
+
+  it('batch-resizes editor materials into one derived history task', async () => {
+    await putImage(imageA)
+    await putImage(imageB)
+    vi.mocked(resizeImageDataUrl).mockClear()
+    useStore.setState({ tasks: [], appPage: 'editor' })
+
+    const derivedTask = await createBatchImageResizeTask([imageA.id, imageB.id, imageA.id], {
+      width: 800,
+      height: 800,
+      mode: 'contain',
+      outputFormat: 'webp',
+      quality: 82,
+    })
+
+    expect(resizeImageDataUrl).toHaveBeenCalledTimes(2)
+    expect(derivedTask.inputImageIds).toEqual([imageA.id, imageB.id])
+    expect(derivedTask.outputImages).toHaveLength(2)
+    expect(derivedTask.params).toMatchObject({
+      n: 2,
+      size: '800x600',
+      output_format: 'webp',
+      output_compression: 18,
+    })
+    expect(Object.values(derivedTask.actualParamsByImage ?? {})).toHaveLength(2)
+    expect(derivedTask.category).toEqual({
+      workflow: 'gallery',
+      amazonSlot: '图片编辑 · 批量调整尺寸（2 张）',
+    })
+    expect(useStore.getState().tasks[0]?.id).toBe(derivedTask.id)
   })
 
   it('keeps the source image reference on a derived A+ slice task', async () => {

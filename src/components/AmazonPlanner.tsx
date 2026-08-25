@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react'
-import { addImageFromFile, applyGuestUnifiedApiUrl, ensureImageCached, generatePlannerStyleReferenceImage, submitTask, useStore } from '../store'
+import { addImageFromFile, applyGuestUnifiedApiUrl, deleteImageIfUnreferenced, ensureImageCached, generatePlannerStyleReferenceImage, submitTask, useStore } from '../store'
 import { getActiveApiProfile, getAmazonPlannerProfile, isOfficialDeepSeekPlannerProfile, validateApiProfile } from '../lib/apiProfiles'
 import {
   DEFAULT_AMAZON_PROMPT_DRAFT,
@@ -1033,6 +1033,29 @@ export default function AmazonPlanner() {
         setIsGeneratingAiStyleImage(false)
       }
     }
+  }
+
+  const fillCurrentStyleReference = () => {
+    if (!selectedStyleImage?.imageId) {
+      showToast('当前没有可填充的风格图', 'error')
+      return
+    }
+
+    const previousStyleReference = useStore.getState().styleReferenceImage
+    if (previousStyleReference?.id === selectedStyleImage.imageId) {
+      showToast('当前风格图已在风格图槽位中', 'info')
+      return
+    }
+
+    setStyleReferenceImage({
+      id: selectedStyleImage.imageId,
+      dataUrl: selectedStyleImage.dataUrl,
+    })
+    if (previousStyleReference?.id) void deleteImageIfUnreferenced(previousStyleReference.id)
+    showToast(
+      previousStyleReference ? '已用当前风格图替换风格图槽位' : '已将当前风格图填入风格图槽位',
+      'success',
+    )
   }
 
   const selectStylePreset = async (presetId: string, options: { silent?: boolean; persist?: boolean } = {}) => {
@@ -2728,15 +2751,29 @@ export default function AmazonPlanner() {
                               </span>
                             )}
                           </button>
-                          <button
-                            type="button"
-                            disabled={isGeneratingAiStyleImage}
-                            onClick={() => void generateAiStyleReference()}
-                            className="mt-2 inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-200 dark:hover:bg-white/[0.05]"
-                          >
-                            <RefreshIcon className={`h-3.5 w-3.5 ${isGeneratingAiStyleImage ? 'animate-spin' : ''}`} />
-                            {aiStyleReference ? '重新生成风格图' : '生成风格图'}
-                          </button>
+                          <div className="mt-2 flex gap-2">
+                            <button
+                              type="button"
+                              disabled={isGeneratingAiStyleImage}
+                              onClick={() => void generateAiStyleReference()}
+                              className="inline-flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-200 dark:hover:bg-white/[0.05]"
+                            >
+                              <RefreshIcon className={`h-3.5 w-3.5 shrink-0 ${isGeneratingAiStyleImage ? 'animate-spin' : ''}`} />
+                              {aiStyleReference ? '重新生成风格图' : '生成风格图'}
+                            </button>
+                            {aiStyleReference && (
+                              <button
+                                type="button"
+                                disabled={isGeneratingAiStyleImage}
+                                onClick={fillCurrentStyleReference}
+                                title="将当前风格图填入底部风格图槽位；已有图片时会替换"
+                                className="inline-flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2 text-xs font-semibold text-violet-700 transition hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-violet-400/25 dark:bg-violet-400/10 dark:text-violet-200 dark:hover:bg-violet-400/15"
+                              >
+                                <PhotoIcon className="h-3.5 w-3.5 shrink-0" />
+                                填充当前风格图
+                              </button>
+                            )}
+                          </div>
                         </div>
                         <div className="mt-4 min-w-0">
                           <div className="text-[10px] font-bold uppercase text-gray-400">风格概述</div>

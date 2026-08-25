@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent 
 import {
   createAPlusSliceTaskFromImage,
   createAPlusUpscaleTaskFromImage,
+  createBatchImageResizeTask,
   createInputImageFromFile,
   ensureImageCached,
   openImageEditor,
@@ -12,11 +13,13 @@ import { getImageDimensions } from '../lib/canvasImage'
 import { getPendingImageEditorResultAutoPreview } from '../lib/imageEditorSelection'
 import { getAPlusUpscalePlan, getCustomUpscalePlan, MAX_CUSTOM_UPSCALE_EDGE, type APlusUpscaleFormat, type ImageUpscaleTargetSize } from '../lib/imageUpscaling'
 import { downloadImageIds } from '../lib/downloadImages'
+import type { ImageResizeOptions } from '../lib/imageResizing'
 import type { APlusOutputConversionTarget } from '../store'
 import type { APlusSliceFormat } from '../lib/imageSlicing'
 import InputBar from './InputBar'
 import ImageAnnotationCanvas from './ImageAnnotationCanvas'
 import ImageSliceDialog from './ImageSliceDialog'
+import BatchImageResizeDialog, { type BatchResizeCandidate } from './BatchImageResizeDialog'
 import Select from './Select'
 import TaskGrid from './TaskGrid'
 
@@ -113,7 +116,9 @@ export default function ImageEditorWorkspace() {
   const [previewSrc, setPreviewSrc] = useState('')
   const [sliceFormat, setSliceFormat] = useState<APlusSliceFormat>('premium')
   const [showSliceDialog, setShowSliceDialog] = useState(false)
+  const [showBatchResizeDialog, setShowBatchResizeDialog] = useState(false)
   const [sliceBusy, setSliceBusy] = useState(false)
+  const [batchResizeBusy, setBatchResizeBusy] = useState(false)
   const [localBusy, setLocalBusy] = useState(false)
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
   const [upscaleMode, setUpscaleMode] = useState<UpscaleMode>('proportional')
@@ -124,7 +129,25 @@ export default function ImageEditorWorkspace() {
     () => tasks.find((task) => task.id === editorActiveTaskId) ?? null,
     [editorActiveTaskId, tasks],
   )
-  const outputImageIds = activeTask?.outputImages ?? []
+  const outputImageIds = useMemo(() => activeTask?.outputImages ?? [], [activeTask])
+  const batchResizeCandidates = useMemo(() => {
+    const candidates = new Map<string, BatchResizeCandidate>()
+    inputImages.forEach((image, index) => candidates.set(image.id, {
+      id: image.id,
+      dataUrl: image.dataUrl,
+      label: image.id === editorCanvasDraft.sourceImageId ? '当前主图' : `参考素材 ${index + 1}`,
+    }))
+    if (styleReferenceImage) candidates.set(styleReferenceImage.id, {
+      id: styleReferenceImage.id,
+      dataUrl: styleReferenceImage.dataUrl,
+      label: '风格参考',
+    })
+    outputImageIds.forEach((imageId, index) => candidates.set(imageId, {
+      id: imageId,
+      label: `结果 ${index + 1}`,
+    }))
+    return [...candidates.values()]
+  }, [editorCanvasDraft.sourceImageId, inputImages, outputImageIds, styleReferenceImage])
   const currentImageId = editorActiveImageId ?? inputImages[0]?.id ?? outputImageIds[0] ?? null
   const currentInputImage = inputImages.find((image) => image.id === currentImageId)
   const currentPreviewImage = currentInputImage
@@ -358,6 +381,22 @@ export default function ImageEditorWorkspace() {
     }
   }
 
+  const handleBatchResize = async (imageIds: string[], options: ImageResizeOptions) => {
+    if (batchResizeBusy) return
+    setBatchResizeBusy(true)
+    try {
+      const task = await createBatchImageResizeTask(imageIds, options)
+      setEditorActiveTaskId(task.id)
+      setEditorActiveImageId(task.outputImages[0] ?? null)
+      setShowBatchResizeDialog(false)
+      showToast(`已调整并保存 ${task.outputImages.length} 张图片`, 'success')
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '批量调整图片尺寸失败', 'error')
+    } finally {
+      setBatchResizeBusy(false)
+    }
+  }
+
   const handlePrepareConversion = async (target: APlusOutputConversionTarget) => {
     if (!currentImageId) return
     const prepared = await prepareAPlusConversionFromImage(currentImageId, target)
@@ -542,6 +581,9 @@ export default function ImageEditorWorkspace() {
                 下载当前图片
               </ToolButton>
             </div>
+            <ToolButton onClick={() => setShowBatchResizeDialog(true)} disabled={batchResizeCandidates.length === 0 || batchResizeBusy} title="多选当前素材和结果图，统一调整尺寸、格式与质量">
+              批量调整图片尺寸
+            </ToolButton>
             <ToolButton onClick={() => setShowSliceDialog(true)} disabled={!currentImageId || sliceBusy}>
               切割 A+ 母图
             </ToolButton>
@@ -633,6 +675,16 @@ export default function ImageEditorWorkspace() {
           busy={sliceBusy}
           onClose={() => { if (!sliceBusy) setShowSliceDialog(false) }}
           onConfirm={(count) => void handleConfirmSlice(count)}
+        />
+      )}
+      {showBatchResizeDialog && (
+        <BatchImageResizeDialog
+          candidates={batchResizeCandidates}
+          initialWidth={dimensions.width}
+          initialHeight={dimensions.height}
+          busy={batchResizeBusy}
+          onClose={() => { if (!batchResizeBusy) setShowBatchResizeDialog(false) }}
+          onConfirm={(imageIds, options) => void handleBatchResize(imageIds, options)}
         />
       )}
     </main>

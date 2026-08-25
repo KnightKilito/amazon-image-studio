@@ -68,6 +68,7 @@ import { getTaskDisplayPrompt } from './lib/taskPromptDisplay'
 import { isAmazonListingMainSlot } from './lib/listingPlanner'
 import { sliceImageDataUrlVertically, type APlusSliceFormat } from './lib/imageSlicing'
 import { upscaleImageDataUrlForAPlus, type APlusUpscaleFormat, type ImageUpscaleTargetSize } from './lib/imageUpscaling'
+import { resizeImageDataUrl, type ImageResizeOptions } from './lib/imageResizing'
 import { getMobileMotherImageSize, getPremiumMotherImageSize, MAX_PREMIUM_MOTHER_SLICES, MIN_PREMIUM_MOTHER_SLICES } from './lib/premiumAPlusLayout'
 import { fetchAdminSettings, readAdminToken, saveAdminSettings } from './lib/adminApi'
 import { navigateToAppPage } from './lib/appNavigation'
@@ -4699,6 +4700,86 @@ export async function createAPlusBatchUpscaleTask(
     const latestTasks = useStore.getState().tasks
     useStore.getState().setTasks([upscaledTask, ...latestTasks])
     return upscaledTask
+  } catch (error) {
+    await deleteUnreferencedImageIds(storedOutputs.map(({ imageId }) => imageId))
+    throw error
+  }
+}
+
+/** 使用浏览器 Canvas 批量调整任意图片尺寸，并保存为一条新的本地派生任务。 */
+export async function createBatchImageResizeTask(
+  sourceImageIds: string[],
+  options: ImageResizeOptions,
+): Promise<TaskRecord> {
+  const uniqueSourceImageIds = [...new Set(sourceImageIds)]
+  if (uniqueSourceImageIds.length === 0) throw new Error('请至少选择一张要调整尺寸的图片。')
+
+  const storedOutputs: Array<{ imageId: string, size: string }> = []
+  try {
+    for (const sourceImageId of uniqueSourceImageIds) {
+      const sourceDataUrl = await ensureImageCached(sourceImageId)
+      if (!sourceDataUrl) throw new Error('无法读取部分图片，请刷新后重试。')
+      const result = await resizeImageDataUrl(sourceDataUrl, options)
+      const imageId = await storeImage(result.dataUrl, 'derived')
+      cacheImage(imageId, result.dataUrl)
+      storedOutputs.push({
+        imageId,
+        size: `${result.targetWidth}x${result.targetHeight}`,
+      })
+    }
+
+    const now = Date.now()
+    const outputCompression = options.outputFormat === 'png'
+      ? null
+      : Math.max(0, Math.min(100, 100 - Math.round(options.quality)))
+    const actualParamsByImage = Object.fromEntries(storedOutputs.map(({ imageId, size }) => [
+      imageId,
+      {
+        size,
+        output_format: options.outputFormat,
+        quality: 'high' as const,
+        output_compression: outputCompression,
+      },
+    ]))
+    const firstSourceTask = useStore.getState().tasks.find((task) => uniqueSourceImageIds.some((imageId) => task.outputImages.includes(imageId)))
+    const resizedTask: TaskRecord = {
+      id: genId(),
+      prompt: '批量调整图片尺寸',
+      params: {
+        ...DEFAULT_PARAMS,
+        size: storedOutputs[0]?.size ?? `${options.width}x${options.height}`,
+        n: storedOutputs.length,
+        output_format: options.outputFormat,
+        quality: 'high',
+        output_compression: outputCompression,
+      },
+      actualParams: {
+        size: storedOutputs[0]?.size ?? `${options.width}x${options.height}`,
+        output_format: options.outputFormat,
+        quality: 'high',
+        output_compression: outputCompression,
+      },
+      actualParamsByImage,
+      inputImageIds: uniqueSourceImageIds,
+      maskTargetImageId: null,
+      maskImageId: null,
+      outputImages: storedOutputs.map(({ imageId }) => imageId),
+      status: 'done',
+      error: null,
+      createdAt: now,
+      finishedAt: now,
+      elapsed: 0,
+      sourceMode: firstSourceTask?.sourceMode,
+      category: {
+        workflow: 'gallery',
+        amazonSlot: `图片编辑 · 批量调整尺寸（${storedOutputs.length} 张）`,
+      },
+    }
+
+    await putTask(resizedTask)
+    const latestTasks = useStore.getState().tasks
+    useStore.getState().setTasks([resizedTask, ...latestTasks])
+    return resizedTask
   } catch (error) {
     await deleteUnreferencedImageIds(storedOutputs.map(({ imageId }) => imageId))
     throw error

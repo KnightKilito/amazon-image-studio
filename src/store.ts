@@ -702,6 +702,9 @@ export function getPersistedState(state: AppState) {
       : {}),
     dismissedCodexCliPrompts: state.dismissedCodexCliPrompts,
     appMode: state.appMode,
+    pagePromptDrafts: settings.persistInputOnRestart
+      ? state.pagePromptDrafts
+      : { home: '', editor: '' },
     galleryInputDraft: settings.persistInputOnRestart && galleryInputDraft
       ? {
           ...galleryInputDraft,
@@ -790,6 +793,19 @@ export function mergePersistedState(persistedState: unknown, currentState: AppSt
         maskEditorImageId: null,
       })
     : null
+  const persistedPagePromptDrafts = persisted.pagePromptDrafts && typeof persisted.pagePromptDrafts === 'object'
+    ? persisted.pagePromptDrafts as Partial<AppState['pagePromptDrafts']>
+    : {}
+  const pagePromptDrafts = settings.persistInputOnRestart
+    ? {
+        home: typeof persistedPagePromptDrafts.home === 'string'
+          ? persistedPagePromptDrafts.home
+          : galleryInputDraft?.prompt ?? '',
+        editor: typeof persistedPagePromptDrafts.editor === 'string'
+          ? persistedPagePromptDrafts.editor
+          : '',
+      }
+    : { home: '', editor: '' }
   let agentInputDrafts = cleanStaleAgentInputDrafts(
     normalizeAgentInputDrafts(persisted.agentInputDrafts, agentConversations),
     activeAgentConversationId,
@@ -801,8 +817,10 @@ export function mergePersistedState(persistedState: unknown, currentState: AppSt
     params,
     appMode,
     appPage: 'home',
+    pagePromptDrafts,
     editorActiveImageId: null,
     editorActiveTaskId: null,
+    editorHiddenResultImageIds: [],
     editorCanvasDraft: settings.persistInputOnRestart
       ? normalizeImageEditorCanvasDraft(persisted.editorCanvasDraft)
       : { ...DEFAULT_IMAGE_EDITOR_CANVAS_DRAFT },
@@ -819,7 +837,7 @@ export function mergePersistedState(persistedState: unknown, currentState: AppSt
     historyPageSize: normalizeHistoryPageSize(persisted.historyPageSize),
     adminAccess: normalizeAdminAccess(persisted.adminAccess),
     isAdminAuthenticated: false,
-    prompt: galleryInputDraft?.prompt ?? '',
+    prompt: pagePromptDrafts.home,
     inputImages: galleryInputDraft?.inputImages ?? [],
     maskDraft: galleryInputDraft?.maskDraft ?? null,
     maskEditorImageId: galleryInputDraft?.maskEditorImageId ?? null,
@@ -856,10 +874,13 @@ interface AppState {
   setAppMode: (mode: AppMode) => void
   appPage: AppPage
   setAppPage: (page: AppPage) => void
+  pagePromptDrafts: { home: string; editor: string }
   editorActiveImageId: string | null
   setEditorActiveImageId: (id: string | null) => void
   editorActiveTaskId: string | null
   setEditorActiveTaskId: (id: string | null) => void
+  editorHiddenResultImageIds: string[]
+  setEditorHiddenResultImageIds: (ids: string[] | ((current: string[]) => string[])) => void
   editorCanvasDraft: ImageEditorCanvasDraft
   setEditorCanvasDraft: (patch: Partial<ImageEditorCanvasDraft>) => void
   resetEditorCanvasDraft: (sourceImageId?: string | null) => void
@@ -1233,7 +1254,7 @@ function restoreAgentInputDraftState(drafts: Record<string, AgentInputDraft>, co
 function syncActiveInputDraft<T extends Partial<AgentInputDraft>>(
   state: AppState,
   patch: T,
-): T & { agentInputDrafts?: Record<string, AgentInputDraft>; galleryInputDraft?: AgentInputDraft | null } {
+): T & { agentInputDrafts?: Record<string, AgentInputDraft>; galleryInputDraft?: AgentInputDraft | null; pagePromptDrafts?: AppState['pagePromptDrafts'] } {
   const draft: AgentInputDraft = {
     prompt: patch.prompt ?? state.prompt,
     inputImages: patch.inputImages ?? state.inputImages,
@@ -1241,15 +1262,20 @@ function syncActiveInputDraft<T extends Partial<AgentInputDraft>>(
     maskDraft: patch.maskDraft !== undefined ? patch.maskDraft : state.maskDraft,
     maskEditorImageId: patch.maskEditorImageId !== undefined ? patch.maskEditorImageId : state.maskEditorImageId,
   }
+  const pagePromptDrafts = patch.prompt !== undefined && (state.appPage === 'home' || state.appPage === 'editor')
+    ? { ...state.pagePromptDrafts, [state.appPage]: patch.prompt }
+    : undefined
   if (state.appMode === 'gallery') {
     return {
       ...patch,
+      ...(pagePromptDrafts ? { pagePromptDrafts } : {}),
       galleryInputDraft: isEmptyAgentInputDraft(draft) ? null : copyAgentInputDraft(draft),
     }
   }
-  if (!state.activeAgentConversationId) return patch
+  if (!state.activeAgentConversationId) return { ...patch, ...(pagePromptDrafts ? { pagePromptDrafts } : {}) }
   return {
     ...patch,
+    ...(pagePromptDrafts ? { pagePromptDrafts } : {}),
     agentInputDrafts: setAgentInputDraft(state.agentInputDrafts, state.activeAgentConversationId, draft),
   }
 }
@@ -1289,11 +1315,31 @@ export const useStore = create<AppState>()(
         }))
       },
       appPage: 'home',
-      setAppPage: (appPage) => set({ appPage }),
+      pagePromptDrafts: { home: '', editor: '' },
+      setAppPage: (appPage) => set((state) => {
+        if (state.appPage === appPage) return state
+        const pagePromptDrafts = state.appPage === 'home' || state.appPage === 'editor'
+          ? { ...state.pagePromptDrafts, [state.appPage]: state.prompt }
+          : state.pagePromptDrafts
+        if (appPage !== 'home' && appPage !== 'editor') return { appPage, pagePromptDrafts }
+        const targetState = { ...state, appPage, pagePromptDrafts }
+        return {
+          appPage,
+          pagePromptDrafts,
+          ...syncActiveInputDraft(targetState, { prompt: pagePromptDrafts[appPage] }),
+        }
+      }),
       editorActiveImageId: null,
       setEditorActiveImageId: (editorActiveImageId) => set({ editorActiveImageId }),
       editorActiveTaskId: null,
-      setEditorActiveTaskId: (editorActiveTaskId) => set({ editorActiveTaskId }),
+      editorHiddenResultImageIds: [],
+      setEditorActiveTaskId: (editorActiveTaskId) => set((state) => ({
+        editorActiveTaskId,
+        ...(state.editorActiveTaskId === editorActiveTaskId ? {} : { editorHiddenResultImageIds: [] }),
+      })),
+      setEditorHiddenResultImageIds: (ids) => set((state) => ({
+        editorHiddenResultImageIds: typeof ids === 'function' ? ids(state.editorHiddenResultImageIds) : ids,
+      })),
       editorCanvasDraft: { ...DEFAULT_IMAGE_EDITOR_CANVAS_DRAFT },
       setEditorCanvasDraft: (patch) => set((state) => ({
         editorCanvasDraft: normalizeImageEditorCanvasDraft({
@@ -4978,6 +5024,7 @@ export async function openImageEditor(imageId: string) {
     return false
   }
 
+  setAppPage('editor')
   useStore.setState((state) => syncActiveInputDraft(state, {
     prompt: '',
     inputImages: [{ id: imageId, dataUrl }],
@@ -4991,7 +5038,6 @@ export async function openImageEditor(imageId: string) {
   setEditorActiveImageId(imageId)
   setEditorActiveTaskId(null)
   resetEditorCanvasDraft(imageId)
-  setAppPage('editor')
   navigateToAppPage('editor')
   showToast('宸插湪鍥剧墖缂栬緫椤典腑鎵撳紑鍥剧墖', 'success')
   return true

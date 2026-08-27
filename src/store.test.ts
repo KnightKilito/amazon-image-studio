@@ -1678,6 +1678,78 @@ describe('input persistence setting', () => {
   })
 })
 
+describe('app page prompt drafts', () => {
+  beforeEach(() => {
+    useStore.setState({
+      appMode: 'gallery',
+      appPage: 'home',
+      prompt: '',
+      pagePromptDrafts: { home: '', editor: '' },
+      inputImages: [],
+      styleReferenceImage: null,
+      galleryInputDraft: null,
+      settings: { ...DEFAULT_SETTINGS },
+    })
+  })
+
+  it('keeps independent home and editor prompts across page switches', () => {
+    useStore.getState().setPrompt('首页未提交草稿')
+    useStore.getState().setAppPage('editor')
+
+    expect(useStore.getState()).toMatchObject({
+      appPage: 'editor',
+      prompt: '',
+      pagePromptDrafts: { home: '首页未提交草稿', editor: '' },
+    })
+
+    useStore.getState().setPrompt('编辑页未提交草稿')
+    useStore.getState().setAppPage('listing-copy')
+    useStore.getState().setAppPage('home')
+    expect(useStore.getState().prompt).toBe('首页未提交草稿')
+
+    useStore.getState().setAppPage('editor')
+    expect(useStore.getState().prompt).toBe('编辑页未提交草稿')
+  })
+
+  it('keeps dismissed editor results across tabs and resets them for a new active task', () => {
+    useStore.setState({
+      editorActiveTaskId: 'task-a',
+      editorHiddenResultImageIds: ['result-a'],
+    })
+    useStore.getState().setAppPage('editor')
+    useStore.getState().setAppPage('home')
+    useStore.getState().setAppPage('editor')
+    expect(useStore.getState().editorHiddenResultImageIds).toEqual(['result-a'])
+
+    useStore.getState().setEditorActiveTaskId('task-b')
+    expect(useStore.getState().editorHiddenResultImageIds).toEqual([])
+  })
+
+  it('preserves the home draft when opening an image in the editor', async () => {
+    await putImage(imageA)
+    useStore.getState().setPrompt('首页待继续的提示词')
+
+    expect(await openImageEditor(imageA.id)).toBe(true)
+
+    expect(useStore.getState()).toMatchObject({
+      appPage: 'editor',
+      prompt: '',
+      pagePromptDrafts: { home: '首页待继续的提示词', editor: '' },
+      editorActiveImageId: imageA.id,
+    })
+    useStore.getState().setAppPage('home')
+    expect(useStore.getState().prompt).toBe('首页待继续的提示词')
+  })
+
+  it('persists both prompt drafts only when restart input restore is enabled', () => {
+    useStore.setState({ pagePromptDrafts: { home: '首页草稿', editor: '编辑草稿' } })
+    expect(getPersistedState(useStore.getState()).pagePromptDrafts).toEqual({ home: '首页草稿', editor: '编辑草稿' })
+
+    useStore.setState({ settings: { ...DEFAULT_SETTINGS, persistInputOnRestart: false } })
+    expect(getPersistedState(useStore.getState()).pagePromptDrafts).toEqual({ home: '', editor: '' })
+  })
+})
+
 describe('agent conversation creation', () => {
   beforeEach(() => {
     useStore.setState({

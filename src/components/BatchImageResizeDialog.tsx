@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { getImageDimensions } from '../lib/canvasImage'
 import {
@@ -6,6 +6,7 @@ import {
   formatImageFileSize,
   getDataUrlByteSize,
   getImageResizePlan,
+  getLockedResizeCompanionDimension,
   MAX_IMAGE_RESIZE_EDGE,
   type ImageResizeMode,
   type ImageResizeOptions,
@@ -57,6 +58,8 @@ export default function BatchImageResizeDialog({
   const [mode, setMode] = useState<ImageResizeMode>('contain')
   const [outputFormat, setOutputFormat] = useState<ImageResizeOutputFormat>('png')
   const [quality, setQuality] = useState(85)
+  const [ratioLocked, setRatioLocked] = useState(true)
+  const lockedAspectRatioRef = useRef((initialWidth || 1024) / (initialHeight || 1024))
 
   useCloseOnEscape(!busy, onClose)
 
@@ -121,6 +124,29 @@ export default function BatchImageResizeDialog({
     setSelectedIds((current) => current.includes(imageId)
       ? current.filter((id) => id !== imageId)
       : [...current, imageId])
+  }
+
+  const handleWidthChange = (nextWidth: string) => {
+    setWidth(nextWidth)
+    if (!ratioLocked) return
+    const companion = getLockedResizeCompanionDimension('width', Number(nextWidth), lockedAspectRatioRef.current)
+    if (companion > 0) setHeight(String(companion))
+  }
+
+  const handleHeightChange = (nextHeight: string) => {
+    setHeight(nextHeight)
+    if (!ratioLocked) return
+    const companion = getLockedResizeCompanionDimension('height', Number(nextHeight), lockedAspectRatioRef.current)
+    if (companion > 0) setWidth(String(companion))
+  }
+
+  const toggleRatioLock = () => {
+    if (!ratioLocked) {
+      const currentWidth = normalizeDimension(width)
+      const currentHeight = normalizeDimension(height)
+      if (currentWidth > 0 && currentHeight > 0) lockedAspectRatioRef.current = currentWidth / currentHeight
+    }
+    setRatioLocked((current) => !current)
   }
 
   const handleClose = () => {
@@ -195,12 +221,28 @@ export default function BatchImageResizeDialog({
             <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
               <label className="min-w-0">
                 <span className="mb-1.5 block text-xs font-medium text-gray-600 dark:text-gray-300">目标宽度</span>
-                <input type="number" min={1} max={MAX_IMAGE_RESIZE_EDGE} step={1} value={width} disabled={busy} onChange={(event) => setWidth(event.target.value)} className="h-10 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm text-gray-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-500/10 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-100" />
+                <input type="number" min={1} max={MAX_IMAGE_RESIZE_EDGE} step={1} value={width} disabled={busy} onChange={(event) => handleWidthChange(event.target.value)} className="h-10 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm text-gray-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-500/10 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-100" />
               </label>
-              <span className="pb-2.5 text-xs text-gray-400">×</span>
+              <button
+                type="button"
+                disabled={busy}
+                aria-label={ratioLocked ? '解除宽高比例锁定' : '锁定当前宽高比例'}
+                aria-pressed={ratioLocked}
+                title={ratioLocked ? '已锁定比例，点击解除' : '比例未锁定，点击锁定当前比例'}
+                onClick={toggleRatioLock}
+                className={`flex h-10 w-10 items-center justify-center rounded-xl border transition ${ratioLocked
+                  ? 'border-blue-400 bg-blue-50 text-blue-600 shadow-sm dark:border-blue-400/50 dark:bg-blue-500/10 dark:text-blue-300'
+                  : 'border-gray-200 bg-white text-gray-400 hover:border-gray-300 hover:text-gray-600 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-500 dark:hover:text-gray-300'}`}
+              >
+                {ratioLocked ? (
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2" strokeWidth="2" /><path strokeLinecap="round" strokeWidth="2" d="M8 10V7a4 4 0 018 0v3" /></svg>
+                ) : (
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2" strokeWidth="2" /><path strokeLinecap="round" strokeWidth="2" d="M8 10V7a4 4 0 017.5-2" /></svg>
+                )}
+              </button>
               <label className="min-w-0">
                 <span className="mb-1.5 block text-xs font-medium text-gray-600 dark:text-gray-300">目标高度</span>
-                <input type="number" min={1} max={MAX_IMAGE_RESIZE_EDGE} step={1} value={height} disabled={busy} onChange={(event) => setHeight(event.target.value)} className="h-10 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm text-gray-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-500/10 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-100" />
+                <input type="number" min={1} max={MAX_IMAGE_RESIZE_EDGE} step={1} value={height} disabled={busy} onChange={(event) => handleHeightChange(event.target.value)} className="h-10 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm text-gray-800 outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-500/10 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-100" />
               </label>
             </div>
 

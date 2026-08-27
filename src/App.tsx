@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { initStore } from './store'
 import { useStore } from './store'
 import { getAppPageFromLocation } from './lib/appNavigation'
@@ -24,6 +24,8 @@ export default function App() {
   const setSettings = useStore((s) => s.setSettings)
   const appPage = useStore((s) => s.appPage)
   const setAppPage = useStore((s) => s.setAppPage)
+  const visitedPagesRef = useRef(new Set([appPage]))
+  visitedPagesRef.current.add(appPage)
   useDockerApiUrlMigrationNotice()
   useGlobalClickSuppression()
 
@@ -67,22 +69,28 @@ export default function App() {
   return (
     <>
       <Header />
-      {appPage === 'editor' ? (
-        <ImageEditorWorkspace />
-      ) : appPage === 'listing-copy' ? (
-        <ListingCopyWorkspace />
-      ) : (
-        <>
+      {visitedPagesRef.current.has('home') && (
+        <div hidden={appPage !== 'home'} aria-hidden={appPage !== 'home'}>
           <main data-home-main data-drag-select-surface className="home-main-with-dock pb-48 lg:pb-10">
             <div className="safe-area-x max-w-7xl mx-auto lg:!px-6">
               <AmazonPlanner />
-              <SearchBar />
-              <TaskGrid />
+              {appPage === 'home' && (
+                <>
+                  <SearchBar />
+                  <TaskGrid />
+                </>
+              )}
             </div>
           </main>
-          <InputBar />
-        </>
+          {appPage === 'home' && <InputBar />}
+        </div>
       )}
+      {visitedPagesRef.current.has('listing-copy') && (
+        <div hidden={appPage !== 'listing-copy'} aria-hidden={appPage !== 'listing-copy'}>
+          <ListingCopyWorkspace />
+        </div>
+      )}
+      {appPage === 'editor' && <ImageEditorWorkspace />}
       <DetailModal />
       <Lightbox />
       <SettingsModal />

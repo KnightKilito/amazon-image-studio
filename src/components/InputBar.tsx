@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState, useMemo, useLayoutEffect, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore, submitTask, submitImageEditorTask, submitAgentMessage, stopAgentResponse, addImageFromFile, createInputImageFromFile, deleteImageIfUnreferenced, updateTaskInStore, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds, clearImageEditorInputs } from '../store'
+import { useStore, submitTask, submitImageEditorTask, submitAgentMessage, stopAgentResponse, addImageFromFile, createInputImageFromFile, deleteImageIfUnreferenced, getCachedImage, ensureImageCached, getActiveAgentRounds, clearImageEditorInputs } from '../store'
 import { DEFAULT_PARAMS } from '../types'
 import { getActiveApiProfile, normalizeSettings } from '../lib/apiProfiles'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
@@ -12,13 +12,12 @@ import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { getSafeBoundingClientRect } from '../lib/domRect'
 import { hasInputImageDragPassedThreshold, resolveInputImageDragSourceIndex, resolveInputImageDropIndex, type InputImageDropRect } from '../lib/inputImageDrag'
 import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
-import { getFilteredTaskHistory } from '../lib/taskHistory'
 import { useHintTooltip } from '../hooks/useHintTooltip'
-import { downloadImageIds, formatExportFileTime } from '../lib/downloadImages'
 import Select from './Select'
 import SizePickerModal from './SizePickerModal'
 import ViewportTooltip from './ViewportTooltip'
 import { CloseIcon, ImportIcon } from './icons'
+import TaskSelectionToolbar from './TaskSelectionToolbar'
 
 function getMentionTagTextLength(el: Element) {
   return el.textContent?.length ?? 0
@@ -400,6 +399,7 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
   const styleReferenceImage = useStore((s) => s.styleReferenceImage)
   const setStyleReferenceImage = useStore((s) => s.setStyleReferenceImage)
   const clearStyleReferenceImage = useStore((s) => s.clearStyleReferenceImage)
+  const tasks = useStore((s) => s.tasks)
   const adminAccess = useStore((s) => s.adminAccess)
   const addInputImage = useStore((s) => s.addInputImage)
   const replaceInputImage = useStore((s) => s.replaceInputImage)
@@ -414,100 +414,8 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const showToast = useStore((s) => s.showToast)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
-  const selectedTaskIds = useStore((s) => s.selectedTaskIds)
-  const setSelectedTaskIds = useStore((s) => s.setSelectedTaskIds)
-  const clearSelection = useStore((s) => s.clearSelection)
-  const tasks = useStore((s) => s.tasks)
   const agentConversations = useStore((s) => s.agentConversations)
   const activeAgentConversationId = useStore((s) => s.activeAgentConversationId)
-  const filterStatus = useStore((s) => s.filterStatus)
-  const filterFavorite = useStore((s) => s.filterFavorite)
-  const searchQuery = useStore((s) => s.searchQuery)
-  const filterProductTitle = useStore((s) => s.filterProductTitle)
-  const filterWorkflow = useStore((s) => s.filterWorkflow)
-  const filterAspect = useStore((s) => s.filterAspect)
-  const historyPage = useStore((s) => s.historyPage)
-  const historyPageSize = useStore((s) => s.historyPageSize)
-
-  const filteredTasks = useMemo(() => {
-    return getFilteredTaskHistory(tasks, {
-      searchQuery,
-      filterStatus,
-      filterFavorite,
-      filterProductTitle,
-      filterWorkflow,
-      filterAspect,
-    })
-  }, [tasks, searchQuery, filterStatus, filterFavorite, filterProductTitle, filterWorkflow, filterAspect])
-  const visibleTasks = useMemo(() => {
-    const start = (historyPage - 1) * historyPageSize
-    return filteredTasks.slice(start, start + historyPageSize)
-  }, [filteredTasks, historyPage, historyPageSize])
-  const visibleTaskIds = useMemo(() => visibleTasks.map((task) => task.id), [visibleTasks])
-  const areAllVisibleTasksSelected = visibleTaskIds.length > 0 && visibleTaskIds.every((id) => selectedTaskIds.includes(id))
-
-  const handleSelectAllToggle = useCallback(() => {
-    const visibleTaskIdSet = new Set(visibleTaskIds)
-    setSelectedTaskIds((current) => areAllVisibleTasksSelected
-      ? current.filter((id) => !visibleTaskIdSet.has(id))
-      : Array.from(new Set([...current, ...visibleTaskIds])))
-  }, [areAllVisibleTasksSelected, setSelectedTaskIds, visibleTaskIds])
-
-  const handleToggleFavorite = useCallback(() => {
-    const selectedTasks = tasks.filter((t) => selectedTaskIds.includes(t.id))
-    const allFavorite = selectedTasks.length > 0 && selectedTasks.every((t) => t.isFavorite)
-    const newFavoriteState = !allFavorite
-    setConfirmDialog({
-      title: newFavoriteState ? '批量收藏' : '批量取消收藏',
-      message: newFavoriteState
-        ? `确定要收藏选中的 ${selectedTaskIds.length} 条记录吗？`
-        : `确定要取消收藏选中的 ${selectedTaskIds.length} 条记录吗？`,
-      confirmText: newFavoriteState ? '确认收藏' : '确认取消',
-      action: () => {
-        selectedTaskIds.forEach((id) => {
-          updateTaskInStore(id, { isFavorite: newFavoriteState })
-        })
-        clearSelection()
-      },
-    })
-  }, [tasks, selectedTaskIds, clearSelection, setConfirmDialog])
-
-  const handleDeleteSelected = useCallback(() => {
-    setConfirmDialog({
-      title: '批量删除',
-      message: `确定要删除选中的 ${selectedTaskIds.length} 条记录吗？`,
-      action: () => {
-        removeMultipleTasks(selectedTaskIds)
-      },
-    })
-  }, [selectedTaskIds, setConfirmDialog])
-
-  const handleDownloadSelected = useCallback(async () => {
-    const selectedTasks = tasks.filter((t) => selectedTaskIds.includes(t.id))
-    const imageIds = selectedTasks.flatMap(t => t.outputImages || [])
-    if (imageIds.length === 0) {
-      showToast('选中的记录没有图片', 'info')
-      return
-    }
-
-    try {
-      const timeStr = formatExportFileTime(new Date())
-      const { successCount, failCount } = await downloadImageIds(imageIds, `batch-${timeStr}`)
-
-      if (successCount === 0) {
-        showToast('下载失败', 'error')
-      } else if (failCount > 0) {
-        showToast(`部分下载失败：成功 ${successCount}，失败 ${failCount}`, 'error')
-      } else {
-        showToast(successCount > 1 ? `下载成功：${successCount} 张图片` : '下载成功', 'success')
-      }
-    } catch (err) {
-      console.error(err)
-      showToast('下载失败', 'error')
-    }
-    clearSelection()
-  }, [tasks, selectedTaskIds, showToast, clearSelection])
-
   const maskDraft = useStore((s) => s.maskDraft)
   const clearMaskDraft = useStore((s) => s.clearMaskDraft)
   const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
@@ -2232,74 +2140,7 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
       <div data-input-bar className={isEditorLayout
         ? 'pointer-events-auto h-full min-h-0 w-full'
         : 'home-input-dock pointer-events-none fixed bottom-4 left-1/2 z-30 w-full max-w-4xl -translate-x-1/2 px-3 transition-all duration-300 sm:bottom-6 sm:px-4 lg:bottom-6 lg:left-auto lg:top-20 lg:flex lg:max-w-none lg:translate-x-0 lg:flex-col lg:px-0'}>
-        {!isEditorLayout && selectedTaskIds.length > 0 && (
-          <div className="mb-3 flex justify-center lg:justify-end">
-            <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-lg rounded-full flex items-center p-1 border border-gray-200/50 dark:border-white/10 pointer-events-auto">
-              <button
-                onClick={clearSelection}
-                className="p-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
-                title="取消选择"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-              <div className="w-px h-5 bg-gray-200 dark:bg-white/20 mx-1"></div>
-              <button
-                onClick={handleSelectAllToggle}
-                className="p-2 text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
-                title={areAllVisibleTasksSelected ? "取消选择当前页" : "全选当前页"}
-              >
-                {areAllVisibleTasksSelected ? (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                    <path d="M9 12l2 2 4-4" />
-                  </svg>
-                ) : (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-                    <path strokeDasharray="4 4" d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z" />
-                  </svg>
-                )}
-              </button>
-              <div className="w-px h-5 bg-gray-200 dark:bg-white/20 mx-1"></div>
-              <button
-                onClick={handleToggleFavorite}
-                className="p-2 text-yellow-500 dark:text-yellow-400 hover:text-yellow-600 dark:hover:text-yellow-300 transition-colors"
-                title="收藏/取消收藏"
-              >
-                {selectedTaskIds.length > 0 && selectedTaskIds.every((id) => tasks.find((t) => t.id === id)?.isFavorite) ? (
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-                  </svg>
-                ) : (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-                  </svg>
-                )}
-              </button>
-              <div className="w-px h-5 bg-gray-200 dark:bg-white/20 mx-1"></div>
-              <button
-                onClick={handleDownloadSelected}
-                className="p-2 text-green-500 dark:text-green-400 hover:text-green-600 dark:hover:text-green-300 transition-colors"
-                title="批量下载"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-              </button>
-              <div className="w-px h-5 bg-gray-200 dark:bg-white/20 mx-1"></div>
-              <button
-                onClick={handleDeleteSelected}
-                className="p-2 text-red-500 dark:text-red-400 hover:text-red-600 dark:hover:text-red-300 transition-colors"
-                title="删除选中"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        )}
+        {!isEditorLayout && <TaskSelectionToolbar />}
         <div ref={cardRef} className="pointer-events-auto bg-white/70 dark:bg-gray-900/70 backdrop-blur-2xl border border-white/50 dark:border-white/[0.08] shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.3)] rounded-2xl sm:rounded-3xl p-3 sm:p-4 ring-1 ring-black/5 dark:ring-white/10 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col lg:overflow-hidden">
           {/* 移动端拖动条 */}
           <div

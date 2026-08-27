@@ -1,0 +1,29 @@
+# Findings
+
+- 编辑页底部已经复用 `TaskGrid`，卡片点击/框选会写入全局 `selectedTaskIds`；真正缺失的是 `InputBar` 把批量工具栏限制为 `!isEditorLayout`，因此编辑页能选中却看不到批量操作。
+- 首页批量操作全部集中在 `InputBar`：取消选择、全选当前页、收藏/取消收藏、下载和删除。最小复用方案是允许 editor layout 渲染同一批量工具栏，而不是新建组件。
+- 左栏当前把 `inputImages`、风格参考和 `activeTask.outputImages` 放在同一个滚动容器中，只以缩略图标签区分，没有分组标题、清空或单项删除。
+- 素材删除已有 store `removeInputImage(idx)` 与 `deleteImageIfUnreferenced`；结果图属于任务输出，不能直接删 IndexedDB，需要确认是否已有“编辑任务输出”action 可复用。
+- `clearImageEditorInputs()` 会同时清空输入、活动结果任务、主图、标注、遮罩和风格图，不适合直接作为“仅清空素材”或“仅清空结果”。
+- `App.tsx` 当前使用三路条件渲染：切换 Tab 会直接卸载 `AmazonPlanner`、`ListingCopyWorkspace` 或 `ImageEditorWorkspace`。AmazonPlanner 的 Listing 原文和商品字段、ListingCopyWorkspace 的输入均有大量本地 `useState`，因此卸载就是草稿丢失的直接原因。
+- 最低复杂度且覆盖所有文本框的方案是“访问后保持挂载”：每页首次打开时挂载，后续仅用 `hidden` 隐藏，不再卸载。这样无需把 AmazonPlanner/ListingCopy 数十个局部状态整体迁入 Zustand，也能保留正在执行的页面状态。
+- 首页与编辑页的 `InputBar` 都读取全局 `prompt`；保持两个页面挂载只保证值不被卸载，但不会自动获得独立提示词。需继续确认现有页面切换是否会清 prompt，以及用户需求是否要求每页独立草稿；优先通过小型页面 prompt 草稿交换而不是重构所有输入状态。
+- Header 已有首页、Listing 文案、图片编辑三个 `AppPage` Tab，导航本身无需改动。
+- Listing 文案页其实已有 600ms 防抖写入 IndexedDB 草稿，并在挂载时恢复；但 Tab 切换会先卸载且清理 effect 会中止运行任务，短时间内刚输入后立刻切页仍可能来不及落库。保持挂载可以同时解决即时草稿和运行状态问题。
+- 素材删除可组合 `removeInputImage`/`clearInputImages`、`clearStyleReferenceImage`、画布 draft 重置与 `deleteImageIfUnreferenced`；若删除带标注的当前主图，需要沿用现有确认交互。
+- 结果图是活动任务的 `outputImages`，直接改任务会影响首页历史且要同步逐图参数/URL/清理引用。左栏“删除/清空”更安全的语义应是从当前编辑会话的结果列表移除，历史任务继续保留；可用编辑页本地 dismissed ID 集合实现，并在活动任务切换时重置。
+- 全局图片引用检查已经覆盖 input、画布主图、任务、gallery 草稿、策划/文案历史等引用；素材状态更新后调用 `deleteImageIfUnreferenced` 是安全清理路径。
+- 首页多选工具栏位于 `InputBar` 顶部且采用 dock 定位；直接取消 `!isEditorLayout` 会把工具栏塞进右侧 380px 编辑栏，不符合“下面的图片结果”语义。应抽成共享 `TaskSelectionToolbar`，首页 dock 与编辑页历史标题区分别渲染同一组件。
+- `TaskGrid` 已支持 Ctrl/Cmd 点击、长按/滑动选择和拖框多选，编辑页无需改卡片选择机制。
+- 让整个首页和编辑页同时保持挂载会产生两个 `TaskGrid` 的 document 级框选监听，以及两个 InputBar 的全局拖拽/selection 监听；更稳妥的最小方案是只保持 `AmazonPlanner` 与 `ListingCopyWorkspace` 这两个局部草稿密集组件挂载，历史网格和 InputBar仍按当前页挂载。
+- 首页/编辑 InputBar 共享全局 `prompt`，若要保证两页草稿互不覆盖，需要在 store 增加 home/editor 两个 prompt draft，并让 `setPrompt` 同步当前页、`setAppPage` 恢复目标页；同时审计 `openImageEditor` 等跨页动作的调用顺序。
+- Store 当前只持久化一个 gallery prompt；新增 `{ home, editor }` 两份页面 prompt draft 可以保持现有 API：`setPrompt` 同步当前 prompt 页，`setAppPage` 保存离开页并恢复目标页。启用“重启后保留输入”时一并持久化两份草稿即可。
+- `openImageEditor` 当前在仍处于首页时直接把全局 prompt 清空，然后才切 editor；接入页面草稿后必须先切换并保存首页草稿，再清空 editor 草稿，否则会误清首页。
+- AmazonPlanner 包含 Listing 原文、商品字段、规划结果和运行态等大量本地状态，保持该组件挂载明显比迁移状态更安全；ListingCopy 已有 IDB 草稿但保持挂载还能避免切页时中止生成。
+- 共享多选工具栏在移动端约占 260px；编辑页历史标题栏已改为移动端上下排列、`sm` 起横向排列，避免与标题并排溢出。
+- 聚焦测试确认页面 prompt 草稿独立交换、从首页打开图片不会清首页草稿、持久化开关边界，以及共享工具栏完整操作集合。
+- 最终复核发现结果单张移除最初使用组件本地 dismissed 集合，而编辑页仍按页卸载，切换 Tab 后被移除结果会重新出现。已把该集合提升为轻量 store 临时状态，并在活动任务真正变化时自动重置。
+- 编辑页“不能多选”的原因是只复用了批量操作工具栏，TaskGrid 卡片仍要求 Ctrl/Cmd、横滑或拖框才能产生第一次选择。新增显式多选模式后，普通点击即可产生首次及后续选择；非多选状态下首页和编辑页仍保持点击打开详情。
+- 第二次反馈定位到框选 surface 仍依赖页面祖先/网格自身范围；已改为由编辑页把整个“图片历史”section ref 显式传给 TaskGrid，标题周围、网格间隙和下方留白都属于同一框选起始面。
+- 后续确认把 TaskGrid 默认 fallback 改为自身节点同时缩小了首页原有框选范围，属于回归。最终恢复为优先使用最近的 `data-drag-select-surface` 祖先；编辑页显式传整个 main 作为 surface，并把上方画布/工具网格标记为 `data-no-drag-select` 防止交互冲突。
+- 首页范围仍小的最终原因是 TaskGrid 根节点残留了同名 `data-drag-select-surface`，导致 `closest()` 仍优先命中网格自身。已移除该残留标记；首页现在唯一命中外层 `main`，编辑页继续使用显式 main ref。

@@ -4,6 +4,7 @@ import {
   formatImageFileSize,
   getDataUrlByteSize,
   getImageResizePlan,
+  getLockedResizeCompanionDimension,
 } from './imageResizing'
 
 describe('image resizing', () => {
@@ -50,5 +51,11 @@ describe('image resizing', () => {
     expect(formatImageFileSize(900)).toBe('900 B')
     expect(formatImageFileSize(1536)).toBe('1.5 KB')
     expect(formatImageFileSize(2.5 * 1024 * 1024)).toBe('2.5 MB')
+  })
+
+  it('keeps the target box aspect ratio when width or height changes', () => {
+    expect(getLockedResizeCompanionDimension('width', 1600, 4 / 3)).toBe(1200)
+    expect(getLockedResizeCompanionDimension('height', 900, 16 / 9)).toBe(1600)
+    expect(getLockedResizeCompanionDimension('width', 0, 4 / 3)).toBe(0)
   })
 })

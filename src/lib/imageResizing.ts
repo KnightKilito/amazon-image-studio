@@ -25,6 +25,15 @@ export interface ImageResizePlan {
 export const MAX_IMAGE_RESIZE_EDGE = 16384
 export const MAX_IMAGE_RESIZE_PIXELS = 64_000_000
 
+export function getLockedResizeCompanionDimension(
+  changedDimension: 'width' | 'height',
+  value: number,
+  aspectRatio: number,
+) {
+  if (!Number.isFinite(value) || value <= 0 || !Number.isFinite(aspectRatio) || aspectRatio <= 0) return 0
+  return Math.max(1, Math.round(changedDimension === 'width' ? value / aspectRatio : value * aspectRatio))
+}
+
 function assertPositiveInteger(value: number, label: string) {
   if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
     throw new Error(`${label}必须是大于 0 的整数。`)

@@ -22,6 +22,7 @@ describe('BatchImageResizeDialog', () => {
     expect(markup).toContain('当前主图')
     expect(markup).toContain('结果 1')
     expect(markup).toContain('目标宽度')
+    expect(markup).toContain('解除宽高比例锁定')
     expect(markup).toContain('等比适应（不裁切）')
     expect(markup).toContain('输出格式')
     expect(markup).toContain('调整前显示编码文件大小预估')

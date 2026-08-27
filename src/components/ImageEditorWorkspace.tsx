@@ -4,6 +4,7 @@ import {
   createAPlusUpscaleTaskFromImage,
   createBatchImageResizeTask,
   createInputImageFromFile,
+  deleteImageIfUnreferenced,
   ensureImageCached,
   openImageEditor,
   prepareAPlusConversionFromImage,
@@ -22,15 +23,17 @@ import ImageSliceDialog from './ImageSliceDialog'
 import BatchImageResizeDialog, { type BatchResizeCandidate } from './BatchImageResizeDialog'
 import Select from './Select'
 import TaskGrid from './TaskGrid'
+import TaskSelectionToolbar from './TaskSelectionToolbar'
 
 type UpscaleMode = 'proportional' | 'custom'
 
-function EditorImageThumb({ imageId, dataUrl, label, active, onClick }: {
+function EditorImageThumb({ imageId, dataUrl, label, active, onClick, onRemove }: {
   imageId: string
   dataUrl?: string
   label: string
   active: boolean
   onClick: () => void
+  onRemove?: () => void
 }) {
   const [src, setSrc] = useState(dataUrl ?? '')
 
@@ -49,20 +52,36 @@ function EditorImageThumb({ imageId, dataUrl, label, active, onClick }: {
   }, [dataUrl, imageId])
 
   return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      aria-pressed={active}
-      onClick={onClick}
-      className={`group relative h-16 w-16 shrink-0 overflow-hidden rounded-xl border bg-gray-100 transition dark:bg-white/[0.04] ${active
-        ? 'border-blue-500 ring-2 ring-blue-500/20'
-        : 'border-gray-200 hover:border-blue-300 dark:border-white/[0.08] dark:hover:border-blue-400/60'
-        }`}
-    >
-      {src ? <img src={src} alt="" className="h-full w-full object-cover" draggable={false} /> : <span className="text-[10px] text-gray-400">读取中</span>}
-      <span className="absolute inset-x-0 bottom-0 truncate bg-black/55 px-1 py-0.5 text-[9px] text-white">{label}</span>
-    </button>
+    <div className="group relative h-16 w-16 shrink-0">
+      <button
+        type="button"
+        title={label}
+        aria-label={label}
+        aria-pressed={active}
+        onClick={onClick}
+        className={`relative h-full w-full overflow-hidden rounded-xl border bg-gray-100 transition dark:bg-white/[0.04] ${active
+          ? 'border-blue-500 ring-2 ring-blue-500/20'
+          : 'border-gray-200 hover:border-blue-300 dark:border-white/[0.08] dark:hover:border-blue-400/60'
+          }`}
+      >
+        {src ? <img src={src} alt="" className="h-full w-full object-cover" draggable={false} /> : <span className="text-[10px] text-gray-400">读取中</span>}
+        <span className="absolute inset-x-0 bottom-0 truncate bg-black/55 px-1 py-0.5 text-[9px] text-white">{label}</span>
+      </button>
+      {onRemove && (
+        <button
+          type="button"
+          title={`移除${label}`}
+          aria-label={`移除${label}`}
+          onClick={(event) => {
+            event.stopPropagation()
+            onRemove()
+          }}
+          className="absolute right-1 top-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-black/65 text-xs font-bold text-white opacity-100 shadow transition hover:bg-red-500 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
+        >
+          ×
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -96,21 +115,28 @@ export default function ImageEditorWorkspace() {
   const adminAccess = useStore((s) => s.adminAccess)
   const editorActiveImageId = useStore((s) => s.editorActiveImageId)
   const editorActiveTaskId = useStore((s) => s.editorActiveTaskId)
+  const hiddenResultImageIds = useStore((s) => s.editorHiddenResultImageIds)
   const editorCanvasDraft = useStore((s) => s.editorCanvasDraft)
   const setEditorActiveImageId = useStore((s) => s.setEditorActiveImageId)
   const setEditorActiveTaskId = useStore((s) => s.setEditorActiveTaskId)
+  const setHiddenResultImageIds = useStore((s) => s.setEditorHiddenResultImageIds)
   const setEditorCanvasDraft = useStore((s) => s.setEditorCanvasDraft)
   const resetEditorCanvasDraft = useStore((s) => s.resetEditorCanvasDraft)
   const addInputImage = useStore((s) => s.addInputImage)
+  const removeInputImage = useStore((s) => s.removeInputImage)
+  const clearInputImages = useStore((s) => s.clearInputImages)
   const setInputImages = useStore((s) => s.setInputImages)
+  const clearStyleReferenceImage = useStore((s) => s.clearStyleReferenceImage)
   const maskDraft = useStore((s) => s.maskDraft)
   const clearMaskDraft = useStore((s) => s.clearMaskDraft)
   const setMaskEditorImageId = useStore((s) => s.setMaskEditorImageId)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const showToast = useStore((s) => s.showToast)
+  const clearSelection = useStore((s) => s.clearSelection)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const historySelectionSurfaceRef = useRef<HTMLElement>(null)
   const lastAutoPreviewedResultSignatureRef = useRef<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [previewSrc, setPreviewSrc] = useState('')
@@ -124,12 +150,17 @@ export default function ImageEditorWorkspace() {
   const [upscaleMode, setUpscaleMode] = useState<UpscaleMode>('proportional')
   const [customUpscaleWidth, setCustomUpscaleWidth] = useState('')
   const [customUpscaleHeight, setCustomUpscaleHeight] = useState('')
+  const [historyMultiSelectMode, setHistoryMultiSelectMode] = useState(false)
 
   const activeTask = useMemo(
     () => tasks.find((task) => task.id === editorActiveTaskId) ?? null,
     [editorActiveTaskId, tasks],
   )
-  const outputImageIds = useMemo(() => activeTask?.outputImages ?? [], [activeTask])
+  const taskOutputImageIds = useMemo(() => activeTask?.outputImages ?? [], [activeTask])
+  const outputImageIds = useMemo(
+    () => taskOutputImageIds.filter((imageId) => !hiddenResultImageIds.includes(imageId)),
+    [hiddenResultImageIds, taskOutputImageIds],
+  )
   const batchResizeCandidates = useMemo(() => {
     const candidates = new Map<string, BatchResizeCandidate>()
     inputImages.forEach((image, index) => candidates.set(image.id, {
@@ -381,6 +412,84 @@ export default function ImageEditorWorkspace() {
     }
   }
 
+  const getMaterialFallbackImageId = (removedImageId?: string) => {
+    return inputImages.find((image) => image.id !== removedImageId)?.id
+      ?? (styleReferenceImage?.id !== removedImageId ? styleReferenceImage?.id : null)
+      ?? outputImageIds[0]
+      ?? null
+  }
+
+  const removeMaterialImage = (imageId: string, inputIndex?: number) => {
+    const applyRemoval = () => {
+      const removingMainSource = imageId === mainSourceImageId
+      const nextSourceImageId = removingMainSource
+        ? inputImages.find((image) => image.id !== imageId)?.id ?? null
+        : mainSourceImageId
+      if (inputIndex == null) clearStyleReferenceImage()
+      else removeInputImage(inputIndex)
+      if (removingMainSource) resetEditorCanvasDraft(nextSourceImageId)
+      if (editorActiveImageId === imageId || removingMainSource) {
+        setEditorActiveImageId(nextSourceImageId ?? getMaterialFallbackImageId(imageId))
+      }
+      void deleteImageIfUnreferenced(imageId)
+    }
+
+    if (imageId === mainSourceImageId && editorCanvasDraft.annotations.length > 0) {
+      setConfirmDialog({
+        title: '移除当前主图？',
+        message: '移除当前主图会同时清空这张图的画布标注和不匹配的遮罩。',
+        confirmText: '移除主图',
+        cancelText: '取消',
+        tone: 'warning',
+        action: applyRemoval,
+      })
+      return
+    }
+    applyRemoval()
+  }
+
+  const clearMaterials = () => {
+    if (!inputImages.length && !styleReferenceImage) return
+    const removedImageIds = [...inputImages.map((image) => image.id), ...(styleReferenceImage ? [styleReferenceImage.id] : [])]
+    const applyClear = () => {
+      clearInputImages()
+      clearStyleReferenceImage()
+      resetEditorCanvasDraft(null)
+      setEditorActiveImageId(outputImageIds[0] ?? null)
+      removedImageIds.forEach((imageId) => { void deleteImageIfUnreferenced(imageId) })
+    }
+    if (editorCanvasDraft.annotations.length > 0) {
+      setConfirmDialog({
+        title: '清空全部素材？',
+        message: '清空素材会同时清除当前主图、画布标注、遮罩和风格参考；历史结果不会被删除。',
+        confirmText: '清空素材',
+        cancelText: '取消',
+        tone: 'warning',
+        action: applyClear,
+      })
+      return
+    }
+    applyClear()
+  }
+
+  const dismissResultImage = (imageId: string) => {
+    setHiddenResultImageIds((current) => current.includes(imageId) ? current : [...current, imageId])
+    if (editorActiveImageId === imageId) {
+      const nextResult = outputImageIds.find((candidateId) => candidateId !== imageId)
+      setEditorActiveImageId(nextResult ?? mainSourceImageId ?? inputImages[0]?.id ?? styleReferenceImage?.id ?? null)
+    }
+  }
+
+  const clearResults = () => {
+    if (!taskOutputImageIds.length) return
+    setEditorActiveTaskId(null)
+    setHiddenResultImageIds([])
+    if (editorActiveImageId && taskOutputImageIds.includes(editorActiveImageId)) {
+      setEditorActiveImageId(mainSourceImageId ?? inputImages[0]?.id ?? styleReferenceImage?.id ?? null)
+    }
+    showToast('已清空当前结果列表，历史任务仍然保留', 'success')
+  }
+
   const handleBatchResize = async (imageIds: string[], options: ImageResizeOptions) => {
     if (batchResizeBusy) return
     setBatchResizeBusy(true)
@@ -419,7 +528,9 @@ export default function ImageEditorWorkspace() {
 
   return (
     <main
+      ref={historySelectionSurfaceRef}
       data-image-editor
+      data-drag-select-surface
       className="safe-area-x min-h-[calc(100vh-3.5rem)] bg-gray-50/70 py-3 dark:bg-gray-950/70 sm:py-4"
       onDragEnter={(event) => {
         event.preventDefault()
@@ -432,55 +543,69 @@ export default function ImageEditorWorkspace() {
       onDrop={handleDrop}
     >
       <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileChange} />
-      <div className="mx-auto grid min-h-[calc(100vh-5.5rem)] max-w-[1600px] gap-3 lg:grid-cols-[180px_minmax(0,1fr)_380px]">
-        <aside className="order-2 flex min-h-0 flex-col rounded-2xl border border-gray-200/80 bg-white/75 p-3 shadow-sm dark:border-white/[0.08] dark:bg-gray-900/60 lg:order-1">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <div>
-              <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">素材</h2>
-              <p className="mt-0.5 text-[11px] text-gray-400">输入图与结果</p>
+      <div data-no-drag-select className="mx-auto grid min-h-[calc(100vh-5.5rem)] max-w-[1600px] gap-3 lg:grid-cols-[180px_minmax(0,1fr)_380px]">
+        <aside className="order-2 flex min-h-0 flex-col gap-3 rounded-2xl border border-gray-200/80 bg-white/75 p-3 shadow-sm dark:border-white/[0.08] dark:bg-gray-900/60 lg:order-1">
+          <section className="min-h-0 lg:flex lg:flex-1 lg:flex-col">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">素材</h2>
+                <p className="mt-0.5 text-[10px] text-gray-400">主图、参考图与风格图</p>
+              </div>
+              <div className="flex items-center gap-1">
+                <button type="button" onClick={clearMaterials} disabled={!inputImages.length && !styleReferenceImage} className="rounded-lg px-2 py-1 text-[10px] font-medium text-gray-400 transition hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-red-500/10">清空</button>
+                <button type="button" onClick={() => fileInputRef.current?.click()} disabled={!canUpload} className="rounded-lg bg-blue-500 px-2 py-1 text-[11px] font-semibold text-white transition hover:bg-blue-600 disabled:opacity-40">上传</button>
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={!canUpload}
-              className="rounded-lg bg-blue-500 px-2 py-1 text-[11px] font-semibold text-white transition hover:bg-blue-600 disabled:opacity-40"
-            >
-              上传
-            </button>
-          </div>
-          <div className="flex min-h-0 gap-2 overflow-x-auto pb-1 lg:flex-1 lg:flex-col lg:overflow-y-auto lg:overflow-x-hidden">
-            {inputImages.map((image, index) => (
-              <EditorImageThumb
-                key={image.id}
-                imageId={image.id}
-                dataUrl={image.dataUrl}
-                label={image.id === mainSourceImageId ? '当前主图' : `参考素材 ${index + 1}`}
-                active={currentImageId === image.id}
-                onClick={() => setEditorActiveImageId(image.id)}
-              />
-            ))}
-            {styleReferenceImage && (
-              <EditorImageThumb
-                imageId={styleReferenceImage.id}
-                dataUrl={styleReferenceImage.dataUrl}
-                label="风格参考"
-                active={currentImageId === styleReferenceImage.id}
-                onClick={() => setEditorActiveImageId(styleReferenceImage.id)}
-              />
-            )}
-            {outputImageIds.map((imageId, index) => (
-              <EditorImageThumb
-                key={imageId}
-                imageId={imageId}
-                label={`结果 ${index + 1}`}
-                active={currentImageId === imageId}
-                onClick={() => setEditorActiveImageId(imageId)}
-              />
-            ))}
-            {!inputImages.length && !styleReferenceImage && !outputImageIds.length && (
-              <p className="py-4 text-center text-xs text-gray-400 lg:px-2">上传图片开始编辑</p>
-            )}
-          </div>
+            <div className="flex min-h-[4rem] gap-2 overflow-x-auto pb-1 lg:flex-1 lg:flex-col lg:overflow-y-auto lg:overflow-x-hidden">
+              {inputImages.map((image, index) => (
+                <EditorImageThumb
+                  key={image.id}
+                  imageId={image.id}
+                  dataUrl={image.dataUrl}
+                  label={image.id === mainSourceImageId ? '当前主图' : `参考素材 ${index + 1}`}
+                  active={currentImageId === image.id}
+                  onClick={() => setEditorActiveImageId(image.id)}
+                  onRemove={() => removeMaterialImage(image.id, index)}
+                />
+              ))}
+              {styleReferenceImage && (
+                <EditorImageThumb
+                  imageId={styleReferenceImage.id}
+                  dataUrl={styleReferenceImage.dataUrl}
+                  label="风格参考"
+                  active={currentImageId === styleReferenceImage.id}
+                  onClick={() => setEditorActiveImageId(styleReferenceImage.id)}
+                  onRemove={() => removeMaterialImage(styleReferenceImage.id)}
+                />
+              )}
+              {!inputImages.length && !styleReferenceImage && <p className="py-4 text-center text-[11px] text-gray-400 lg:px-2">暂无素材</p>}
+            </div>
+          </section>
+
+          <div className="border-t border-gray-200/80 dark:border-white/[0.08]" />
+
+          <section className="min-h-0 lg:flex lg:flex-1 lg:flex-col">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">结果</h2>
+                <p className="mt-0.5 text-[10px] text-gray-400">当前任务输出 · 历史仍保留</p>
+              </div>
+              <button type="button" onClick={clearResults} disabled={!outputImageIds.length} className="rounded-lg px-2 py-1 text-[10px] font-medium text-gray-400 transition hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-35 dark:hover:bg-red-500/10">清空</button>
+            </div>
+            <div className="flex min-h-[4rem] gap-2 overflow-x-auto pb-1 lg:flex-1 lg:flex-col lg:overflow-y-auto lg:overflow-x-hidden">
+              {outputImageIds.map((imageId, index) => (
+                <EditorImageThumb
+                  key={imageId}
+                  imageId={imageId}
+                  label={`结果 ${index + 1}`}
+                  active={currentImageId === imageId}
+                  onClick={() => setEditorActiveImageId(imageId)}
+                  onRemove={() => dismissResultImage(imageId)}
+                />
+              ))}
+              {!outputImageIds.length && <p className="py-4 text-center text-[11px] text-gray-400 lg:px-2">暂无结果</p>}
+            </div>
+          </section>
         </aside>
 
         <section className="relative order-1 flex min-h-[42vh] min-w-0 items-center justify-center overflow-hidden rounded-2xl border border-gray-200/80 bg-[#eef1f5] shadow-sm dark:border-white/[0.08] dark:bg-gray-900/70 lg:order-2 lg:min-h-0">
@@ -657,14 +782,35 @@ export default function ImageEditorWorkspace() {
         </aside>
       </div>
 
-      <section className="mx-auto mt-6 max-w-[1600px] px-3 sm:px-4 lg:px-0" data-drag-select-surface>
-        <div className="mb-3 flex items-end justify-between gap-3 px-1">
+      <section className="mx-auto mt-6 max-w-[1600px] px-3 sm:px-4 lg:px-0">
+        <div className="mb-3 flex flex-col items-stretch justify-between gap-3 px-1 sm:flex-row sm:items-end">
           <div>
             <h2 className="text-base font-semibold text-gray-800 dark:text-gray-100">图片历史</h2>
             <p className="mt-1 text-xs text-gray-400">复用首页历史结果，也可以将一条任务的全部输出图片加入当前素材。</p>
           </div>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              aria-pressed={historyMultiSelectMode}
+              onClick={() => {
+                if (historyMultiSelectMode) clearSelection()
+                setHistoryMultiSelectMode((current) => !current)
+              }}
+              className={`h-9 rounded-xl border px-3 text-xs font-semibold transition ${historyMultiSelectMode
+                ? 'border-blue-500 bg-blue-500 text-white shadow-sm'
+                : 'border-gray-200 bg-white/80 text-gray-600 hover:border-blue-300 hover:text-blue-600 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-300'}`}
+            >
+              {historyMultiSelectMode ? '退出多选' : '多选'}
+            </button>
+            <TaskSelectionToolbar variant="inline" />
+          </div>
         </div>
-        <TaskGrid showUseAsMaterialButton />
+        <TaskGrid
+          showUseAsMaterialButton
+          multiSelectMode={historyMultiSelectMode}
+          disableTaskDrag
+          selectionSurfaceRef={historySelectionSurfaceRef}
+        />
       </section>
 
       {showSliceDialog && previewSrc && (

@@ -17,6 +17,8 @@ interface Props {
   onDelete: () => void
   onClick: (e: React.MouseEvent | React.TouchEvent) => void
   isSelected?: boolean
+  selectionMode?: boolean
+  disableDrag?: boolean
   disableSwipe?: boolean
 }
 
@@ -88,6 +90,8 @@ export default function TaskCard({
   onDelete,
   onClick,
   isSelected,
+  selectionMode,
+  disableDrag,
   disableSwipe,
 }: Props) {
   const [thumbSrc, setThumbSrc] = useState<string>('')
@@ -401,7 +405,7 @@ export default function TaskCard({
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchCancel}
-        draggable={task.status === 'done' && task.outputImages?.length > 0}
+        draggable={!disableDrag && !selectionMode && task.status === 'done' && task.outputImages?.length > 0}
         onDragStart={(e) => {
           if (task.status !== 'done' || !task.outputImages?.length) return;
           const imageIds = task.outputImages;
@@ -422,11 +426,13 @@ export default function TaskCard({
         }}
       >
         {/* 选中时的角标 */}
-      {isSelected && (
-        <div className="absolute top-2 right-2 z-10 w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center shadow-sm">
-          <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-          </svg>
+      {selectionMode && (
+        <div className={`absolute right-2 top-2 z-10 flex h-5 w-5 items-center justify-center rounded-full border shadow-sm ${isSelected ? 'border-blue-500 bg-blue-500' : 'border-gray-300 bg-white/90 dark:border-white/30 dark:bg-gray-800/90'}`}>
+          {isSelected && (
+            <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+            </svg>
+          )}
         </div>
       )}
       <div className={useWidePreviewLayout ? 'flex flex-col' : 'flex h-40'}>

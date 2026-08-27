@@ -1,14 +1,18 @@
-import { useMemo, useRef, useState, useEffect } from 'react'
+import { useMemo, useRef, useState, useEffect, type RefObject } from 'react'
 import { addTaskOutputsToInputImages, useStore, reuseConfig, openImageEditor, removeTask } from '../store'
 import { getFilteredTaskHistory, HISTORY_PAGE_SIZE_OPTIONS } from '../lib/taskHistory'
+import { shouldToggleTaskSelection } from '../lib/taskSelection'
 import TaskCard from './TaskCard'
 import Pagination from './Pagination'
 
 interface TaskGridProps {
   showUseAsMaterialButton?: boolean
+  multiSelectMode?: boolean
+  disableTaskDrag?: boolean
+  selectionSurfaceRef?: RefObject<HTMLElement | null>
 }
 
-export default function TaskGrid({ showUseAsMaterialButton = false }: TaskGridProps) {
+export default function TaskGrid({ showUseAsMaterialButton = false, multiSelectMode = false, disableTaskDrag = false, selectionSurfaceRef }: TaskGridProps) {
   const tasks = useStore((s) => s.tasks)
   const searchQuery = useStore((s) => s.searchQuery)
   const filterStatus = useStore((s) => s.filterStatus)
@@ -218,7 +222,10 @@ export default function TaskGrid({ showUseAsMaterialButton = false }: TaskGridPr
       if (e.button !== 0) return
       const target = getEventElement(e)
       if (!target) return
-      if (!target.closest('[data-drag-select-surface]')) return
+      const selectionSurface = selectionSurfaceRef?.current
+        ?? rootRef.current?.closest('[data-drag-select-surface]')
+        ?? rootRef.current
+      if (!selectionSurface?.contains(target)) return
       if (target.closest('[data-input-bar]')) return
       if (target.closest('[data-no-drag-select], [data-lightbox-root]')) return
       if (target.closest('button, a, input, textarea, select')) return
@@ -306,7 +313,7 @@ export default function TaskGrid({ showUseAsMaterialButton = false }: TaskGridPr
       document.removeEventListener('wheel', handleDocumentWheel, true)
       window.removeEventListener('scroll', handleDocumentScroll, true)
     }
-  }, [clearSelection, isMac])
+  }, [clearSelection, isMac, selectionSurfaceRef])
 
   if (!filteredTasks.length) {
     return (
@@ -353,7 +360,7 @@ export default function TaskGrid({ showUseAsMaterialButton = false }: TaskGridPr
                 }
                 suppressClickUntil.current = 0
                 const isCtrl = isMac ? e.metaKey : e.ctrlKey
-                if (isCtrl) {
+                if (shouldToggleTaskSelection(multiSelectMode, selectedTaskIds.length, isCtrl)) {
                   useStore.getState().toggleTaskSelection(task.id)
                   return
                 }
@@ -368,6 +375,8 @@ export default function TaskGrid({ showUseAsMaterialButton = false }: TaskGridPr
               onUseAsMaterials={showUseAsMaterialButton ? () => void handleUseAsMaterials(task) : undefined}
               onDelete={() => handleDelete(task)}
               isSelected={selectedTaskIds.includes(task.id)}
+              selectionMode={multiSelectMode || selectedTaskIds.length > 0}
+              disableDrag={disableTaskDrag}
             />
           </div>
         ))}

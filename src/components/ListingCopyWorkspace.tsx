@@ -39,11 +39,12 @@ import {
   putListingCopySession,
 } from '../lib/db'
 import { copyRichTextToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
-import { applyGuestUnifiedApiUrl, createInputImageFromFile, ensureImageCached, useStore } from '../store'
+import { applyGuestUnifiedApiUrl, createInputImageFromFile, deleteImageIfUnreferenced, ensureImageCached, useStore } from '../store'
 import Select, { COMPACT_SELECT_CLASS } from './Select'
 import PlannerRunDetailsModal, { type PlannerRunStatus } from './PlannerRunDetailsModal'
-import { BookOpenIcon, CloseIcon, CopyIcon, EditIcon, EyeIcon, HistoryIcon, PhotoIcon, RefreshIcon, SettingsIcon, TrashIcon } from './icons'
+import { BookOpenIcon, CloseIcon, CopyIcon, EditIcon, EyeIcon, HistoryIcon, LinkIcon, PhotoIcon, RefreshIcon, SettingsIcon, TrashIcon } from './icons'
 import type { PlannerAttemptInfo } from '../lib/listingPlannerApi'
+import { replaceInputImagesWithReferenceImages } from '../lib/referenceImageSync'
 
 const DRAFT_ID = 'listing-copy-current-draft'
 const FIELD_CLASS = 'w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 pr-10 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-100 dark:placeholder:text-gray-500'
@@ -274,6 +275,9 @@ export default function ListingCopyWorkspace() {
   const isAdminAuthenticated = useStore((state) => state.isAdminAuthenticated)
   const setShowSettings = useStore((state) => state.setShowSettings)
   const showToast = useStore((state) => state.showToast)
+  const homeInputImages = useStore((state) => state.inputImages)
+  const homeStyleReferenceImage = useStore((state) => state.styleReferenceImage)
+  const setHomeInputImages = useStore((state) => state.setInputImages)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
   const dragCounterRef = useRef(0)
@@ -334,6 +338,32 @@ export default function ListingCopyWorkspace() {
     dragCounterRef.current = 0
     if (fileInputRef.current) fileInputRef.current.value = ''
     showToast('已上传的参考图已清空', 'success')
+  }
+
+  const syncReferenceImagesToHome = () => {
+    const uploadLimit = Math.max(1, Math.min(64, adminAccess.referenceImageUploadLimit))
+    const styleReferenceCount = homeStyleReferenceImage ? 1 : 0
+    const result = replaceInputImagesWithReferenceImages(
+      referenceImages,
+      Math.max(0, uploadLimit - styleReferenceCount),
+    )
+    if (!result.images.length) {
+      showToast(`首页参考图容量不足（上限 ${uploadLimit} 张，当前风格参考图占用 ${styleReferenceCount} 张）`, 'error')
+      return
+    }
+
+    const nextIds = new Set(result.images.map((image) => image.id))
+    setHomeInputImages(result.images)
+    for (const image of homeInputImages) {
+      if (!nextIds.has(image.id)) void deleteImageIfUnreferenced(image.id)
+    }
+
+    const details = [
+      `已用 ${result.images.length} 张 Listing 参考图替换首页参考图`,
+      result.duplicateCount > 0 ? `${result.duplicateCount} 张已存在` : '',
+      result.skippedCount > 0 ? `${result.skippedCount} 张超出首页上限` : '',
+    ].filter(Boolean)
+    showToast(details.join('，'), 'success')
   }
 
   useEffect(() => {
@@ -608,13 +638,13 @@ export default function ListingCopyWorkspace() {
           <section className={`${CARD_CLASS} p-4 sm:p-5`}>
             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div><h3 className="font-bold text-gray-900 dark:text-white">产品资料与成本</h3><p className="mt-1 text-xs text-gray-400">只填写能够确认的事实，未提供的信息不会让 AI 猜测。</p></div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex w-full flex-col items-stretch gap-2 sm:w-36">
+                <Select value={input.preset} onChange={(value) => updateInput('preset', value === 'general' ? 'general' : 'footwear')} options={[{ value: 'footwear', label: '鞋靴预设' }, { value: 'general', label: '通用商品' }]} ariaLabel="商品预设" className="w-full" />
                 {hasProductCopy && (
-                  <button type="button" onClick={clearProductCopy} className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 text-xs font-semibold text-red-600 transition hover:bg-red-50 dark:border-red-400/20 dark:bg-gray-950 dark:text-red-300 dark:hover:bg-red-400/10">
+                  <button type="button" onClick={clearProductCopy} className="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 text-xs font-semibold text-red-600 transition hover:bg-red-50 dark:border-red-400/20 dark:bg-gray-950 dark:text-red-300 dark:hover:bg-red-400/10">
                     <TrashIcon className="h-3.5 w-3.5" />清空文案
                   </button>
                 )}
-                <Select value={input.preset} onChange={(value) => updateInput('preset', value === 'general' ? 'general' : 'footwear')} options={[{ value: 'footwear', label: '鞋靴预设' }, { value: 'general', label: '通用商品' }]} ariaLabel="商品预设" className={`${COMPACT_SELECT_CLASS} w-28`} />
               </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -661,13 +691,24 @@ export default function ListingCopyWorkspace() {
             >
               <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div><h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">产品参考图</h4><p className="mt-1 text-[11px] text-gray-400">用于确认外观事实，最多 8 张；不会直接决定文案风格。</p></div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end">
                   {referenceImages.length > 0 && (
-                    <button type="button" onClick={clearReferenceImages} disabled={isUploading} className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-400/20 dark:bg-gray-950 dark:text-red-300 dark:hover:bg-red-400/10">
+                    <button type="button" onClick={clearReferenceImages} disabled={isUploading} className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-400/20 dark:bg-gray-950 dark:text-red-300 dark:hover:bg-red-400/10 sm:w-auto">
                       <TrashIcon className="h-3.5 w-3.5" />清空图片
                     </button>
                   )}
-                  <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"><PhotoIcon className="h-4 w-4" />{isUploading ? '上传中…' : '上传参考图'}</button>
+                  {referenceImages.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={syncReferenceImagesToHome}
+                      disabled={isUploading}
+                      title="用当前 Listing 文案页参考图替换首页参考图"
+                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200 dark:hover:bg-blue-400/15 sm:w-auto"
+                    >
+                      <LinkIcon className="h-3.5 w-3.5" />替换首页参考图
+                    </button>
+                  )}
+                  <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 sm:w-auto"><PhotoIcon className="h-4 w-4" />{isUploading ? '上传中…' : '上传参考图'}</button>
                 </div>
               </div>
               <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(event: ChangeEvent<HTMLInputElement>) => { void handleFiles(event.target.files ?? []); event.target.value = '' }} />

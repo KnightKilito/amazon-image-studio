@@ -679,6 +679,7 @@ describe('callAmazonPlannerApi', () => {
     const result = await callAmazonPlannerApi({
       listingText: SAMPLE_LISTING,
       baseDraft: DEFAULT_AMAZON_PROMPT_DRAFT,
+      listingTargetSize: '1600x2000',
       profile: createDefaultOpenAIProfile({
         baseUrl: 'https://api.example.com/v1',
         apiKey: 'user-api-key',
@@ -693,6 +694,8 @@ describe('callAmazonPlannerApi', () => {
 
     const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
     expect(body.stream).toBe(true)
+    expect(body.instructions).toContain('exact 1600x2000px output canvas')
+    expect(JSON.stringify(body.input)).toContain('1600x2000px')
     expect(attempts).toEqual([{ label: 'AI 策划', apiMode: 'responses', streaming: true }])
     expect(statuses).toEqual(['waiting', 'streaming', 'streaming', 'parsing'])
     expect(deltas.join('')).toBe(payloadText)

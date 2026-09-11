@@ -1507,7 +1507,7 @@ export const useStore = create<AppState>()(
       setStyleReferenceImageIfEmpty: (styleReferenceImage) => {
         let inserted = false
         set((s) => {
-          if (s.styleReferenceImage) return s
+          if (s.styleReferenceImage?.dataUrl) return s
           inserted = true
           return syncActiveInputDraft(s, { styleReferenceImage })
         })

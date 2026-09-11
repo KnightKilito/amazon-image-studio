@@ -72,8 +72,15 @@ import { AMAZON_MARKETPLACE_OPTIONS, DEFAULT_AMAZON_MARKETPLACE, normalizeAmazon
 import type { AmazonMarketplace } from '../types'
 import BrandStoryModuleEditor from './BrandStoryModuleEditor'
 import PlannerRunDetailsModal, { type PlannerRunStatus } from './PlannerRunDetailsModal'
-import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, EditIcon, EyeIcon, HistoryIcon, PhotoIcon, PlusIcon, RefreshIcon, TrashIcon } from './icons'
+import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, EditIcon, ExternalLinkIcon, EyeIcon, HelpCircleIcon, HistoryIcon, PhotoIcon, PlusIcon, RefreshIcon, TrashIcon } from './icons'
 import { clearAmazonPlannerResultSnapshot } from '../lib/amazonPlannerReset'
+import SizePickerModal from './SizePickerModal'
+import {
+  DEFAULT_LISTING_TARGET_SIZE,
+  formatListingTargetSize,
+  getPlannerSessionListingTargetSize,
+  normalizeListingTargetSize,
+} from '../lib/listingImageSize'
 
 const FIELD_CLASS = 'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-100 dark:placeholder:text-gray-500'
 const LABEL_CLASS = 'mb-1.5 block text-xs font-medium text-gray-500 dark:text-gray-400'
@@ -401,6 +408,8 @@ export default function AmazonPlanner() {
   const aiStyleAbortControllerRef = useRef<AbortController | null>(null)
   const [draft, setDraft] = useState<AmazonPromptDraft>(DEFAULT_AMAZON_PROMPT_DRAFT)
   const [resolution, setResolution] = useState<'2k' | '4k'>('2k')
+  const [listingTargetSize, setListingTargetSize] = useState(DEFAULT_LISTING_TARGET_SIZE)
+  const [showListingSizePicker, setShowListingSizePicker] = useState(false)
   const [listingImageCount, setListingImageCount] = useState(DEFAULT_LISTING_IMAGE_COUNT)
   const [marketplace, setMarketplace] = useState<AmazonMarketplace>(DEFAULT_AMAZON_MARKETPLACE)
   const [plannerMode, setPlannerMode] = useState<AmazonPlannerMode>('listing')
@@ -459,6 +468,7 @@ export default function AmazonPlanner() {
     responseText: '',
     error: '',
   })
+  const [showConnectivityHelp, setShowConnectivityHelp] = useState(false)
   const [isPreparingReferencePayload, setIsPreparingReferencePayload] = useState(false)
   const [referencePayloadNotice, setReferencePayloadNotice] = useState('')
   const [actionProgress, setActionProgress] = useState<PlannerActionProgressMap>({})
@@ -564,9 +574,14 @@ export default function AmazonPlanner() {
   const plannerProfileValidation = plannerProfile ? validateApiProfile(plannerProfile) : '未选择支持 Chat Completions 或 Responses API 的 AI 策划配置'
   const imageProfile = applyGuestUnifiedApiUrl(getActiveApiProfile(settings), 'image', adminAccess, isAdminAuthenticated)
   const plannerApiLabel = plannerProfile?.apiMode === 'chat' ? 'Chat Completions' : 'Responses API'
+  const plannerProfileSummary = `${plannerProfile ? `${plannerProfile.name} · ${plannerProfile.model} · ${plannerApiLabel}` : '未配置，请在设置中选择一个 Chat Completions 策划配置'}${plannerProfileValidation ? `（${plannerProfileValidation}）` : ''}`
   const plannerUsesOfficialDeepSeek = plannerProfile ? isOfficialDeepSeekPlannerProfile(plannerProfile) : false
-  const listingTargetSize = resolution === '4k' ? '4096x4096' : '2048x2048'
-  const targetSize = plannerMode === 'aplus' && selectedAPlusPlan ? selectedAPlusPlan.generationSize : listingTargetSize
+  const fallbackAPlusTargetSize = aPlusSpecs[0]
+    ? getAPlusModuleGenerationSize(aPlusSpecs[0], resolutionTier)
+    : DEFAULT_LISTING_TARGET_SIZE
+  const targetSize = plannerMode === 'aplus'
+    ? selectedAPlusPlan?.generationSize ?? fallbackAPlusTargetSize
+    : listingTargetSize
   const selectedMotherSliceCount = selectedAPlusPlan?.planContext?.groupKind === 'continuous-canvas'
     ? selectedAPlusPlan.planContext.sliceCount ?? 2
     : null
@@ -753,6 +768,7 @@ export default function AmazonPlanner() {
       mode: overrides.mode ?? plannerMode,
       aPlusType: overrides.aPlusType ?? aPlusType,
       resolution: overrides.resolution ?? resolution,
+      listingTargetSize: overrides.listingTargetSize ?? listingTargetSize,
       listingImageCount: overrides.listingImageCount ?? listingImageCount,
       marketplace: normalizeAmazonMarketplace(overrides.marketplace ?? marketplace),
       aPlusModuleSpecs: hasOverride('aPlusModuleSpecs')
@@ -1433,6 +1449,7 @@ export default function AmazonPlanner() {
         referenceImageDataUrls: referencePayload.dataUrls,
         mode: plannerMode,
         listingImageCount,
+        listingTargetSize,
         aPlusType,
         aPlusModuleSpecs: aPlusSpecs,
         aPlusGenerationTier: resolutionTier,
@@ -1701,6 +1718,12 @@ export default function AmazonPlanner() {
     saveAPlusModuleSpecsByType(next)
   }
 
+  const changeListingTargetSize = (size: string) => {
+    const normalized = normalizeListingTargetSize(size, listingTargetSize)
+    setListingTargetSize(normalized)
+    updateCurrentPlannerSession({ listingTargetSize: normalized })
+  }
+
   const clearPlannerResults = (options: { notify?: boolean } = {}) => {
     const clearedResult = clearAmazonPlannerResultSnapshot({
       listingText,
@@ -1936,6 +1959,8 @@ export default function AmazonPlanner() {
     setPremiumBrandStoryCardCount(restoredPremiumBrandStoryCardCount)
     setStandaloneBrandStoryCardCount(restoredStandaloneBrandStoryCardCount)
     setResolution(session.resolution)
+    const restoredListingTargetSize = getPlannerSessionListingTargetSize(session)
+    setListingTargetSize(restoredListingTargetSize)
     setListingImageCount(getSessionListingImageCount(session))
     setMarketplace(normalizeAmazonMarketplace(session.marketplace))
     setAPlusModuleSpecsByType(restoredAPlusModuleSpecsByType)
@@ -1962,6 +1987,7 @@ export default function AmazonPlanner() {
     setActionPromptModes({})
     const restoredSession = {
       ...session,
+      listingTargetSize: restoredListingTargetSize,
       listingImageCount: getSessionListingImageCount(session),
       aPlusModuleSpecs: getAPlusModuleSpecsForSession(restoredAPlusModuleSpecsByType),
       aPlusLayoutStates: restoredLayoutStates,
@@ -2058,7 +2084,15 @@ export default function AmazonPlanner() {
 
   return (
     <>
-    {styleEditor && (
+      {showListingSizePicker && (
+        <SizePickerModal
+          currentSize={listingTargetSize}
+          allowAuto={false}
+          onSelect={changeListingTargetSize}
+          onClose={() => setShowListingSizePicker(false)}
+        />
+      )}
+      {styleEditor && (
       <StyleReferenceEditorModal
         title={styleEditor.title}
         initialState={styleEditor.initialState}
@@ -2075,7 +2109,7 @@ export default function AmazonPlanner() {
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
               <span>OpenAI gpt-image-2</span>
               <span className="h-1 w-1 rounded-full bg-gray-300 dark:bg-gray-600" />
-              <span>2K / 4K</span>
+              <span>2K / 4K / 自定义尺寸</span>
               <span className="h-1 w-1 rounded-full bg-gray-300 dark:bg-gray-600" />
               <span>主图、附图与 A+ 策划</span>
             </div>
@@ -2098,28 +2132,43 @@ export default function AmazonPlanner() {
           <div className="flex flex-wrap items-center gap-2">
             {plannerMode === 'listing' && (
               <label className="inline-flex h-10 items-center gap-2 text-sm font-medium text-gray-600 dark:text-gray-300">
-                <span className="text-xs text-gray-400 dark:text-gray-500">图片数</span>
+                <span className="text-xs text-gray-400 dark:text-gray-500">图片数量</span>
                 <Select
                   value={listingImageCount}
                   onChange={changeListingImageCount}
-                  ariaLabel="图片数"
+                  ariaLabel="图片数量"
                   className={`${COMPACT_SELECT_CLASS} min-w-20 text-sm font-semibold`}
                   options={LISTING_IMAGE_COUNT_OPTIONS.map((count) => ({ label: `${count} 张`, value: count }))}
                 />
               </label>
             )}
-            <div className="inline-flex rounded-xl border border-gray-200 bg-gray-100 p-1 dark:border-white/[0.08] dark:bg-white/[0.04]">
-              {(['2k', '4k'] as const).map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setResolution(item)}
-                  className={`h-8 min-w-14 rounded-lg px-3 text-sm font-medium transition ${resolution === item ? 'bg-white text-gray-900 shadow-sm dark:bg-white/10 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
-                >
-                  {item.toUpperCase()}
-                </button>
-              ))}
-            </div>
+            {plannerMode === 'listing' ? (
+              <button
+                type="button"
+                onClick={() => setShowListingSizePicker(true)}
+                className="inline-flex h-10 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-200 dark:hover:border-blue-400/30 dark:hover:bg-blue-400/10 dark:hover:text-blue-200"
+                title="选择 2K、4K、图像比例或自定义宽高"
+              >
+                <span className="text-xs text-gray-400 dark:text-gray-500">尺寸</span>
+                <span className="font-mono text-xs font-semibold">{formatListingTargetSize(listingTargetSize)}</span>
+                <svg className="h-3.5 w-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+            ) : (
+              <div className="inline-flex rounded-xl border border-gray-200 bg-gray-100 p-1 dark:border-white/[0.08] dark:bg-white/[0.04]">
+                {(['2k', '4k'] as const).map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => setResolution(item)}
+                    className={`h-8 min-w-14 rounded-lg px-3 text-sm font-medium transition ${resolution === item ? 'bg-white text-gray-900 shadow-sm dark:bg-white/10 dark:text-white' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'}`}
+                  >
+                    {item.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            )}
             <label className="inline-flex h-10 items-center gap-2 text-sm font-medium text-gray-600 dark:text-gray-300">
               <span className="text-xs text-gray-400 dark:text-gray-500">目标站点</span>
               <Select
@@ -2322,15 +2371,15 @@ export default function AmazonPlanner() {
                 </button>
               </div>
             </div>
-            <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-              <div className={`rounded-xl border px-3 py-2 transition ${guideState.target === 'planner-api' ? 'border-blue-300 bg-blue-50 text-blue-800 ring-2 ring-blue-500/15 dark:border-blue-400/60 dark:bg-blue-500/10 dark:text-blue-100' : plannerProfile && !plannerProfileValidation ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-200' : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200'}`}>
+            <div className="mt-3 space-y-2">
+              <div data-planner-profile-card className={`rounded-xl border px-3 py-2 transition ${guideState.target === 'planner-api' ? 'border-blue-300 bg-blue-50 text-blue-800 ring-2 ring-blue-500/15 dark:border-blue-400/60 dark:bg-blue-500/10 dark:text-blue-100' : plannerProfile && !plannerProfileValidation ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-200' : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200'}`}>
                 <div className="text-xs font-semibold">AI 策划配置</div>
-                <div className="mt-1 text-xs leading-relaxed">
-                  {plannerProfile ? `${plannerProfile.name} · ${plannerProfile.model} · ${plannerApiLabel}` : '未配置，请在设置中选择一个 Chat Completions 策划配置'}
-                  {plannerProfileValidation ? `（${plannerProfileValidation}）` : ''}
+                <div className="mt-1 truncate text-xs leading-relaxed" title={plannerProfileSummary}>
+                  {plannerProfileSummary}
                 </div>
               </div>
-              <div className={`flex flex-wrap items-center gap-2 rounded-xl transition sm:justify-end ${getGuideFocusClass(guideState.target === 'planner-action')}`}>
+              <div data-planner-actions className={`flex flex-wrap items-center gap-2 rounded-xl transition ${getGuideFocusClass(guideState.target === 'planner-action')}`}>
+                <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => isPlanning ? setShowPlannerRunDetails(true) : void createAiPlan()}
@@ -2350,6 +2399,8 @@ export default function AmazonPlanner() {
                     停止
                   </button>
                 )}
+                </div>
+                <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                 {!isPlanning && plannerRun.startedAt && (
                   <button
                     type="button"
@@ -2381,6 +2432,25 @@ export default function AmazonPlanner() {
                     清空输入
                   </button>
                 )}
+                <a
+                  href="https://status.openai.com/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 text-sm font-medium text-gray-600 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-300 dark:hover:border-blue-400/30 dark:hover:bg-blue-400/10 dark:hover:text-blue-200"
+                  title="查看 OpenAI 官方服务状态"
+                >
+                  <ExternalLinkIcon className="h-4 w-4" />
+                  连通性情况
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setShowConnectivityHelp(true)}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-gray-500 transition hover:bg-blue-50 hover:text-blue-700 dark:text-gray-400 dark:hover:bg-blue-400/10 dark:hover:text-blue-200"
+                  title="连通性检测说明"
+                  aria-label="连通性检测说明"
+                >
+                  <HelpCircleIcon className="h-5 w-5" />
+                </button>
                 <button
                   type="button"
                   onClick={() => setShowSettings(true, 'api')}
@@ -2388,6 +2458,7 @@ export default function AmazonPlanner() {
                 >
                   设置
                 </button>
+                </div>
               </div>
             </div>
             <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-800 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200">
@@ -3445,6 +3516,46 @@ export default function AmazonPlanner() {
         </div>
       </div>
     </section>
+    {showConnectivityHelp && (
+      <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" onClick={() => setShowConnectivityHelp(false)}>
+        <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" />
+        <div
+          className="relative z-10 w-full max-w-md rounded-2xl border border-white/50 bg-white/95 p-5 shadow-2xl ring-1 ring-black/5 dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-400/10 dark:text-blue-300">
+              <HelpCircleIcon className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-start justify-between gap-3">
+                <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">遇到连接问题怎么办？</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowConnectivityHelp(false)}
+                  className="rounded-lg p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
+                  aria-label="关闭连通性检测说明"
+                >
+                  <CloseIcon className="h-4 w-4" />
+                </button>
+              </div>
+              <p className="mt-2 text-sm leading-relaxed text-gray-600 dark:text-gray-300">
+                如果 AI 策划或生图请求失败，可以先查看 OpenAI 官方服务状态，确认是否存在全球范围的服务波动，再判断是否需要调整本地配置或网络环境。
+              </p>
+              <a
+                href="https://status.openai.com/"
+                target="_blank"
+                rel="noreferrer"
+                className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-blue-500"
+              >
+                <ExternalLinkIcon className="h-4 w-4" />
+                打开 OpenAI 服务状态页
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
     {showPlannerRunDetails && plannerRun.startedAt && plannerProfile && (
       <PlannerRunDetailsModal
         status={plannerRun.status}

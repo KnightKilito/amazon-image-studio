@@ -23,6 +23,7 @@ import {
 } from './listingPlanner'
 import { isEventStreamResponse, looksLikeServerSentEvents, readJsonServerSentEvents, readJsonServerSentEventText, ServerSentEventReadError } from './serverSentEvents'
 import type { SizeTier } from './size'
+import { normalizeListingTargetSize } from './listingImageSize'
 
 interface PlannerApiPayload {
   product?: {
@@ -771,12 +772,13 @@ function buildPlannerInstructions(
   baseDraft: AmazonPromptDraft,
   mode: AmazonPlannerMode,
   aPlusType: APlusContentType,
-  options: { textOnlyReferenceGuard?: boolean | string; listingImageCount?: number; aPlusModuleSpecs?: AmazonAPlusModuleSpec[]; compact?: boolean; visualStyleMode?: AmazonVisualStyleMode; aPlusGenerationTier?: SizeTier; marketplaceContext?: string } = {},
+  options: { textOnlyReferenceGuard?: boolean | string; listingImageCount?: number; listingTargetSize?: string; aPlusModuleSpecs?: AmazonAPlusModuleSpec[]; compact?: boolean; visualStyleMode?: AmazonVisualStyleMode; aPlusGenerationTier?: SizeTier; marketplaceContext?: string } = {},
 ) {
   const listingImageCount = normalizeListingImageCount(options.listingImageCount)
   const aPlusModuleSpecs = normalizeAPlusModuleSpecs(aPlusType, options.aPlusModuleSpecs)
   const visualStyleMode = options.visualStyleMode ?? 'builtin'
   const aPlusGenerationTier = options.aPlusGenerationTier ?? '2K'
+  const listingTargetSize = normalizeListingTargetSize(options.listingTargetSize)
   const textOnlyReferenceGuard = typeof options.textOnlyReferenceGuard === 'string'
     ? options.textOnlyReferenceGuard
     : options.textOnlyReferenceGuard
@@ -789,6 +791,9 @@ function buildPlannerInstructions(
       : buildListingPlannerInstructions(baseDraft, listingImageCount, visualStyleMode)
   return [
     baseInstructions,
+    mode === 'listing'
+      ? `Plan every listing image for an exact ${listingTargetSize}px output canvas. Make every composition fit this exact aspect ratio and do not describe a different canvas size in planMarkdown or prompt.`
+      : '',
     options.marketplaceContext,
     textOnlyReferenceGuard,
   ].filter(Boolean).join('\n')
@@ -865,7 +870,7 @@ function buildPlannerInputText(
   listingText: string,
   mode: AmazonPlannerMode,
   aPlusType: APlusContentType,
-  options: { includeReferenceImageInstruction?: boolean; userProductFacts?: string; listingImageCount?: number; aPlusModuleSpecs?: AmazonAPlusModuleSpec[] } = {},
+  options: { includeReferenceImageInstruction?: boolean; userProductFacts?: string; listingImageCount?: number; listingTargetSize?: string; aPlusModuleSpecs?: AmazonAPlusModuleSpec[] } = {},
 ) {
   const referenceImageInstruction = options.includeReferenceImageInstruction
     ? 'If reference images are attached, use them to understand the actual product appearance and included items.'
@@ -885,8 +890,10 @@ function buildPlannerInputText(
   }
 
   const listingImageCount = normalizeListingImageCount(options.listingImageCount)
+  const listingTargetSize = normalizeListingTargetSize(options.listingTargetSize)
   return [
     `Parse this Amazon listing copy and produce the ${listingImageCount}-image visual plan.`,
+    `Target output canvas for every listing image: ${listingTargetSize}px. Plan the composition for this exact aspect ratio and dimensions.`,
     'Use the title and bullet points from the pasted text. If a field is uncertain, infer conservatively from the listing.',
     referenceImageInstruction,
     userProductFacts,
@@ -954,7 +961,7 @@ function buildChatPlannerSystemPrompt(
   baseDraft: AmazonPromptDraft,
   mode: AmazonPlannerMode,
   aPlusType: APlusContentType,
-  options: { textOnlyReferenceGuard?: boolean | string; listingImageCount?: number; aPlusModuleSpecs?: AmazonAPlusModuleSpec[]; compact?: boolean; visualStyleMode?: AmazonVisualStyleMode; aPlusGenerationTier?: SizeTier; marketplaceContext?: string } = {},
+  options: { textOnlyReferenceGuard?: boolean | string; listingImageCount?: number; listingTargetSize?: string; aPlusModuleSpecs?: AmazonAPlusModuleSpec[]; compact?: boolean; visualStyleMode?: AmazonVisualStyleMode; aPlusGenerationTier?: SizeTier; marketplaceContext?: string } = {},
 ) {
   return [
     buildPlannerInstructions(baseDraft, mode, aPlusType, options),
@@ -1010,6 +1017,7 @@ export async function callAmazonPlannerApi(options: {
   model?: string
   mode?: AmazonPlannerMode
   listingImageCount?: number
+  listingTargetSize?: string
   aPlusType?: APlusContentType
   aPlusModuleSpecs?: Array<Partial<AmazonAPlusModuleSpec>>
   aPlusGenerationTier?: SizeTier
@@ -1024,6 +1032,7 @@ export async function callAmazonPlannerApi(options: {
   const mode = options.mode ?? 'listing'
   const aPlusType = options.aPlusType ?? 'standard-large'
   const listingImageCount = normalizeListingImageCount(options.listingImageCount)
+  const listingTargetSize = normalizeListingTargetSize(options.listingTargetSize)
   const aPlusModuleSpecs = normalizeAPlusModuleSpecs(aPlusType, options.aPlusModuleSpecs)
   const aPlusGenerationTier = options.aPlusGenerationTier ?? '2K'
   const visualStyleMode = options.visualStyleMode ?? 'builtin'
@@ -1051,6 +1060,7 @@ export async function callAmazonPlannerApi(options: {
       includeReferenceImageInstruction: !useTextOnly,
       userProductFacts: useTextOnly ? buildUserProductFactsText(options.baseDraft) : '',
       listingImageCount,
+      listingTargetSize,
       aPlusModuleSpecs,
     })
     const referenceImageDataUrls = useTextOnly
@@ -1080,6 +1090,7 @@ export async function callAmazonPlannerApi(options: {
                 content: buildChatPlannerSystemPrompt(options.baseDraft, mode, aPlusType, {
                   textOnlyReferenceGuard,
                   listingImageCount,
+                  listingTargetSize,
                   aPlusModuleSpecs,
                   compact,
                   visualStyleMode,
@@ -1100,6 +1111,7 @@ export async function callAmazonPlannerApi(options: {
             instructions: buildPlannerInstructions(options.baseDraft, mode, aPlusType, {
               textOnlyReferenceGuard,
               listingImageCount,
+              listingTargetSize,
               aPlusModuleSpecs,
               compact,
               visualStyleMode,

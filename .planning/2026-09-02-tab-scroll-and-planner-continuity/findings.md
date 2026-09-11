@@ -1,0 +1,33 @@
+# Findings
+
+- 上一活动计划已经完成；当前工作区状态命令无输出，未发现待保护的未提交源码改动。
+- Store 的 `setStyleReferenceImageIfEmpty` 本身仍严格按空值插入，逻辑没有被删除；自动填充失效更可能发生在调用时序或之后被页面切换/编辑入口清空。
+- `openImageEditor` 会先切到 editor，再写入编辑素材并明确清空全局风格参考图；需要确认这是否与用户观察的空槽场景重叠。
+- 主 Tab 与 AmazonPlanner 搜索范围较大，首次组合搜索输出被截断；后续改为只读取 `App.tsx`、页面切换 action 和 AmazonPlanner effect 的精确区段。
+- `App.tsx` 已对首页 AmazonPlanner 和 Listing 文案页做“访问后保持挂载”，但图片编辑页仍按 `appPage === 'editor'` 条件挂载；首页从应用启动即挂载，普通切 Tab 理论上不应触发 AmazonPlanner 的卸载清理。
+- AmazonPlanner 确实有一个卸载清理 effect，会同时 abort 策划、预设风格加载和 AI 风格图生成。需确认该 effect 是否只有空依赖，以及是否有其他 key/父级变化导致重挂载。
+- `openImageEditor` 在状态层先 `setAppPage('editor')`，最后又调用 `navigateToAppPage('editor')`；滚动跳到深处很可能是浏览器保留同一 document 的 window scroll，而不是编辑页主动滚动。
+- `App.tsx` 三个页面共享同一个 document/window 滚动容器，没有任何页面级 scroll 保存或恢复；切页时浏览器会保留原 `window.scrollY`，这直接解释了从首页历史深处自动进入编辑页后仍落在很下面。
+- AmazonPlanner 的 abort effect 是空依赖且只在组件真正卸载时运行；当前首页从应用初次渲染起始终保活，正常 Header Tab 切换不会调用它。因此“策划切 Tab 不打断”的主链代码已具备，但缺少明确回归契约和可观察验证。
+- AI 风格生成函数在图片持久化完成后立即调用 `setStyleReferenceImageIfEmpty`，随后只保存策划历史，没有显式清空槽位。需继续检查图片生成 helper 和页面草稿同步是否导致插入后被旧草稿覆盖。
+- `syncActiveInputDraft` 会把 styleReferenceImage 同步进 gallery 草稿，未发现 setter 写入后立刻被旧草稿回滚的同步路径；现有 store 单测也只覆盖真正 `null` 的空槽。
+- 一个高概率边界是“视觉上空、状态不为空”：持久化恢复可能留下 `{ id, dataUrl: '' }` 占位对象，界面没有可显示图片，但 `setStyleReferenceImageIfEmpty` 仍把它视作占用。需要核对 InputBar 渲染与初始化缺图语义。
+- 该边界已被持久化代码确认：重启草稿会故意把风格图保存为 `{ id, dataUrl: '' }`，等待 `initStore()` 从 IndexedDB 回填。若记录缺失或回填尚未完成，当前 setter 仍把这个不可显示占位对象当作“有图”。
+- 因此空槽判断不应只看对象是否为 null，而应看是否存在可显示 `dataUrl`；同时要防止启动异步恢复在新风格图自动填入后把旧占位对象写回。
+- `mergeRestoredInputImage` 已是“最新有效图优先”：新风格图一旦带 dataUrl 写入，启动恢复会原样保留；若旧占位图片在 IndexedDB 中确实缺失，则合并返回 null。把 setter 改为允许覆盖空 dataUrl 占位不会引入恢复回滚。
+- 首页当前事实上从初始状态就保持挂载，但语义依赖 `visitedPagesRef` 和默认 appPage。可把首页容器改为无条件挂载并注明策划保活意图，使切 Tab 不 abort 成为明确结构契约；Listing 仍按访问后保活。
+- 滚动记忆适合留在 App 会话级 ref：scroll 事件持续记录当前 Tab，切换时短暂屏蔽布局夹紧产生的 scroll 事件，再在 layout/下一帧恢复目标 Tab 的位置；无需写入持久化 store。
+- 三个页面组件内没有 `window.scrollTo`、`scrollIntoView` 或 autofocus 等主动页面滚动逻辑，确认跳位来自共享 window scroll，而非编辑页内部副作用。
+- 项目已有 `appNavigation.test.ts`，可把三页滚动位置容器的规范化/独立性测试放在导航模块；真实切换时序再由本地浏览器验证。
+- 首版 diff 复核通过：空槽 setter 仅放宽“空 dataUrl 占位”边界；InputBar 不再把不可显示占位渲染成有图卡片；真正带 dataUrl 的用户风格图仍保持不覆盖。
+- App 在页面变化的 render 时记录离开页的精确 window.scrollY，恢复期间屏蔽程序性 scroll 事件，并在 layout 与下一帧两次恢复目标位置；首页无条件挂载注释明确了策划连续性。
+- 当前本地页面可正常打开在首页，没有再次出现此前旧浏览器会话的 localhost 错误页问题。
+- 本地首页当前文档高度 1956px、视口 720px，具备足够滚动空间；页面有 4 张参考图且无历史任务，不调用真实 API 也可完整验证主 Tab 滚动记忆与策划 DOM 保活。
+- 真实回归第一段通过：首页滚到 y=1000 后切 Listing 文案，目标页落在 y=0；隐藏的首页 `[data-home-main]` 仍存在于 DOM，证明 AmazonPlanner 没有因切页卸载。
+- Listing 文案页滚到 y=620 后返回首页，首页精确恢复到 y=1000；离开页和返回页的位置没有相互污染。
+- 再次进入 Listing 精确恢复 y=620；随后首次进入图片编辑页落在 y=0，而不是继承 Listing/Home 的深滚动位置。编辑页切换期间首页策划 DOM 仍保活。
+- 图片编辑页滚到 y=540 后返回首页，首页仍精确恢复 y=1000，确认编辑页位置不会覆盖首页记忆。
+- 再次进入图片编辑页精确恢复 y=540，三页会话级滚动记忆真实回归全部通过。
+- 页面日志只有应用启动时 4 条既有的空 `img src` React 提示，来自产品参考图持久化占位恢复；没有本轮滚动、策划保活或风格槽位新增异常。风格槽位自身已改为不渲染空 src。
+- 最终全量 Vitest 为 42 个测试文件、423 项测试，全部通过；生产构建与 `git diff --check` 通过。
+- 工作区只包含本任务 5 个源码/测试文件与独立规划记录，没有发现外部或用户未提交源码改动。

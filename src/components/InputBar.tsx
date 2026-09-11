@@ -1814,14 +1814,15 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
   )
 
   const renderStyleReferenceSlot = () => {
-    const disabled = !styleReferenceImage && atImageLimit
-    const title = styleReferenceImage
+    const visibleStyleReferenceImage = styleReferenceImage?.dataUrl ? styleReferenceImage : null
+    const disabled = !visibleStyleReferenceImage && atImageLimit
+    const title = visibleStyleReferenceImage
       ? '风格参考图：点击预览，悬停可移除或替换'
       : disabled
         ? `参考图数量已达上限（${referenceImageUploadLimit} 张），无法添加风格参考图`
         : '上传风格参考图'
 
-    if (!styleReferenceImage) {
+    if (!visibleStyleReferenceImage) {
       return (
         <button
           type="button"
@@ -1848,20 +1849,18 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
         <div
           className="relative w-[52px] h-[52px] rounded-xl overflow-hidden border border-violet-300 shadow-sm cursor-pointer select-none dark:border-violet-400/40"
           onClick={() => {
-            const lightboxIds = [...inputImages.map((img) => img.id), styleReferenceImage.id]
-            setLightboxImageId(styleReferenceImage.id, lightboxIds)
+            const lightboxIds = [...inputImages.map((img) => img.id), visibleStyleReferenceImage.id]
+            setLightboxImageId(visibleStyleReferenceImage.id, lightboxIds)
           }}
           title={title}
         >
-          {styleReferenceImage.dataUrl && (
-            <div className="h-full w-full overflow-hidden rounded-xl">
-              <img
-                src={styleReferenceImage.dataUrl}
-                className="w-full h-full object-cover hover:opacity-90 transition-opacity pointer-events-none"
-                alt=""
-              />
-            </div>
-          )}
+          <div className="h-full w-full overflow-hidden rounded-xl">
+            <img
+              src={visibleStyleReferenceImage.dataUrl}
+              className="w-full h-full object-cover hover:opacity-90 transition-opacity pointer-events-none"
+              alt=""
+            />
+          </div>
           <span className="absolute left-1 top-1 rounded bg-violet-500/90 px-1.5 py-0.5 text-[8px] leading-none text-white font-bold tracking-wider backdrop-blur-sm z-10 pointer-events-none">
             STYLE
           </span>
@@ -1882,7 +1881,7 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
           className="absolute right-1 top-1 z-50 flex h-5 w-5 cursor-pointer items-center justify-center rounded-full bg-red-500 text-white opacity-0 shadow-md transition-opacity hover:bg-red-600 group-hover:opacity-100 focus:opacity-100"
           onClick={(e) => {
             e.stopPropagation()
-            const imageId = styleReferenceImage.id
+            const imageId = visibleStyleReferenceImage.id
             clearStyleReferenceImage()
             void deleteImageIfUnreferenced(imageId)
           }}

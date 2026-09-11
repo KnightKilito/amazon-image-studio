@@ -484,6 +484,16 @@ describe('mask draft lifecycle in store actions', () => {
     expect(useStore.getState().styleReferenceImage).toEqual(generatedStyleImage)
   })
 
+  it('treats a non-renderable persisted style placeholder as an empty slot', () => {
+    const generatedStyleImage = { id: 'generated-style', dataUrl: 'data:image/png;base64,generated-style' }
+    useStore.getState().setStyleReferenceImage({ id: 'missing-persisted-style', dataUrl: '' })
+
+    const inserted = useStore.getState().setStyleReferenceImageIfEmpty(generatedStyleImage)
+
+    expect(inserted).toBe(true)
+    expect(useStore.getState().styleReferenceImage).toEqual(generatedStyleImage)
+  })
+
   it('preserves an existing style reference when an AI style image finishes later', () => {
     const existingStyleImage = { id: 'manual-style', dataUrl: 'data:image/png;base64,manual-style' }
     const generatedStyleImage = { id: 'generated-style', dataUrl: 'data:image/png;base64,generated-style' }

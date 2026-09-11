@@ -468,6 +468,7 @@ export interface AmazonPlannerSession {
   mode: 'listing' | 'aplus'
   aPlusType: 'standard' | 'standard-large' | 'premium' | 'mobile' | 'brand-story'
   resolution: '2k' | '4k'
+  listingTargetSize?: string
   listingImageCount?: number
   marketplace?: AmazonMarketplace
   aPlusModuleSpecs?: Partial<Record<'standard' | 'standard-large' | 'premium' | 'mobile' | 'brand-story', AmazonPlannerSessionAPlusModuleSpec[]>>

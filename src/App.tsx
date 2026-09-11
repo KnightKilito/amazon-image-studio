@@ -1,7 +1,12 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { initStore } from './store'
 import { useStore } from './store'
-import { getAppPageFromLocation } from './lib/appNavigation'
+import {
+  createAppPageScrollPositions,
+  getAppPageFromLocation,
+  getAppPageScrollPosition,
+  rememberAppPageScrollPosition,
+} from './lib/appNavigation'
 import { buildSettingsFromUrlParams, clearUrlSettingParams, hasUrlSettingParams } from './lib/urlSettings'
 import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'
 import Header from './components/Header'
@@ -25,6 +30,13 @@ export default function App() {
   const appPage = useStore((s) => s.appPage)
   const setAppPage = useStore((s) => s.setAppPage)
   const visitedPagesRef = useRef(new Set([appPage]))
+  const pageScrollPositionsRef = useRef(createAppPageScrollPositions())
+  const activeScrollPageRef = useRef(appPage)
+  const restoringPageScrollRef = useRef(false)
+  if (activeScrollPageRef.current !== appPage && typeof window !== 'undefined') {
+    rememberAppPageScrollPosition(pageScrollPositionsRef.current, activeScrollPageRef.current, window.scrollY)
+    restoringPageScrollRef.current = true
+  }
   visitedPagesRef.current.add(appPage)
   useDockerApiUrlMigrationNotice()
   useGlobalClickSuppression()
@@ -56,6 +68,39 @@ export default function App() {
   }, [setAppPage])
 
   useEffect(() => {
+    const rememberCurrentPageScroll = () => {
+      if (restoringPageScrollRef.current) return
+      rememberAppPageScrollPosition(pageScrollPositionsRef.current, activeScrollPageRef.current, window.scrollY)
+    }
+    window.addEventListener('scroll', rememberCurrentPageScroll, { passive: true })
+    return () => window.removeEventListener('scroll', rememberCurrentPageScroll)
+  }, [])
+
+  useLayoutEffect(() => {
+    activeScrollPageRef.current = appPage
+    restoringPageScrollRef.current = true
+    const restoreScroll = () => {
+      window.scrollTo({
+        top: getAppPageScrollPosition(pageScrollPositionsRef.current, appPage),
+        left: 0,
+        behavior: 'auto',
+      })
+    }
+    restoreScroll()
+    let releaseFrame = 0
+    const restoreFrame = window.requestAnimationFrame(() => {
+      restoreScroll()
+      releaseFrame = window.requestAnimationFrame(() => {
+        restoringPageScrollRef.current = false
+      })
+    })
+    return () => {
+      window.cancelAnimationFrame(restoreFrame)
+      if (releaseFrame) window.cancelAnimationFrame(releaseFrame)
+    }
+  }, [appPage])
+
+  useEffect(() => {
     const preventPageImageDrag = (e: DragEvent) => {
       if ((e.target as HTMLElement | null)?.closest('img')) {
         e.preventDefault()
@@ -69,22 +114,21 @@ export default function App() {
   return (
     <>
       <Header />
-      {visitedPagesRef.current.has('home') && (
-        <div hidden={appPage !== 'home'} aria-hidden={appPage !== 'home'}>
-          <main data-home-main data-drag-select-surface className="home-main-with-dock pb-48 lg:pb-10">
-            <div className="safe-area-x max-w-7xl mx-auto lg:!px-6">
-              <AmazonPlanner />
-              {appPage === 'home' && (
-                <>
-                  <SearchBar />
-                  <TaskGrid />
-                </>
-              )}
-            </div>
-          </main>
-          {appPage === 'home' && <InputBar />}
-        </div>
-      )}
+      {/* Keep the planner mounted so an in-flight AI planning request survives main-tab switches. */}
+      <div hidden={appPage !== 'home'} aria-hidden={appPage !== 'home'}>
+        <main data-home-main data-drag-select-surface className="home-main-with-dock pb-48 lg:pb-10">
+          <div className="safe-area-x max-w-7xl mx-auto lg:!px-6">
+            <AmazonPlanner />
+            {appPage === 'home' && (
+              <>
+                <SearchBar />
+                <TaskGrid />
+              </>
+            )}
+          </div>
+        </main>
+        {appPage === 'home' && <InputBar />}
+      </div>
       {visitedPagesRef.current.has('listing-copy') && (
         <div hidden={appPage !== 'listing-copy'} aria-hidden={appPage !== 'listing-copy'}>
           <ListingCopyWorkspace />

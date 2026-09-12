@@ -1,0 +1,31 @@
+# Findings
+
+- 用户明确要求第 2 点先计划后执行；本文件计划已经建立，开始按阶段实施。
+- Listing 文案页商品预设已经使用共享 `Select` 组件，但当前只传 `w-full`，缺少首页图片数量所用的 `COMPACT_SELECT_CLASS`；补回该类即可统一触发器外观和交互。
+- 共享 Select 已具备项目统一下拉菜单、键盘、移动端位置与动画能力，不需要改 Select 本体。
+- App 根级已有 Header、三个页面和全局 Toast/ConfirmDialog/Lightbox 等常驻组件；悬浮笔记应作为同级常驻组件挂载，确保切 Tab 不卸载。
+- 项目已有 `copyTextToClipboard`、全局 `showToast` 和 `setConfirmDialog`，可复用复制反馈与删除二次确认。
+- App 根组件的全局工具顺序适合把 FloatingNotes 放在页面内容之后、全局模态框之前；这样三个 Tab 都可用，且 ConfirmDialog/Toast 仍能覆盖笔记面板。
+- 现有 icons 已有 `BookOpenIcon/PlusIcon/CopyIcon/EditIcon/TrashIcon/CloseIcon`，足够构成悬浮球与 CRUD 操作，不需要修改图标库。
+- localStorage 工具的项目惯例是 SSR 检查与 try/catch 降级；笔记仓储应同样在存储不可用时保留当前会话状态，不让页面报错。
+- 用户补充要求笔记必须覆盖现有导入导出；原“仅 localStorage、不加入导出”决策已撤销，改为 localStorage 日常持久化 + ExportData 可选字段。
+- 现有导出是 ZIP 的 `manifest.json`，ExportData 已含配置、任务、Agent、Amazon 策划和 Listing 文案历史；文字笔记适合作为 `textNotes?: TextNote[]` 顶层可选字段，旧包缺失时自然兼容。
+- 导入流程已有“本地+导入数据合并”范式；笔记同 ID 应按 updatedAt 取新版本，导入后写 localStorage 并通过同页自定义事件通知已挂载的悬浮面板刷新。
+- 设置页当前只有“包含配置”和“包含任务和图片”两个勾选；为避免笔记被用户意外漏备份，计划在任一导出选项启用时都写入笔记，并在任一导入选项启用时恢复笔记。
+- exportData 在构造 manifest 后按 exportConfig/exportTasks 填字段；可无条件加入 `textNotes = readTextNotes()`，因为导出按钮至少要求一个选项开启。
+- importData 在解析 manifest 后可独立于配置/任务分支合并 `data.textNotes`，再调整成功提示包含笔记数量；旧包字段缺失时保持原消息和行为。
+- 现有 manifest 版本为 5；新增可选字段不需要提升版本或数据库 schema。
+- store 顶部可直接引入无 store 依赖的 textNotes 仓储；exportData 的 manifest 构造点和 importData 的成功提示点都已精确定位。
+- 现有 store 导出测试已经解压并检查 manifest，适合增加 textNotes 断言；导入测试可用内存 localStorage stub 验证按更新时间合并与变更事件。
+- store.test 的 importFile 只需 manifest 即可测试笔记导入，且 data import/export 分组已有独立 beforeEach；新增两条集成用例不会干扰图片数据库 mock。
+- TextNote 数据层纯逻辑测试 4/4 通过；store + textNotes 聚焦测试共 102 项通过，验证 manifest 导出和按 updatedAt 合并导入。
+- 生产构建通过；悬浮组件新增后 CSS/TypeScript 无错误，仅保留既有大 chunk 提示。
+- 真实首页已显示左侧悬浮球，AX 名称为“常用文字笔记”；展开后出现标题、浏览器本地说明、新增按钮、空状态和“创建第一条笔记”。
+- “创建第一条笔记”可进入新建表单，标题、正文、取消、保存控件均可访问；取消后安全返回空列表，未写入测试数据。
+- 真实样式对比确认 Listing“商品预设”和首页“图片数量”均为 36px 高、12px 圆角、相同半透明背景及同一 COMPACT_SELECT_CLASS。
+- 切到 Listing 文案页后悬浮球仍存在并可展开，证明 App 根级挂载在跨 Tab 场景正常。
+- 截图视觉检查通过：左侧渐变圆形入口清晰但不抢主导航，面板向右展开，空状态、图标、标题和新增按钮层次明确；当前 1280px 视口下未溢出。
+- 复核发现 localStorage 写入失败时仍广播变更事件会让组件重新读取空存储并丢掉当前会话笔记；应仅在实际写入成功后广播，保持计划中的会话降级语义。
+- 最终全量验证通过：45 个测试文件、434 项测试全部通过；生产构建通过，仅有项目既有的大 chunk 警告。
+- 最终真实页面验收覆盖首页、Listing 文案页、悬浮球展开、新建/取消、跨 Tab 常驻以及统一下拉框样式；1280px 视口无溢出，未写入测试笔记。
+- 最终 `git diff --check` 通过，没有空白符错误。

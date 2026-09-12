@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { DEFAULT_PARAMS } from './types'
 import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, normalizeSettings } from './lib/apiProfiles'
-import type { AgentConversation, AmazonPlannerSession, ExportData, ListingCopySession, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
+import type { AgentConversation, AmazonPlannerSession, ExportData, ListingCopySession, StoredImage, StoredImageThumbnail, TaskRecord, TextNote } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
+import { readTextNotes, TEXT_NOTES_STORAGE_KEY } from './lib/textNotes'
 vi.mock('./lib/db', () => {
   const tasks = new Map<string, TaskRecord>()
   const amazonPlannerSessions = new Map<string, AmazonPlannerSession>()
@@ -415,6 +416,15 @@ function importFile(data: ExportData): File {
   const zipped = zipSync({ 'manifest.json': strToU8(JSON.stringify(data)) })
   const buffer = zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength)
   return { arrayBuffer: async () => buffer } as File
+}
+
+function createTextNotesStorage(notes: TextNote[] = []) {
+  const values = new Map<string, string>()
+  if (notes.length > 0) values.set(TEXT_NOTES_STORAGE_KEY, JSON.stringify(notes))
+  return {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value) },
+  }
 }
 
 describe('history pagination task updates', () => {
@@ -2000,6 +2010,29 @@ describe('data import', () => {
       imageId: 'custom-style-image',
     })
   })
+
+  it('merges imported text notes and keeps the newer local version', async () => {
+    const localNote: TextNote = { id: 'same-note', title: 'Local newer', content: 'local', createdAt: 1, updatedAt: 5 }
+    const importedNote: TextNote = { id: 'imported-note', title: 'Imported', content: 'imported', createdAt: 2, updatedAt: 4 }
+    const storage = createTextNotesStorage([localNote])
+    const dispatchEvent = vi.fn()
+    vi.stubGlobal('window', { localStorage: storage, dispatchEvent })
+
+    const imported = await importData(importFile({
+      version: 5,
+      exportedAt: new Date(0).toISOString(),
+      textNotes: [
+        { ...localNote, title: 'Imported older', updatedAt: 3 },
+        importedNote,
+      ],
+    }), { importConfig: false, importTasks: false })
+
+    expect(imported).toBe(true)
+    expect(readTextNotes(storage)).toEqual([localNote, importedNote])
+    expect(dispatchEvent).toHaveBeenCalled()
+    expect(useStore.getState().showToast).toHaveBeenCalledWith('数据已成功导入，2 条文字笔记', 'success')
+    vi.unstubAllGlobals()
+  })
 })
 
 describe('data export and clearing', () => {
@@ -2039,6 +2072,8 @@ describe('data export and clearing', () => {
         clickedDownloads.push({ download: anchor.download, href: anchor.href })
       }),
     }
+    const exportedTextNote: TextNote = { id: 'note-a', title: '常用提示词', content: 'prompt body', createdAt: 1, updatedAt: 2 }
+    vi.stubGlobal('window', { localStorage: createTextNotesStorage([exportedTextNote]) })
     vi.stubGlobal('document', {
       createElement: vi.fn(() => anchor),
     })
@@ -2054,6 +2089,7 @@ describe('data export and clearing', () => {
     const manifest = JSON.parse(strFromU8(unzipped['manifest.json'])) as ExportData
     expect(manifest.version).toBe(5)
     expect(manifest.amazonPlannerSessions).toEqual([session])
+    expect(manifest.textNotes).toEqual([exportedTextNote])
     expect(manifest.imageFiles).toHaveProperty('image-a')
     expect(manifest.imageFiles).toHaveProperty('preset-style-image')
     expect(manifest.imageFiles).toHaveProperty('style-image-a')

@@ -793,6 +793,14 @@ export interface FalApiResponse {
   seed?: number
 }
 
+export interface TextNote {
+  id: string
+  title: string
+  content: string
+  createdAt: number
+  updatedAt: number
+}
+
 // ===== 导出数据 =====
 
 /** ZIP manifest.json 格式 */
@@ -804,6 +812,7 @@ export interface ExportData {
   agentConversations?: AgentConversation[]
   amazonPlannerSessions?: AmazonPlannerSession[]
   listingCopySessions?: ListingCopySession[]
+  textNotes?: TextNote[]
   /** imageId → 图片信息 */
   imageFiles?: Record<string, {
     path: string

@@ -639,7 +639,7 @@ export default function ListingCopyWorkspace() {
             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div><h3 className="font-bold text-gray-900 dark:text-white">产品资料与成本</h3><p className="mt-1 text-xs text-gray-400">只填写能够确认的事实，未提供的信息不会让 AI 猜测。</p></div>
               <div className="flex w-full flex-col items-stretch gap-2 sm:w-36">
-                <Select value={input.preset} onChange={(value) => updateInput('preset', value === 'general' ? 'general' : 'footwear')} options={[{ value: 'footwear', label: '鞋靴预设' }, { value: 'general', label: '通用商品' }]} ariaLabel="商品预设" className="w-full" />
+                <Select value={input.preset} onChange={(value) => updateInput('preset', value === 'general' ? 'general' : 'footwear')} options={[{ value: 'footwear', label: '鞋靴预设' }, { value: 'general', label: '通用商品' }]} ariaLabel="商品预设" className={`${COMPACT_SELECT_CLASS} w-full`} />
                 {hasProductCopy && (
                   <button type="button" onClick={clearProductCopy} className="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 text-xs font-semibold text-red-600 transition hover:bg-red-50 dark:border-red-400/20 dark:bg-gray-950 dark:text-red-300 dark:hover:bg-red-400/10">
                     <TrashIcon className="h-3.5 w-3.5" />清空文案

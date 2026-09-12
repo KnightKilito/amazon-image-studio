@@ -2661,6 +2661,7 @@ export default function SettingsModal() {
                       label="包含任务和图片"
                     />
                   </div>
+                  <p className="text-xs leading-relaxed text-gray-400 dark:text-gray-500">文字笔记会随备份一并导出。</p>
                   <button
                     onClick={() => exportData({ exportConfig, exportTasks })}
                     disabled={!exportConfig && !exportTasks}
@@ -2687,6 +2688,7 @@ export default function SettingsModal() {
                       label="包含任务和图片"
                     />
                   </div>
+                  <p className="text-xs leading-relaxed text-gray-400 dark:text-gray-500">备份中的文字笔记会按更新时间与本地笔记合并。</p>
                   <button
                     onClick={() => importInputRef.current?.click()}
                     disabled={(!importConfig && !importTasks) || isImportingData}

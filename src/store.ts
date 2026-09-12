@@ -73,6 +73,7 @@ import { getMobileMotherImageSize, getPremiumMotherImageSize, MAX_PREMIUM_MOTHER
 import { fetchAdminSettings, readAdminToken, saveAdminSettings } from './lib/adminApi'
 import { navigateToAppPage } from './lib/appNavigation'
 import { normalizeAmazonMarketplace } from './lib/amazonMarketplace'
+import { mergeTextNotes, normalizeTextNotes, readTextNotes, saveTextNotes } from './lib/textNotes'
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 
 // ===== Image cache =====
@@ -5506,6 +5507,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
     const manifest: ExportData = {
       version: 5,
       exportedAt: new Date(exportedAt).toISOString(),
+      textNotes: readTextNotes(),
     }
 
     if (options.exportConfig) manifest.settings = settings
@@ -5555,6 +5557,10 @@ export async function importData(file: File, options: ImportOptions = { importCo
     if (!manifestBytes) throw new Error('ZIP 中缺少 manifest.json')
 
     const data: ExportData = JSON.parse(strFromU8(manifestBytes))
+    const importedTextNotes = normalizeTextNotes(data.textNotes)
+    if (importedTextNotes.length > 0) {
+      saveTextNotes(mergeTextNotes(readTextNotes(), importedTextNotes))
+    }
 
     const importedImageIds: string[] = []
     if (options.importTasks && data.tasks && data.imageFiles) {
@@ -5637,6 +5643,9 @@ export async function importData(file: File, options: ImportOptions = { importCo
         : `已导入 ${data.tasks.length} 条记录`
     } else if (options.importConfig && data.settings) {
       msg = '配置已成功导入'
+    }
+    if (importedTextNotes.length > 0) {
+      msg = `${msg}，${importedTextNotes.length} 条文字笔记`
     }
 
     useStore.getState().showToast(msg, 'success')

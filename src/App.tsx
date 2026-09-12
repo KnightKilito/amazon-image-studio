@@ -23,6 +23,7 @@ import MaskEditorModal from './components/MaskEditorModal'
 import ImageContextMenu from './components/ImageContextMenu'
 import ImageEditorWorkspace from './components/ImageEditorWorkspace'
 import ListingCopyWorkspace from './components/ListingCopyWorkspace'
+import FloatingNotes from './components/FloatingNotes'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
 
 export default function App() {
@@ -135,6 +136,7 @@ export default function App() {
         </div>
       )}
       {appPage === 'editor' && <ImageEditorWorkspace />}
+      <FloatingNotes />
       <DetailModal />
       <Lightbox />
       <SettingsModal />

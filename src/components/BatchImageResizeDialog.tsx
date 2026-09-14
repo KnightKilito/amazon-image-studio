@@ -154,9 +154,9 @@ export default function BatchImageResizeDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center p-3 sm:p-5" onClick={handleClose}>
-      <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" />
-      <div className="relative z-10 flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-white/50 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-gray-900" onClick={(event) => event.stopPropagation()}>
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-3 sm:p-5">
+      <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={handleClose} />
+      <div className="relative z-10 flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-white/50 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-gray-900">
         <header className="flex items-start justify-between border-b border-gray-200 px-4 py-3.5 dark:border-white/[0.08] sm:px-5">
           <div>
             <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">批量调整图片尺寸</h3>

@@ -1,12 +1,22 @@
 import { useEffect, useState, useRef, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { DEFAULT_PARAMS } from '../types'
 import type { TaskRecord } from '../types'
-import { useStore, ensureImageThumbnailCached, subscribeImageThumbnail, updateTaskInStore, retryTask } from '../store'
+import {
+  useStore,
+  convertOutputToAPlusFormat,
+  ensureImageThumbnailCached,
+  getSuggestedAPlusOutputConversionSliceCount,
+  subscribeImageThumbnail,
+  updateTaskInStore,
+  retryTask,
+} from '../store'
 import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_FAL_MODEL } from '../lib/apiProfiles'
 import { getTaskDisplayPrompt, isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { CodeIcon } from './icons'
+import MobileAPlusConversionDialog from './MobileAPlusConversionDialog'
 import ViewportTooltip from './ViewportTooltip'
 
 interface Props {
@@ -104,6 +114,9 @@ export default function TaskCard({
   const [swipeActionActive, setSwipeActionActive] = useState(false)
   const [swipeDirection, setSwipeDirection] = useState<-1 | 0 | 1>(0)
   const [streamPreviewLoaded, setStreamPreviewLoaded] = useState(false)
+  const [showMobileConversionDialog, setShowMobileConversionDialog] = useState(false)
+  const [mobileConversionPanelCount, setMobileConversionPanelCount] = useState(1)
+  const [mobileConversionBusy, setMobileConversionBusy] = useState(false)
   const toggleTaskSelection = useStore((s) => s.toggleTaskSelection)
   const settings = useStore((s) => s.settings)
   const streamPreviewSrc = useStore((s) => s.streamPreviews[task.id] || '')
@@ -361,8 +374,26 @@ export default function TaskCard({
     : undefined
   const previewImageClass = useWidePreviewLayout ? 'h-full w-full object-contain' : 'w-full h-full object-cover'
 
+  const handleOpenMobileConversion = () => {
+    if (!firstOutputImageId) return
+    setMobileConversionPanelCount(getSuggestedAPlusOutputConversionSliceCount(task))
+    setShowMobileConversionDialog(true)
+  }
+
+  const handleConfirmMobileConversion = async (panelCount: number) => {
+    if (!firstOutputImageId || mobileConversionBusy) return
+    setMobileConversionBusy(true)
+    try {
+      const converted = await convertOutputToAPlusFormat(task, firstOutputImageId, 'mobile', panelCount)
+      if (converted) setShowMobileConversionDialog(false)
+    } finally {
+      setMobileConversionBusy(false)
+    }
+  }
+
   return (
-    <div className="relative rounded-xl">
+    <>
+      <div className="relative rounded-xl">
       {/* 侧滑底图 */}
       <div
         className={`absolute inset-0 rounded-xl flex items-center transition-opacity duration-200 pointer-events-none ${
@@ -707,6 +738,17 @@ export default function TaskCard({
                 </svg>
               </TaskActionButton>
               <TaskActionButton
+                tooltip="转为手机 A+"
+                onClick={handleOpenMobileConversion}
+                className="rounded-md p-1.5 text-gray-400 transition hover:bg-cyan-50 hover:text-cyan-600 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-cyan-500/10 dark:hover:text-cyan-300"
+                disabled={!firstOutputImageId || mobileConversionBusy}
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <rect x="7" y="2.5" width="10" height="19" rx="2" strokeWidth="1.8" />
+                  <path strokeLinecap="round" strokeWidth="1.8" d="M10 5.5h4M11 18.5h2" />
+                </svg>
+              </TaskActionButton>
+              <TaskActionButton
                 tooltip="复用配置"
                 onClick={onReuse}
                 className="p-1.5 rounded-md hover:bg-blue-50 dark:hover:bg-blue-950/30 text-gray-400 hover:text-blue-500 transition"
@@ -780,8 +822,20 @@ export default function TaskCard({
             </div>
           </div>
         </div>
+        </div>
+        </div>
       </div>
-      </div>
-    </div>
+      {showMobileConversionDialog && createPortal(
+        <MobileAPlusConversionDialog
+          initialPanelCount={mobileConversionPanelCount}
+          busy={mobileConversionBusy}
+          onClose={() => {
+            if (!mobileConversionBusy) setShowMobileConversionDialog(false)
+          }}
+          onConfirm={(panelCount) => void handleConfirmMobileConversion(panelCount)}
+        />,
+        document.body,
+      )}
+    </>
   )
 }

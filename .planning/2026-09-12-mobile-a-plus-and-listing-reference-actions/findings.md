@@ -1,0 +1,21 @@
+# Findings
+
+- 首页图片结果卡片由 `TaskCard.tsx` 渲染，底部操作区是横向滚动按钮组；收藏按钮后依次是复用配置、编辑输出等操作，新增按钮应直接插在收藏按钮之后。
+- 详情弹窗已有“转为手机A+”入口和 `MobileAPlusConversionDialog`，转换不是立即执行，而是先让用户选择母图包含的手机 A+ 图片数量。
+- Listing 产品参考图操作区的三个按钮分别为清空图片、替换首页参考图、上传参考图；当前桌面使用内容宽度 `sm:w-auto`，文本长度不同导致视觉宽度不一致，并在中等宽度标题行中显得拥挤。
+- Listing 三按钮可改成固定的三列等宽操作组；没有参考图时仍只显示上传按钮，但保持与完整操作组相同的统一按钮高度和宽度规则。
+- 现有手机 A+ 转换流程由 `getSuggestedAPlusOutputConversionSliceCount` 提供默认片数，`MobileAPlusConversionDialog` 让用户确认片数，最终调用 `convertOutputToAPlusFormat(task, imageId, 'mobile', panelCount)`；首页卡片可以完整复用这三部分。
+- `convertOutputToAPlusFormat` 会读取所选输出图、清空旧输入、填入转换提示词和目标尺寸，并设置下一次任务分类；成功后已有 Toast，不需要卡片重复提示。
+- 卡片的快捷入口应使用该任务第一张输出图，与卡片封面和详情默认选图语义一致；没有输出图时禁用。
+- 让 `TaskCard` 自己持有转换弹窗的打开与 busy 状态，能避免修改 `TaskGrid`、`AgentWorkspace` 等所有调用方，同时按钮点击区域已经统一阻止冒泡，不会误开详情。
+- `TaskCard` 当前返回单一卡片根节点；为了避免固定定位弹窗落入可能被滑动 transform 影响的卡片祖先，需要用 Fragment 返回“卡片 + 弹窗”两个同级节点。
+- 现有图标库没有手机设备图标；快捷按钮可使用与结果卡片其他操作相同规格的内联 24px 描边手机图标。
+- `TaskCard` 已计算 `firstOutputImageId`，快捷转换可以直接复用该值作为转换来源和禁用条件。
+- 项目没有现成 `TaskCard` 组件测试；转换的数据逻辑已位于 store，新增改动主要是入口接线和响应式样式，验证重点应放在 TypeScript 构建、既有转换测试与真实页面点击。
+- Listing 操作区最清爽的处理是把按钮组移到标题说明下方，参考图存在时使用三列等宽网格，三颗按钮统一 `h-9 w-full`；窄屏回落为单列，彻底消除同一行抢空间。
+- 首页卡片已新增手机图标按钮，位置紧接收藏按钮；点击后复用现有片数选择弹窗，确认时以卡片第一张输出图调用既有手机 A+ 转换函数。
+- Listing 参考图按钮组已改为独立整行：有图时 `sm:grid-cols-3` 三列等宽，移动端单列；三个按钮统一 36px 高度和全宽。
+- 生产构建已通过，TypeScript 与 JSX 结构无错误；仅有项目既有的 500kB 大 chunk 警告。
+- 卡片位于可滑动/可能带 transform 的层级内；转换弹窗最终使用项目已有的 `createPortal(..., document.body)` 模式，避免 fixed 定位受到卡片祖先层影响。
+- 最终全量 Vitest 结果为 45 个文件、434 项通过；最后 portal 调整后又单独验证 `src/store.test.ts` 的 98 项转换/状态测试通过。
+- 最终生产构建通过，`git diff --check` 通过；仅保留项目既有的大 chunk 和 Windows LF/CRLF 提示。

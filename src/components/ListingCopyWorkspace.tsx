@@ -689,11 +689,11 @@ export default function ListingCopyWorkspace() {
                 if (event.dataTransfer.files.length) void handleFiles(event.dataTransfer.files)
               }}
             >
-              <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="mb-3 space-y-3">
                 <div><h4 className="text-sm font-bold text-gray-800 dark:text-gray-100">产品参考图</h4><p className="mt-1 text-[11px] text-gray-400">用于确认外观事实，最多 8 张；不会直接决定文案风格。</p></div>
-                <div className="grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-end">
+                <div className={`grid w-full gap-2 ${referenceImages.length > 0 ? 'sm:grid-cols-3' : ''}`}>
                   {referenceImages.length > 0 && (
-                    <button type="button" onClick={clearReferenceImages} disabled={isUploading} className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-400/20 dark:bg-gray-950 dark:text-red-300 dark:hover:bg-red-400/10 sm:w-auto">
+                    <button type="button" onClick={clearReferenceImages} disabled={isUploading} className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 text-xs font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-400/20 dark:bg-gray-950 dark:text-red-300 dark:hover:bg-red-400/10">
                       <TrashIcon className="h-3.5 w-3.5" />清空图片
                     </button>
                   )}
@@ -703,12 +703,12 @@ export default function ListingCopyWorkspace() {
                       onClick={syncReferenceImagesToHome}
                       disabled={isUploading}
                       title="用当前 Listing 文案页参考图替换首页参考图"
-                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200 dark:hover:bg-blue-400/15 sm:w-auto"
+                      className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200 dark:hover:bg-blue-400/15"
                     >
                       <LinkIcon className="h-3.5 w-3.5" />替换首页参考图
                     </button>
                   )}
-                  <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50 sm:w-auto"><PhotoIcon className="h-4 w-4" />{isUploading ? '上传中…' : '上传参考图'}</button>
+                  <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"><PhotoIcon className="h-4 w-4" />{isUploading ? '上传中…' : '上传参考图'}</button>
                 </div>
               </div>
               <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(event: ChangeEvent<HTMLInputElement>) => { void handleFiles(event.target.files ?? []); event.target.value = '' }} />

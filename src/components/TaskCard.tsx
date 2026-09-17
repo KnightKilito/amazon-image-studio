@@ -713,6 +713,17 @@ export default function TaskCard({
                 </TaskActionButton>
               )}
               <TaskActionButton
+                tooltip="转为手机 A+"
+                onClick={handleOpenMobileConversion}
+                className="rounded-md p-1.5 text-gray-400 transition hover:bg-cyan-50 hover:text-cyan-600 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-cyan-500/10 dark:hover:text-cyan-300"
+                disabled={!firstOutputImageId || mobileConversionBusy}
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <rect x="7" y="2.5" width="10" height="19" rx="2" strokeWidth="1.8" />
+                  <path strokeLinecap="round" strokeWidth="1.8" d="M10 5.5h4M11 18.5h2" />
+                </svg>
+              </TaskActionButton>
+              <TaskActionButton
                 tooltip={task.isFavorite ? '取消收藏' : '收藏记录'}
                 onClick={() =>
                   updateTaskInStore(task.id, { isFavorite: !task.isFavorite })
@@ -735,17 +746,6 @@ export default function TaskCard({
                     strokeWidth={2}
                     d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"
                   />
-                </svg>
-              </TaskActionButton>
-              <TaskActionButton
-                tooltip="转为手机 A+"
-                onClick={handleOpenMobileConversion}
-                className="rounded-md p-1.5 text-gray-400 transition hover:bg-cyan-50 hover:text-cyan-600 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:bg-cyan-500/10 dark:hover:text-cyan-300"
-                disabled={!firstOutputImageId || mobileConversionBusy}
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <rect x="7" y="2.5" width="10" height="19" rx="2" strokeWidth="1.8" />
-                  <path strokeLinecap="round" strokeWidth="1.8" d="M10 5.5h4M11 18.5h2" />
                 </svg>
               </TaskActionButton>
               <TaskActionButton

@@ -376,6 +376,7 @@ async function parseOpenRouterChatImageResponse(
   payload: OpenRouterChatCompletionResponse,
   mime: string,
   signal?: AbortSignal,
+  onRawImageUrls?: CallApiOptions['onRawImageUrls'],
 ): Promise<CallApiResult> {
   const imageUrls = (payload.choices ?? [])
     .flatMap((choice) => choice.message?.images ?? [])
@@ -389,6 +390,7 @@ async function parseOpenRouterChatImageResponse(
   }
 
   const rawImageUrls = imageUrls.filter(isHttpUrl)
+  if (rawImageUrls.length) onRawImageUrls?.(rawImageUrls)
   try {
     const images = await Promise.all(imageUrls.map((url) => fetchImageUrlAsDataUrl(url, mime, signal)))
     return { images, ...(rawImageUrls.length ? { rawImageUrls } : {}) }
@@ -436,7 +438,12 @@ function parseResponsesImageResults(payload: ResponsesApiResponse, fallbackMime:
   return results
 }
 
-async function parseImagesApiResponse(payload: ImageApiResponse, mime: string, signal?: AbortSignal): Promise<CallApiResult> {
+async function parseImagesApiResponse(
+  payload: ImageApiResponse,
+  mime: string,
+  signal?: AbortSignal,
+  onRawImageUrls?: CallApiOptions['onRawImageUrls'],
+): Promise<CallApiResult> {
   const data = payload.data
   if (!Array.isArray(data) || !data.length) {
     const err = new Error('接口没有返回图片数据，请查看原始响应内容确认服务商实际返回的数据结构。如果使用的是中转或兼容接口，建议创建并使用「自定义服务商」配置。')
@@ -446,6 +453,7 @@ async function parseImagesApiResponse(payload: ImageApiResponse, mime: string, s
 
   const images: string[] = []
   const rawImageUrls = data.map((item) => item.url).filter(isHttpUrl)
+  if (rawImageUrls.length) onRawImageUrls?.(rawImageUrls)
   const revisedPrompts: Array<string | undefined> = []
   try {
     for (const item of data) {
@@ -759,7 +767,12 @@ async function callOpenRouterChatImageApiSingle(
       throw new Error(message)
     }
 
-    return parseOpenRouterChatImageResponse(await response.json() as OpenRouterChatCompletionResponse, mime, controller.signal)
+    return parseOpenRouterChatImageResponse(
+      await response.json() as OpenRouterChatCompletionResponse,
+      mime,
+      controller.signal,
+      opts.onRawImageUrls,
+    )
   } finally {
     abortController.cleanup()
   }
@@ -896,7 +909,7 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile, cu
       }
     }
 
-    return parseImagesApiResponse(await response.json() as ImageApiResponse, mime, controller.signal)
+    return parseImagesApiResponse(await response.json() as ImageApiResponse, mime, controller.signal, opts.onRawImageUrls)
   } finally {
     abortController.cleanup()
   }
@@ -1026,12 +1039,19 @@ async function createCustomMultipartBody(mapping: CustomProviderSubmitMapping, o
   return formData
 }
 
-async function extractCustomImages(payload: unknown, result: CustomProviderResultMapping, mime: string, signal?: AbortSignal): Promise<CallApiResult> {
+async function extractCustomImages(
+  payload: unknown,
+  result: CustomProviderResultMapping,
+  mime: string,
+  signal?: AbortSignal,
+  onRawImageUrls?: CallApiOptions['onRawImageUrls'],
+): Promise<CallApiResult> {
   const images: string[] = []
   const imageUrls = (result.imageUrlPaths ?? []).flatMap((path) =>
     getAllByPath(payload, path).filter((value): value is string => isHttpUrl(value) || isDataUrl(value)),
   )
   const rawImageUrls = imageUrls.filter(isHttpUrl)
+  if (rawImageUrls.length) onRawImageUrls?.(rawImageUrls)
   try {
     for (const path of result.b64JsonPaths ?? []) {
       for (const value of getAllByPath(payload, path)) {
@@ -1105,6 +1125,7 @@ async function pollCustomTaskResult(
   taskId: string,
   mime: string,
   signal?: AbortSignal,
+  onRawImageUrls?: CallApiOptions['onRawImageUrls'],
 ): Promise<CallApiResult> {
   const proxyConfig = readClientDevProxyConfig()
   const requestHeaders = createRequestHeaders(profile)
@@ -1147,7 +1168,7 @@ async function pollCustomTaskResult(
     }
     if (state === 'success') {
       try {
-        return await extractCustomImages(taskPayload, poll.result, mime, signal)
+        return await extractCustomImages(taskPayload, poll.result, mime, signal, onRawImageUrls)
       } catch (err) {
         if (!signal?.aborted && isRecoverablePollingError(err)) continue
         throw err
@@ -1185,14 +1206,14 @@ async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile,
       ;(err as any).rawResponsePayload = JSON.stringify(submitPayload, null, 2)
       throw err
     }
-    if (!taskId) return extractCustomImages(submitPayload, submitMapping.result ?? {}, mime, controller.signal)
+    if (!taskId) return extractCustomImages(submitPayload, submitMapping.result ?? {}, mime, controller.signal, opts.onRawImageUrls)
     if (!customProvider.poll) throw new Error('异步接口返回了 task_id，但服务商配置缺少 poll')
     opts.onCustomTaskEnqueued?.({ taskId })
     if (submitTimeoutActive) {
       abortController.clearTimeout()
       submitTimeoutActive = false
     }
-    return pollCustomTaskResult(profile, customProvider.poll, taskId, mime, controller.signal)
+    return pollCustomTaskResult(profile, customProvider.poll, taskId, mime, controller.signal, opts.onRawImageUrls)
   } finally {
     abortController.cleanup()
   }

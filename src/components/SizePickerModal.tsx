@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { calculateImageSize, normalizeImageSize, parseRatio, type SizeTier } from '../lib/size'
 import { isAPlusMotherImageSize } from '../lib/aPlusLayout'
+import { getLockedResizeCompanionDimension } from '../lib/imageResizing'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import ViewportTooltip from './ViewportTooltip'
 
@@ -64,6 +65,10 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
   // Resolution mode state
   const [customW, setCustomW] = useState(currentParsedSize?.width ?? '1024')
   const [customH, setCustomH] = useState(currentParsedSize?.height ?? '1024')
+  const [resolutionRatioLocked, setResolutionRatioLocked] = useState(true)
+  const lockedResolutionRatioRef = useRef(
+    (Number(currentParsedSize?.width) || 1024) / (Number(currentParsedSize?.height) || 1024),
+  )
 
   const [hintVisible, setHintVisible] = useState(false)
   const hintTimerRef = useRef<number | null>(null)
@@ -136,6 +141,31 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
       setHintVisible(true)
       hintTimerRef.current = null
     }, 450)
+  }
+
+  const handleCustomWidthChange = (nextWidth: string) => {
+    setCustomW(nextWidth)
+    if (!resolutionRatioLocked) return
+    const companion = getLockedResizeCompanionDimension('width', Number(nextWidth), lockedResolutionRatioRef.current)
+    if (companion > 0) setCustomH(String(companion))
+  }
+
+  const handleCustomHeightChange = (nextHeight: string) => {
+    setCustomH(nextHeight)
+    if (!resolutionRatioLocked) return
+    const companion = getLockedResizeCompanionDimension('height', Number(nextHeight), lockedResolutionRatioRef.current)
+    if (companion > 0) setCustomW(String(companion))
+  }
+
+  const toggleResolutionRatioLock = () => {
+    if (!resolutionRatioLocked) {
+      const width = Number(customW)
+      const height = Number(customH)
+      if (Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0) {
+        lockedResolutionRatioRef.current = width / height
+      }
+    }
+    setResolutionRatioLocked((current) => !current)
   }
 
   const applySize = () => {
@@ -279,33 +309,49 @@ export default function SizePickerModal({ currentSize, onSelect, onClose, allowA
               <div className="space-y-5 animate-fade-in">
                 <section>
                   <div className="mb-4 text-xs font-medium text-gray-400 dark:text-gray-500">输入具体像素值</div>
-                  <div className="flex items-center gap-4">
-                    <label className="flex-1">
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end gap-2">
+                    <label className="min-w-0">
                       <span className="mb-1.5 block text-xs text-gray-500 dark:text-gray-400">宽度 (Width)</span>
                       <input
                         type="number"
+                        min={1}
                         value={customW}
-                        onChange={(e) => setCustomW(e.target.value)}
-                        className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                        onChange={(e) => handleCustomWidthChange(e.target.value)}
+                        className="h-10 w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                         placeholder="例如 1024"
                       />
                     </label>
-                    <div className="mt-5 text-gray-300 dark:text-gray-600">
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </div>
-                    <label className="flex-1">
+                    <button
+                      type="button"
+                      aria-label={resolutionRatioLocked ? '解除宽高比例锁定' : '锁定当前宽高比例'}
+                      aria-pressed={resolutionRatioLocked}
+                      title={resolutionRatioLocked ? '已锁定比例，点击解除' : '比例未锁定，点击按当前宽高重新锁定'}
+                      onClick={toggleResolutionRatioLock}
+                      className={`flex h-10 w-10 items-center justify-center rounded-xl border transition ${resolutionRatioLocked
+                        ? 'border-blue-400 bg-blue-50 text-blue-600 shadow-sm dark:border-blue-400/50 dark:bg-blue-500/10 dark:text-blue-300'
+                        : 'border-gray-200 bg-white/60 text-gray-400 hover:border-gray-300 hover:text-gray-600 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-500 dark:hover:text-gray-300'}`}
+                    >
+                      {resolutionRatioLocked ? (
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2" strokeWidth="2" /><path strokeLinecap="round" strokeWidth="2" d="M8 10V7a4 4 0 018 0v3" /></svg>
+                      ) : (
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2" strokeWidth="2" /><path strokeLinecap="round" strokeWidth="2" d="M8 10V7a4 4 0 017.5-2" /></svg>
+                      )}
+                    </button>
+                    <label className="min-w-0">
                       <span className="mb-1.5 block text-xs text-gray-500 dark:text-gray-400">高度 (Height)</span>
                       <input
                         type="number"
+                        min={1}
                         value={customH}
-                        onChange={(e) => setCustomH(e.target.value)}
-                        className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                        onChange={(e) => handleCustomHeightChange(e.target.value)}
+                        className="h-10 w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
                         placeholder="例如 1024"
                       />
                     </label>
                   </div>
+                  <p className="mt-2 text-center text-[11px] text-gray-400 dark:text-gray-500">
+                    {resolutionRatioLocked ? '比例已锁定，修改任一边会同步计算另一边。' : '比例未锁定，宽度和高度可独立修改。'}
+                  </p>
                 </section>
                 <div className="rounded-xl border border-gray-200/80 bg-gray-50/80 p-3 text-xs text-gray-600 dark:border-white/[0.05] dark:bg-white/[0.02] dark:text-gray-400">
                   <div className="flex items-start gap-2">

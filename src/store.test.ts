@@ -266,6 +266,23 @@ describe('history pagination state', () => {
     expect(useStore.getState().historyPageSize).toBe(12)
     useStore.setState({ historyPage: 1, historyPageSize: 12 })
   })
+
+  it('persists and restores the current Amazon Listing target size', () => {
+    useStore.getState().setAmazonPlannerListingTargetSize('1600x2000')
+    expect(useStore.getState().amazonPlannerListingTargetSize).toBe('1600x2000')
+    expect(getPersistedState(useStore.getState()).amazonPlannerListingTargetSize).toBe('1600x2000')
+
+    const restored = mergePersistedState({ amazonPlannerListingTargetSize: '1536x2048' }, useStore.getState())
+    expect(restored.amazonPlannerListingTargetSize).toBe('1536x2048')
+
+    const legacy = mergePersistedState({}, useStore.getState())
+    expect(legacy.amazonPlannerListingTargetSize).toBe('2048x2048')
+
+    const invalid = mergePersistedState({ amazonPlannerListingTargetSize: 'not-a-size' }, useStore.getState())
+    expect(invalid.amazonPlannerListingTargetSize).toBe('2048x2048')
+
+    useStore.setState({ amazonPlannerListingTargetSize: '2048x2048' })
+  })
 })
 
 describe('error toast messages', () => {

@@ -72,7 +72,7 @@ import { AMAZON_MARKETPLACE_OPTIONS, DEFAULT_AMAZON_MARKETPLACE, normalizeAmazon
 import type { AmazonMarketplace } from '../types'
 import BrandStoryModuleEditor from './BrandStoryModuleEditor'
 import PlannerRunDetailsModal, { type PlannerRunStatus } from './PlannerRunDetailsModal'
-import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, EditIcon, ExternalLinkIcon, EyeIcon, HelpCircleIcon, HistoryIcon, PhotoIcon, PlusIcon, RefreshIcon, TrashIcon } from './icons'
+import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, EditIcon, ExternalLinkIcon, EyeIcon, HelpCircleIcon, HistoryIcon, PhotoIcon, PlusIcon, RefreshIcon, SettingsIcon, TrashIcon } from './icons'
 import { clearAmazonPlannerResultSnapshot } from '../lib/amazonPlannerReset'
 import SizePickerModal from './SizePickerModal'
 import {
@@ -385,9 +385,11 @@ export default function AmazonPlanner() {
   const prompt = useStore((s) => s.prompt)
   const inputImages = useStore((s) => s.inputImages)
   const settings = useStore((s) => s.settings)
+  const listingTargetSize = useStore((s) => s.amazonPlannerListingTargetSize)
   const adminAccess = useStore((s) => s.adminAccess)
   const isAdminAuthenticated = useStore((s) => s.isAdminAuthenticated)
   const setSettings = useStore((s) => s.setSettings)
+  const setListingTargetSize = useStore((s) => s.setAmazonPlannerListingTargetSize)
   const setPrompt = useStore((s) => s.setPrompt)
   const setParams = useStore((s) => s.setParams)
   const setPendingTaskCategory = useStore((s) => s.setPendingTaskCategory)
@@ -408,7 +410,6 @@ export default function AmazonPlanner() {
   const aiStyleAbortControllerRef = useRef<AbortController | null>(null)
   const [draft, setDraft] = useState<AmazonPromptDraft>(DEFAULT_AMAZON_PROMPT_DRAFT)
   const [resolution, setResolution] = useState<'2k' | '4k'>('2k')
-  const [listingTargetSize, setListingTargetSize] = useState(DEFAULT_LISTING_TARGET_SIZE)
   const [showListingSizePicker, setShowListingSizePicker] = useState(false)
   const [listingImageCount, setListingImageCount] = useState(DEFAULT_LISTING_IMAGE_COUNT)
   const [marketplace, setMarketplace] = useState<AmazonMarketplace>(DEFAULT_AMAZON_MARKETPLACE)
@@ -2378,8 +2379,8 @@ export default function AmazonPlanner() {
                   {plannerProfileSummary}
                 </div>
               </div>
-              <div data-planner-actions className={`flex flex-wrap items-center gap-2 rounded-xl transition ${getGuideFocusClass(guideState.target === 'planner-action')}`}>
-                <div className="flex flex-wrap items-center gap-2">
+              <div data-planner-actions className={`flex w-full flex-wrap items-start gap-3 rounded-xl transition ${getGuideFocusClass(guideState.target === 'planner-action')}`}>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => isPlanning ? setShowPlannerRunDetails(true) : void createAiPlan()}
@@ -2389,23 +2390,23 @@ export default function AmazonPlanner() {
                   {isPlanning && <EyeIcon className="h-4 w-4" />}
                   {isPlanning ? '策划中...' : plannerMode === 'aplus' ? aPlusType === 'brand-story' ? 'AI策划品牌故事' : 'AI策划A+' : 'AI策划'}
                 </button>
+                </div>
+                <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
                 {isPlanning && (
                   <button
                     type="button"
                     onClick={stopAiPlan}
-                    className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 text-sm font-semibold text-red-600 transition hover:bg-red-50 dark:border-red-400/20 dark:bg-gray-900 dark:text-red-300 dark:hover:bg-red-400/10"
+                    className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 text-xs font-semibold text-red-600 transition hover:bg-red-50 dark:border-red-400/20 dark:bg-gray-900 dark:text-red-300 dark:hover:bg-red-400/10"
                   >
                     <CloseIcon className="h-4 w-4" />
                     停止
                   </button>
                 )}
-                </div>
-                <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                 {!isPlanning && plannerRun.startedAt && (
                   <button
                     type="button"
                     onClick={() => setShowPlannerRunDetails(true)}
-                    className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 text-sm font-medium text-gray-600 transition hover:bg-gray-50 hover:text-gray-900 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-white/[0.06] dark:hover:text-white"
+                    className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-xs font-medium text-gray-600 transition hover:bg-gray-50 hover:text-gray-900 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-white/[0.06] dark:hover:text-white"
                   >
                     <EyeIcon className="h-4 w-4" />
                     查看返回
@@ -2416,7 +2417,7 @@ export default function AmazonPlanner() {
                     type="button"
                     onClick={() => clearPlannerResults()}
                     title="保留标题、商品资料、参考图和 A+ 前置规划，只清空本轮策划结果"
-                    className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-amber-200 bg-white px-3 text-sm font-medium text-amber-700 transition hover:bg-amber-50 hover:text-amber-800 dark:border-amber-400/20 dark:bg-gray-900 dark:text-amber-300 dark:hover:bg-amber-400/10"
+                    className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-amber-200 bg-white px-3 text-xs font-medium text-amber-700 transition hover:bg-amber-50 hover:text-amber-800 dark:border-amber-400/20 dark:bg-gray-900 dark:text-amber-300 dark:hover:bg-amber-400/10"
                   >
                     <TrashIcon className="h-4 w-4" />
                     清空策划案
@@ -2427,42 +2428,34 @@ export default function AmazonPlanner() {
                     type="button"
                     onClick={clearListingPlan}
                     title="清空标题、五点描述并重置策划配置"
-                    className="inline-flex h-10 items-center rounded-xl px-3 text-sm font-medium text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
+                    className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 text-xs font-medium text-gray-500 transition hover:bg-gray-50 hover:text-gray-800 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-400 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
                   >
+                    <TrashIcon className="h-4 w-4" />
                     清空输入
                   </button>
                 )}
-                <a
-                  href="https://status.openai.com/"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 text-sm font-medium text-gray-600 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-300 dark:hover:border-blue-400/30 dark:hover:bg-blue-400/10 dark:hover:text-blue-200"
-                  title="查看 OpenAI 官方服务状态"
-                >
-                  <ExternalLinkIcon className="h-4 w-4" />
-                  连通性情况
-                </a>
-                <button
-                  type="button"
-                  onClick={() => setShowConnectivityHelp(true)}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-gray-500 transition hover:bg-blue-50 hover:text-blue-700 dark:text-gray-400 dark:hover:bg-blue-400/10 dark:hover:text-blue-200"
-                  title="连通性检测说明"
-                  aria-label="连通性检测说明"
-                >
-                  <HelpCircleIcon className="h-5 w-5" />
-                </button>
                 <button
                   type="button"
                   onClick={() => setShowSettings(true, 'api')}
-                  className="inline-flex h-10 items-center rounded-xl px-3 text-sm font-medium text-blue-600 transition hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-400/10"
+                  className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-medium text-blue-700 transition hover:bg-blue-100 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200 dark:hover:bg-blue-400/15"
                 >
+                  <SettingsIcon className="h-4 w-4" />
                   设置
                 </button>
                 </div>
               </div>
             </div>
-            <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-800 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200">
-              AI策划使用设置中的策划配置，生图配置保持不变。
+            <div className="mt-3 flex min-h-9 items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-1.5 text-xs leading-relaxed text-blue-800 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200">
+              <span className="min-w-0 flex-1">策划或生图失败可以先点击右边按钮看看</span>
+              <button
+                type="button"
+                onClick={() => setShowConnectivityHelp(true)}
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-blue-600 transition hover:bg-blue-100 hover:text-blue-800 dark:text-blue-300 dark:hover:bg-blue-400/15 dark:hover:text-blue-100"
+                title="连通性检测说明"
+                aria-label="连通性检测说明"
+              >
+                <HelpCircleIcon className="h-4 w-4" />
+              </button>
             </div>
             {plannerUsesOfficialDeepSeek && (
               <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100">

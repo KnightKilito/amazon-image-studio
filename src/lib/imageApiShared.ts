@@ -20,6 +20,8 @@ export interface CallApiOptions {
   onFalRequestEnqueued?: (request: { requestId: string; endpoint: string }) => void
   onCustomTaskEnqueued?: (task: { taskId: string }) => void
   onPartialImage?: (partial: { image: string; partialImageIndex?: number; requestIndex?: number }) => void
+  /** API 已返回远程图片 URL，但浏览器可能仍在下载图片数据。 */
+  onRawImageUrls?: (urls: string[]) => void
 }
 
 export interface CallApiResult {

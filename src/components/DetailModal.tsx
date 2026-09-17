@@ -393,6 +393,25 @@ export default function DetailModal() {
     }
   }
 
+  const handleCopyRawImageUrl = async (url: string, index?: number) => {
+    try {
+      await copyTextToClipboard(url)
+      showToast(index == null ? '图片 URL 已复制' : `图片 ${index + 1} URL 已复制`, 'success')
+    } catch (err) {
+      showToast(getClipboardFailureMessage('复制图片 URL 失败', err), 'error')
+    }
+  }
+
+  const handleCopyAllRawImageUrls = async () => {
+    if (!rawImageUrls.length) return
+    try {
+      await copyTextToClipboard(rawImageUrls.join('\n'))
+      showToast(`已复制 ${rawImageUrls.length} 条图片 URL`, 'success')
+    } catch (err) {
+      showToast(getClipboardFailureMessage('复制全部图片 URL 失败', err), 'error')
+    }
+  }
+
   const handleCopyPrompt = async () => {
     if (!displayPrompt) return
     try {
@@ -791,12 +810,7 @@ export default function DetailModal() {
                       onClick={async (e) => {
                         if (task.rawImageUrls!.length === 1) {
                           copyRawUrlsTooltip.handlers.onClick()
-                          try {
-                            await copyTextToClipboard(task.rawImageUrls![0])
-                            showToast('图片链接已复制', 'success')
-                          } catch (err) {
-                            showToast(getClipboardFailureMessage('复制链接失败', err), 'error')
-                          }
+                          await handleCopyRawImageUrl(task.rawImageUrls![0])
                         } else {
                           dismissAllTooltips()
                           setShowRawUrlsModal(true)
@@ -866,6 +880,56 @@ export default function DetailModal() {
           </button>
 
           <div data-selectable-text className="contents">
+            {rawImageUrls.length > 0 && (
+              <section className="order-2 mb-4 rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 dark:border-emerald-400/20 dark:bg-emerald-400/10">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-200">图片下载 URL</h3>
+                      <span className="rounded-md bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold text-white">后台已返回</span>
+                    </div>
+                    <p className="mt-1 text-[11px] leading-relaxed text-emerald-800/75 dark:text-emerald-200/75">
+                      {task.status === 'running'
+                        ? '图片服务已返回地址，浏览器正在下载到本机；网速较慢时可先复制链接打开。'
+                        : '这是图片服务返回的原始地址，可复制到其他网络环境打开或下载。'}
+                    </p>
+                  </div>
+                  {rawImageUrls.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyAllRawImageUrls()}
+                      className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-2.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 dark:border-emerald-400/20 dark:bg-gray-900 dark:text-emerald-200 dark:hover:bg-emerald-400/10"
+                    >
+                      <CopyIcon className="h-3.5 w-3.5" />
+                      复制全部
+                    </button>
+                  )}
+                </div>
+                <div className="mt-3 space-y-2">
+                  {rawImageUrls.map((url, index) => (
+                    <div key={`${url}-${index}`} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-lg border border-emerald-200/80 bg-white/90 p-2 dark:border-emerald-400/15 dark:bg-gray-950/70">
+                      <span className="flex h-6 min-w-6 items-center justify-center rounded-md bg-emerald-100 px-1.5 text-[10px] font-bold text-emerald-700 dark:bg-emerald-400/15 dark:text-emerald-200">{index + 1}</span>
+                      <input
+                        readOnly
+                        value={url}
+                        onFocus={(event) => event.currentTarget.select()}
+                        aria-label={`图片 ${index + 1} 下载 URL`}
+                        className="h-8 min-w-0 w-full rounded-md border border-gray-200 bg-gray-50 px-2 font-mono text-[11px] text-gray-700 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-500/10 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyRawImageUrl(url, index)}
+                        aria-label={`复制图片 ${index + 1} 下载 URL`}
+                        title="复制 URL"
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-emerald-700 transition hover:bg-emerald-100 dark:text-emerald-200 dark:hover:bg-emerald-400/15"
+                      >
+                        <CopyIcon className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
             <section className="order-4">
             <div className="flex items-center gap-1.5 mb-2">
               <h3 className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
@@ -1246,14 +1310,7 @@ export default function DetailModal() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={async () => {
-                    try {
-                      await copyTextToClipboard(rawImageUrls.join('\n'))
-                      showToast('复制成功', 'success')
-                    } catch (err) {
-                      showToast(getClipboardFailureMessage('复制失败', err), 'error')
-                    }
-                  }}
+                  onClick={() => void handleCopyAllRawImageUrls()}
                   className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-50 dark:bg-white/[0.04] text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.08] transition-colors text-xs font-medium"
                 >
                   <CopyIcon className="w-3.5 h-3.5" />
@@ -1282,14 +1339,7 @@ export default function DetailModal() {
                     </div>
                     <button
                       type="button"
-                      onClick={async () => {
-                        try {
-                          await copyTextToClipboard(url)
-                          showToast('复制成功', 'success')
-                        } catch (err) {
-                          showToast(getClipboardFailureMessage('复制失败', err), 'error')
-                        }
-                      }}
+                      onClick={() => void handleCopyRawImageUrl(url, i)}
                       className="flex-shrink-0 p-2 sm:px-3 sm:py-1.5 flex items-center justify-center gap-1.5 rounded-lg bg-gray-50 dark:bg-white/[0.04] text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.08] transition-colors text-xs font-medium border border-transparent dark:border-white/[0.04]"
                       title="复制链接"
                     >

@@ -74,6 +74,7 @@ import { fetchAdminSettings, readAdminToken, saveAdminSettings } from './lib/adm
 import { navigateToAppPage } from './lib/appNavigation'
 import { normalizeAmazonMarketplace } from './lib/amazonMarketplace'
 import { mergeTextNotes, normalizeTextNotes, readTextNotes, saveTextNotes } from './lib/textNotes'
+import { DEFAULT_LISTING_TARGET_SIZE, normalizeListingTargetSize } from './lib/listingImageSize'
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 
 // ===== Image cache =====
@@ -728,6 +729,7 @@ export function getPersistedState(state: AppState) {
     supportPromptOpen: state.supportPromptOpen,
     supportPromptSkippedForImportedData: state.supportPromptSkippedForImportedData,
     historyPageSize: state.historyPageSize,
+    amazonPlannerListingTargetSize: state.amazonPlannerListingTargetSize,
     adminAccess: state.adminAccess,
   }
 }
@@ -836,6 +838,7 @@ export function mergePersistedState(persistedState: unknown, currentState: AppSt
     supportPromptOpen: Boolean(persisted.supportPromptOpen),
     supportPromptSkippedForImportedData: Boolean(persisted.supportPromptSkippedForImportedData),
     historyPageSize: normalizeHistoryPageSize(persisted.historyPageSize),
+    amazonPlannerListingTargetSize: normalizeListingTargetSize(persisted.amazonPlannerListingTargetSize),
     adminAccess: normalizeAdminAccess(persisted.adminAccess),
     isAdminAuthenticated: false,
     prompt: pagePromptDrafts.home,
@@ -889,6 +892,8 @@ interface AppState {
   // 设置
   settings: AppSettings
   setSettings: (s: Partial<AppSettings>) => void
+  amazonPlannerListingTargetSize: string
+  setAmazonPlannerListingTargetSize: (size: string) => void
   dismissedCodexCliPrompts: string[]
   dismissCodexCliPrompt: (key: string) => void
   adminAccess: AdminAccessSettings
@@ -1400,6 +1405,10 @@ export const useStore = create<AppState>()(
             : {}),
         }
       }),
+      amazonPlannerListingTargetSize: DEFAULT_LISTING_TARGET_SIZE,
+      setAmazonPlannerListingTargetSize: (size) => set((state) => ({
+        amazonPlannerListingTargetSize: normalizeListingTargetSize(size, state.amazonPlannerListingTargetSize),
+      })),
       dismissedCodexCliPrompts: [],
       dismissCodexCliPrompt: (key) => set((st) => ({
         dismissedCodexCliPrompts: st.dismissedCodexCliPrompts.includes(key)
@@ -2166,6 +2175,10 @@ export function mergeRestoredInputImages(
     const restoredImage = restoredById.get(latestImage.id)
     return restoredImage?.dataUrl ? [{ ...latestImage, dataUrl: restoredImage.dataUrl }] : []
   })
+}
+
+function mergeRawImageUrls(...groups: Array<readonly string[] | undefined>) {
+  return Array.from(new Set(groups.flatMap((group) => group ?? []).filter((url) => /^https?:\/\//i.test(url))))
 }
 
 export function mergeRestoredInputImage(
@@ -4340,6 +4353,13 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
         useStore.getState().setTaskStreamPreview(taskId, partial.image, partial.requestIndex)
         void persistTaskStreamPartialImage(taskId, partial.image)
       },
+      onRawImageUrls: (urls) => {
+        const currentTask = useStore.getState().tasks.find((candidate) => candidate.id === taskId)
+        if (!currentTask || currentTask.status !== 'running') return
+        const mergedUrls = mergeRawImageUrls(currentTask.rawImageUrls, urls)
+        if (mergedUrls.length === (currentTask.rawImageUrls?.length ?? 0)) return
+        updateTaskInStore(taskId, { rawImageUrls: mergedUrls })
+      },
     })
 
     const latestBeforeSuccess = useStore.getState().tasks.find((t) => t.id === taskId)
@@ -4392,12 +4412,13 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
       return
     }
     const partialImageIdsToClean = latestBeforeUpdate.streamPartialImageIds || []
+    const completedRawImageUrls = mergeRawImageUrls(latestBeforeUpdate.rawImageUrls, result.rawImageUrls)
     clearOpenAIWatchdogTimer(taskId)
     useStore.getState().setTaskStreamPreview(taskId)
     updateTaskInStore(taskId, {
       outputImages: outputIds,
       streamPartialImageIds: undefined,
-      rawImageUrls: result.rawImageUrls?.length ? result.rawImageUrls : undefined,
+      rawImageUrls: completedRawImageUrls.length ? completedRawImageUrls : undefined,
       actualParams,
       actualParamsByImage,
       revisedPromptByImage: revisedPromptByImage && Object.keys(revisedPromptByImage).length > 0 ? revisedPromptByImage : undefined,
@@ -4494,6 +4515,7 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
       scheduleCustomRecovery(taskId)
     } else {
       let errorMessage = err instanceof Error ? err.message : String(err)
+      const rawErrorPayload = getRawErrorPayload(err)
       const settings = useStore.getState().settings
       const profile = getTaskApiProfile(settings, latestTask)
       const usesApiProxy = profile?.apiProxy ?? settings.apiProxy
@@ -4508,10 +4530,12 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
       if (networkErrorHint && !errorMessage.includes(IMAGE_FETCH_CORS_HINT)) {
         errorMessage += `\n${networkErrorHint}`
       }
+      const failedRawImageUrls = mergeRawImageUrls(latestTask.rawImageUrls, rawErrorPayload.rawImageUrls)
       updateTaskInStore(taskId, {
         status: 'error',
         error: errorMessage,
-        ...getRawErrorPayload(err),
+        rawImageUrls: failedRawImageUrls.length ? failedRawImageUrls : undefined,
+        rawResponsePayload: rawErrorPayload.rawResponsePayload,
         falRecoverable: false,
         customRecoverable: false,
         finishedAt: Date.now(),

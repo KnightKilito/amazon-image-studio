@@ -60,6 +60,40 @@ describe('callImageApi', () => {
     expect(body.size).toBe('2048x2048')
   })
 
+  it('reports remote image URLs before the browser finishes downloading them', async () => {
+    const imageUrl = 'https://cdn.example.com/generated/result.png'
+    let resolveDownload!: (response: Response) => void
+    const downloadResponse = new Promise<Response>((resolve) => {
+      resolveDownload = resolve
+    })
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ url: imageUrl }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockImplementationOnce(() => downloadResponse)
+    const reportedUrls: string[][] = []
+
+    const resultPromise = callImageApi({
+      settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key' },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+      onRawImageUrls: (urls) => reportedUrls.push(urls),
+    })
+
+    await vi.waitFor(() => expect(reportedUrls).toEqual([[imageUrl]]))
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    resolveDownload(new Response(new Uint8Array([137, 80, 78, 71]), {
+      status: 200,
+      headers: { 'Content-Type': 'image/png' },
+    }))
+    const result = await resultPromise
+    expect(result.rawImageUrls).toEqual([imageUrl])
+    expect(result.images[0]).toMatch(/^data:image\/png;base64,/)
+  })
+
   it('routes OpenRouter Images API profiles through Chat Completions image generation', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       choices: [{

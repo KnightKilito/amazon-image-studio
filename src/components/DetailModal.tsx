@@ -13,6 +13,7 @@ import { downloadImageIds, downloadImageIdsAsZip } from '../lib/downloadImages'
 import { getTaskDisplayPrompt, isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { getAspectLabel, getTaskHistoryCategory, getWorkflowLabel } from '../lib/taskHistory'
 import { getAPlusUpscalePlan, type APlusUpscaleFormat } from '../lib/imageUpscaling'
+import type { APlusSliceFormat } from '../lib/imageSlicing'
 import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, LinkIcon, TrashIcon } from './icons'
 
 import ViewportTooltip from './ViewportTooltip'
@@ -498,11 +499,10 @@ export default function DetailModal() {
     }
   }
 
-  const handleConfirmSlice = async (sliceCount: number) => {
+  const handleConfirmSlice = async (sliceCount: number, sliceFormat: APlusSliceFormat) => {
     if (!task || !currentOutputImageId || sliceBusy) return
     setSliceBusy(true)
     try {
-      const sliceFormat = task.category?.aPlusType === 'mobile' ? 'mobile' : 'premium'
       const derivedTask = await createPremiumAPlusSliceTask(task, currentOutputImageId, sliceCount, sliceFormat)
       showToast(`已切割并保存 ${derivedTask.outputImages.length} 张${sliceFormat === 'mobile' ? '手机' : '高级'} A+ 图片`, 'success')
       setShowSliceDialog(false)
@@ -1178,7 +1178,7 @@ export default function DetailModal() {
                 disabled={!currentOutputImageId || !currentOutputPreviewSrc}
                 className="flex w-full items-center justify-center rounded-xl bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/20"
               >
-                切割{task.category?.aPlusType === 'mobile' ? '手机' : '高级'} A+ 母图
+                切割 A+ 母图
               </button>
             )}
             {aPlusUpscaleFormat && (
@@ -1273,6 +1273,7 @@ export default function DetailModal() {
           source={currentOutputPreviewSrc}
           initialSliceCount={task.category?.aPlusPlanContext?.sliceCount ?? 2}
           format={task.category?.aPlusType === 'mobile' ? 'mobile' : 'premium'}
+          allowFormatSelection
           busy={sliceBusy}
           onClose={() => {
             if (!sliceBusy) setShowSliceDialog(false)

@@ -62,6 +62,7 @@ describe('Mobile A+ vertical slicing geometry', () => {
       sliceWidth: 600,
       sliceHeight: 450,
     })
+    expect(validateAPlusMotherGeometry(1200, 2700, 3, 'premium').valid).toBe(false)
   })
 
   it('does not mistake Premium A+ mother geometry for Mobile A+ geometry', () => {

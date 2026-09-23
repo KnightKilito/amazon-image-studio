@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import type { TextNote } from '../types'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import {
@@ -11,6 +11,19 @@ import {
 } from '../lib/textNotes'
 import { useStore } from '../store'
 import { BookOpenIcon, CloseIcon, CopyIcon, EditIcon, PlusIcon, TrashIcon } from './icons'
+import {
+  FLOATING_NOTES_EDGE_GAP,
+  FLOATING_NOTES_LAUNCHER_SIZE,
+  FLOATING_NOTES_PANEL_GAP,
+  clampFloatingNotesDock,
+  clampFloatingNotesFreePosition,
+  getFloatingNotesDockLeft,
+  getFloatingNotesPanelTop,
+  readFloatingNotesDock,
+  saveFloatingNotesDock,
+  snapFloatingNotesDock,
+  type FloatingNotesFreePosition,
+} from '../lib/floatingNotesDock'
 
 type NoteEditor = {
   id: string | null
@@ -24,16 +37,34 @@ function createNoteId() {
     : `note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+function getViewport() {
+  return typeof window === 'undefined'
+    ? { width: 1024, height: 768 }
+    : { width: window.innerWidth, height: window.innerHeight }
+}
+
 export default function FloatingNotes() {
   const showToast = useStore((state) => state.showToast)
   const setConfirmDialog = useStore((state) => state.setConfirmDialog)
   const launcherRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    startLeft: number
+    startTop: number
+    moved: boolean
+  } | null>(null)
+  const suppressLauncherClickRef = useRef(false)
   const [notes, setNotes] = useState<TextNote[]>(readTextNotes)
   const [isOpen, setIsOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [editor, setEditor] = useState<NoteEditor | null>(null)
   const [expandedNoteId, setExpandedNoteId] = useState<string | null>(null)
+  const [dock, setDock] = useState(() => readFloatingNotesDock(getViewport()))
+  const [dragPosition, setDragPosition] = useState<FloatingNotesFreePosition | null>(null)
+  const [panelTop, setPanelTop] = useState(() => dock.top)
   const filteredNotes = useMemo(() => searchTextNotes(notes, query), [notes, query])
 
   useEffect(() => {
@@ -61,6 +92,99 @@ export default function FloatingNotes() {
       window.removeEventListener('keydown', handleKeyDown)
     }
   }, [editor, isOpen])
+
+  useEffect(() => {
+    const handleResize = () => {
+      const viewport = getViewport()
+      setDragPosition(null)
+      setDock((current) => {
+        const next = clampFloatingNotesDock(current, viewport)
+        saveFloatingNotesDock(next)
+        return next
+      })
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
+  useEffect(() => {
+    if (!isOpen || !panelRef.current) return
+    const panel = panelRef.current
+    const updatePanelTop = () => {
+      setPanelTop(getFloatingNotesPanelTop(dock.top, panel.getBoundingClientRect().height, window.innerHeight))
+    }
+    updatePanelTop()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(updatePanelTop)
+    observer.observe(panel)
+    return () => observer.disconnect()
+  }, [dock.top, isOpen])
+
+  const getDragPosition = (clientX: number, clientY: number) => {
+    const drag = dragRef.current
+    if (!drag) return null
+    return clampFloatingNotesFreePosition({
+      left: drag.startLeft + clientX - drag.startX,
+      top: drag.startTop + clientY - drag.startY,
+    }, getViewport())
+  }
+
+  const handleLauncherPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!event.isPrimary || event.button !== 0) return
+    const rect = event.currentTarget.getBoundingClientRect()
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startLeft: rect.left,
+      startTop: rect.top,
+      moved: false,
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  const handleLauncherPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 5) return
+    drag.moved = true
+    const next = getDragPosition(event.clientX, event.clientY)
+    if (next) setDragPosition(next)
+    event.preventDefault()
+  }
+
+  const finishLauncherDrag = (event: ReactPointerEvent<HTMLButtonElement>, cancelled = false) => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    if (drag.moved && !cancelled) {
+      const freePosition = getDragPosition(event.clientX, event.clientY)
+      if (freePosition) {
+        const nextDock = snapFloatingNotesDock(freePosition, getViewport())
+        setDock(nextDock)
+        saveFloatingNotesDock(nextDock)
+        suppressLauncherClickRef.current = true
+      }
+    }
+    dragRef.current = null
+    setDragPosition(null)
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId)
+    }
+  }
+
+  const launcherStyle: CSSProperties = dragPosition
+    ? { left: dragPosition.left, top: dragPosition.top }
+    : {
+        top: dock.top,
+        ...(dock.side === 'left'
+          ? { left: FLOATING_NOTES_EDGE_GAP }
+          : { right: FLOATING_NOTES_EDGE_GAP }),
+      }
+  const panelOffset = FLOATING_NOTES_EDGE_GAP + FLOATING_NOTES_LAUNCHER_SIZE + FLOATING_NOTES_PANEL_GAP
+  const panelStyle: CSSProperties = {
+    top: panelTop,
+    ...(dock.side === 'left' ? { left: panelOffset } : { right: panelOffset }),
+  }
 
   const persistNotes = (nextNotes: TextNote[]) => {
     const saved = saveTextNotes(nextNotes)
@@ -126,9 +250,21 @@ export default function FloatingNotes() {
         ref={launcherRef}
         type="button"
         data-floating-notes-launcher
-        onClick={() => setIsOpen((open) => !open)}
-        className="fixed left-2 top-1/2 z-[65] flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-violet-600 text-white shadow-[0_10px_30px_rgba(37,99,235,0.35)] ring-4 ring-white/80 transition hover:scale-105 hover:shadow-[0_12px_36px_rgba(37,99,235,0.45)] dark:ring-gray-950/80 sm:left-3"
-        title="常用文字笔记"
+        onPointerDown={handleLauncherPointerDown}
+        onPointerMove={handleLauncherPointerMove}
+        onPointerUp={(event) => finishLauncherDrag(event)}
+        onPointerCancel={(event) => finishLauncherDrag(event, true)}
+        onClick={(event) => {
+          if (suppressLauncherClickRef.current) {
+            suppressLauncherClickRef.current = false
+            event.preventDefault()
+            return
+          }
+          setIsOpen((open) => !open)
+        }}
+        style={launcherStyle}
+        className={`fixed z-[65] flex h-12 w-12 touch-none items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-violet-600 text-white shadow-[0_10px_30px_rgba(37,99,235,0.35)] ring-4 ring-white/80 hover:scale-105 hover:shadow-[0_12px_36px_rgba(37,99,235,0.45)] active:cursor-grabbing dark:ring-gray-950/80 ${dragPosition ? 'cursor-grabbing transition-none' : 'cursor-grab transition-[left,right,top,transform,box-shadow] duration-200'}`}
+        title="常用文字笔记（拖动可吸附侧边）"
         aria-label="常用文字笔记"
         aria-expanded={isOpen}
       >
@@ -144,12 +280,13 @@ export default function FloatingNotes() {
         <div
           ref={panelRef}
           data-floating-notes-panel
-          className="fixed left-16 top-1/2 z-[65] flex max-h-[min(72vh,640px)] w-[min(360px,calc(100vw-5rem))] -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/95 shadow-[0_18px_60px_rgba(15,23,42,0.22)] ring-1 ring-black/5 backdrop-blur-xl dark:border-white/[0.1] dark:bg-gray-900/95 dark:ring-white/10 sm:left-20"
+          style={panelStyle}
+          className="fixed z-[65] flex max-h-[min(72vh,640px)] w-[min(360px,calc(100vw-5rem))] flex-col overflow-hidden rounded-2xl border border-white/60 bg-white/95 shadow-[0_18px_60px_rgba(15,23,42,0.22)] ring-1 ring-black/5 backdrop-blur-xl transition-[left,right,top] duration-200 dark:border-white/[0.1] dark:bg-gray-900/95 dark:ring-white/10"
         >
           <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3 dark:border-white/[0.08]">
             <div className="min-w-0">
               <div className="text-sm font-bold text-gray-900 dark:text-white">常用文字笔记</div>
-              <div className="mt-0.5 text-[11px] text-gray-400">常用提示词保存在当前浏览器</div>
+              <div className="mt-0.5 text-[11px] text-gray-400">常用提示词保存在当前浏览器 · 拖动圆形按钮可移动</div>
             </div>
             <button type="button" onClick={openNewNote} className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg bg-blue-600 px-2.5 text-xs font-semibold text-white transition hover:bg-blue-500">
               <PlusIcon className="h-3.5 w-3.5" />新增

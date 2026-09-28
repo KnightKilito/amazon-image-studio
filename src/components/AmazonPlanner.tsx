@@ -612,6 +612,11 @@ export default function AmazonPlanner() {
   const currentActionPromptMode = currentActionKey ? actionPromptModes[currentActionKey] ?? null : null
   const currentActionFilled = currentActionProgress === 'filled' || currentActionProgress === 'submitted'
   const currentActionSubmitted = currentActionProgress === 'submitted'
+  const styleImageSubmitHint = !currentActionSubmitted && !actionDisabled && visualStyleMode === 'ai' && styleReferenceRequired && !hasStyleReference
+    ? isGeneratingAiStyleImage
+      ? '风格图正在生成，完成后才能提交生成。'
+      : '请先生成风格图，完成后才能提交生成。'
+    : ''
   const fullPromptFilled = currentActionFilled && currentActionPromptMode === 'full'
   const planOnlyFilled = currentActionFilled && currentActionPromptMode === 'plan-only'
   const actionKindLabel = plannerMode === 'aplus' ? '模块' : isMainListingPlan ? '主图' : '图片'
@@ -3165,14 +3170,27 @@ export default function AmazonPlanner() {
                       )}
                       仅策划案
                     </button>
-                    <button
-                      type="button"
-                      onClick={applyAndSubmit}
-                      disabled={submitDisabled || currentActionSubmitted}
-                      className={`inline-flex h-9 items-center justify-center rounded-lg px-2 text-xs font-semibold transition ${currentActionSubmitted ? 'cursor-default bg-emerald-600 text-white' : submitDisabled ? 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-white/[0.06] dark:text-gray-600' : 'bg-blue-600 text-white hover:bg-blue-500'}`}
+                    <div
+                      className="group relative min-w-0"
+                      tabIndex={styleImageSubmitHint ? 0 : undefined}
+                      aria-label={styleImageSubmitHint ? `提交生成：${styleImageSubmitHint}` : undefined}
+                      title={styleImageSubmitHint || undefined}
                     >
-                      {currentActionSubmitted ? '已提交' : '提交生成'}
-                    </button>
+                      <button
+                        type="button"
+                        onClick={applyAndSubmit}
+                        disabled={submitDisabled || currentActionSubmitted}
+                        className={`inline-flex h-9 w-full items-center justify-center rounded-lg px-2 text-xs font-semibold transition ${currentActionSubmitted ? 'cursor-default bg-emerald-600 text-white' : submitDisabled ? 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-white/[0.06] dark:text-gray-600' : 'bg-blue-600 text-white hover:bg-blue-500'}`}
+                      >
+                        {currentActionSubmitted ? '已提交' : '提交生成'}
+                      </button>
+                      {styleImageSubmitHint && <span aria-hidden="true" className="absolute inset-0 cursor-help" />}
+                      {styleImageSubmitHint && (
+                        <span role="tooltip" className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-max max-w-[min(80vw,18rem)] -translate-x-1/2 rounded-lg bg-gray-900 px-3 py-2 text-center text-xs font-medium leading-relaxed text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus:opacity-100 dark:bg-gray-700">
+                          {styleImageSubmitHint}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

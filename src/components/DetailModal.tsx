@@ -11,6 +11,7 @@ import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { downloadImageIds, downloadImageIdsAsZip } from '../lib/downloadImages'
 import { getTaskDisplayPrompt, isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
+import { getTaskLoadingPhase } from '../lib/taskLoadingPhase'
 import { getAspectLabel, getTaskHistoryCategory, getWorkflowLabel } from '../lib/taskHistory'
 import { getAPlusUpscalePlan, type APlusUpscaleFormat } from '../lib/imageUpscaling'
 import type { APlusSliceFormat } from '../lib/imageSlicing'
@@ -251,6 +252,7 @@ export default function DetailModal() {
   const isFalReconnecting = task.status === 'error' && task.falRecoverable
   const isCustomReconnecting = task.status === 'error' && task.customRecoverable
   const rawImageUrls = task.rawImageUrls ?? []
+  const isDownloadingImage = getTaskLoadingPhase(task) === 'downloading'
   const streamPreviewLen = streamPreviewItems.length
   const currentStreamPreviewSrc = activeStreamPreviewSrc
   const streamPartialImageIds = task.streamPartialImageIds ?? []
@@ -699,14 +701,19 @@ export default function DetailModal() {
                     />
                   ) : null}
                   {(!currentStreamPreviewSrc || !streamPreviewLoaded) && (
-                    <svg className="w-10 h-10 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
+                    <div className="flex flex-col items-center gap-2">
+                      <svg className={`h-10 w-10 animate-spin ${isDownloadingImage ? 'text-emerald-400' : 'text-blue-400'}`} fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      <span className={`text-sm font-medium ${isDownloadingImage ? 'text-emerald-300' : 'text-white/75'}`}>
+                        {isDownloadingImage ? '下载中...' : '生成中...'}
+                      </span>
+                    </div>
                   )}
                   {streamPreviewLoaded && (
-                    <span className="absolute top-4 right-4 flex items-center gap-1 rounded bg-blue-500 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
-                      流式预览
+                    <span className={`absolute top-4 right-4 flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm ${isDownloadingImage ? 'bg-emerald-600' : 'bg-blue-500'}`}>
+                      {isDownloadingImage ? '下载中 · 流式预览' : '流式预览'}
                     </span>
                   )}
                   {streamPreviewLen > 1 && (
@@ -735,10 +742,15 @@ export default function DetailModal() {
                 </>
               )}
               {task.status === 'running' && streamPreviewLen === 0 && (
-                <svg className="w-10 h-10 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
+                <div className="flex flex-col items-center gap-2">
+                  <svg className={`h-10 w-10 animate-spin ${isDownloadingImage ? 'text-emerald-400' : 'text-blue-400'}`} fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  <span className={`text-sm font-medium ${isDownloadingImage ? 'text-emerald-300' : 'text-white/75'}`}>
+                    {isDownloadingImage ? '下载中...' : '生成中...'}
+                  </span>
+                </div>
               )}
             </>
           )}

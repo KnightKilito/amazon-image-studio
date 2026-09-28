@@ -15,6 +15,7 @@ import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_FAL_MODEL } from '../lib/apiProfiles'
 import { getTaskDisplayPrompt, isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
+import { getTaskLoadingPhase } from '../lib/taskLoadingPhase'
 import { CodeIcon } from './icons'
 import MobileAPlusConversionDialog from './MobileAPlusConversionDialog'
 import ViewportTooltip from './ViewportTooltip'
@@ -364,6 +365,7 @@ export default function TaskCard({
   const defaultModelForProvider = task.apiProvider === 'fal' ? DEFAULT_FAL_MODEL : DEFAULT_IMAGES_MODEL
   const showModel = task.apiModel && task.apiModel !== defaultModelForProvider
   const isInterrupted = task.status === 'error' && task.error === '已停止生成。'
+  const isDownloadingImage = getTaskLoadingPhase(task) === 'downloading'
   const firstOutputImageId = task.outputImages?.[0]
   const actualSizeForFirstImage = firstOutputImageId ? task.actualParamsByImage?.[firstOutputImageId]?.size : undefined
   const requestedOrActualRatio = parseTaskSizeRatio(actualSizeForFirstImage ?? task.actualParams?.size ?? task.params.size)
@@ -419,7 +421,7 @@ export default function TaskCard({
           !isSwiping ? 'transition-[box-shadow,border-color,background-color,transform]' : 'transition-[box-shadow,border-color,background-color]'
         } ${
           task.status === 'running'
-            ? 'border-blue-400 generating'
+            ? isDownloadingImage ? 'border-emerald-400 generating' : 'border-blue-400 generating'
             : isSelected
             ? 'border-blue-500 shadow-md ring-2 ring-blue-500/50'
             : 'border-gray-200 dark:border-white/[0.08] hover:border-gray-300 dark:hover:border-white/[0.18]'
@@ -482,8 +484,8 @@ export default function TaskCard({
                 onError={() => setStreamPreviewLoaded(false)}
               />
               {streamPreviewLoaded && (
-                <span className="absolute top-1.5 right-1.5 flex items-center gap-1 rounded bg-blue-500 px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm sm:text-xs">
-                  预览
+                <span className={`absolute top-1.5 right-1.5 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-sm sm:text-xs ${isDownloadingImage ? 'bg-emerald-600' : 'bg-blue-500'}`}>
+                  {isDownloadingImage ? '下载中' : '预览'}
                 </span>
               )}
             </>
@@ -491,7 +493,7 @@ export default function TaskCard({
           {task.status === 'running' && (!streamPreviewSrc || !streamPreviewLoaded) && (
             <div className="flex flex-col items-center gap-2">
               <svg
-                className="w-8 h-8 text-blue-400 animate-spin"
+                className={`w-8 h-8 animate-spin ${isDownloadingImage ? 'text-emerald-400' : 'text-blue-400'}`}
                 fill="none"
                 viewBox="0 0 24 24"
               >
@@ -509,7 +511,9 @@ export default function TaskCard({
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                 />
               </svg>
-              <span className="text-xs text-gray-400 dark:text-gray-500">生成中...</span>
+              <span className={`text-xs ${isDownloadingImage ? 'text-emerald-600 dark:text-emerald-300' : 'text-gray-400 dark:text-gray-500'}`}>
+                {isDownloadingImage ? '下载中...' : '生成中...'}
+              </span>
             </div>
           )}
           {task.status === 'error' && isFalReconnecting && (

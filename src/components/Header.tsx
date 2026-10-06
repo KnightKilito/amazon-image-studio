@@ -30,7 +30,7 @@ function AdminModal({ onClose }: { onClose: () => void }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [isChecking, setIsChecking] = useState(false)
-  const [modelIdInput, setModelIdInput] = useState('')
+  const [modelIdInputs, setModelIdInputs] = useState({ image: '', planner: '' })
 
   const handleLogin = async () => {
     setError('')
@@ -66,19 +66,22 @@ function AdminModal({ onClose }: { onClose: () => void }) {
     }
   }
 
-  const addModelId = () => {
-    const modelId = modelIdInput.trim()
+  const addModelId = (kind: 'image' | 'planner') => {
+    const modelId = modelIdInputs[kind].trim()
     if (!modelId) return
-    if (adminAccess.modelIds.includes(modelId)) {
-      setModelIdInput('')
+    const existing = kind === 'image' ? adminAccess.modelIds : adminAccess.plannerModelIds
+    if (existing.includes(modelId)) {
+      setModelIdInputs((current) => ({ ...current, [kind]: '' }))
       return
     }
-    setAdminAccess({ modelIds: [...adminAccess.modelIds, modelId] })
-    setModelIdInput('')
+    if (kind === 'image') setAdminAccess({ modelIds: [...existing, modelId] })
+    else setAdminAccess({ plannerModelIds: [...existing, modelId] })
+    setModelIdInputs((current) => ({ ...current, [kind]: '' }))
   }
 
-  const removeModelId = (modelId: string) => {
-    setAdminAccess({ modelIds: adminAccess.modelIds.filter((item) => item !== modelId) })
+  const removeModelId = (kind: 'image' | 'planner', modelId: string) => {
+    if (kind === 'image') setAdminAccess({ modelIds: adminAccess.modelIds.filter((item) => item !== modelId) })
+    else setAdminAccess({ plannerModelIds: adminAccess.plannerModelIds.filter((item) => item !== modelId) })
   }
 
   return (
@@ -227,50 +230,54 @@ function AdminModal({ onClose }: { onClose: () => void }) {
                   className="w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200"
                 />
               </label>
-              <div className="rounded-xl border border-gray-200/70 px-3 py-3 dark:border-white/[0.08]">
-                <span className="mb-2 block text-sm text-gray-700 dark:text-gray-200">模型 ID 可选项</span>
-                <div className="flex gap-2">
-                  <input
-                    value={modelIdInput}
-                    onChange={(event) => setModelIdInput(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault()
-                        addModelId()
-                      }
-                    }}
-                    type="text"
-                    placeholder="gpt-image-2"
-                    className="min-w-0 flex-1 rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200"
-                  />
-                  <button
-                    type="button"
-                    onClick={addModelId}
-                    className="shrink-0 rounded-xl bg-blue-500 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-600"
-                  >
-                    新增
-                  </button>
-                </div>
-                {adminAccess.modelIds.length > 0 && (
-                  <div className="mt-3 space-y-2">
-                    {adminAccess.modelIds.map((modelId) => (
-                      <div
-                        key={modelId}
-                        className="flex items-center justify-between gap-2 rounded-lg bg-gray-50 px-2.5 py-2 text-sm text-gray-700 dark:bg-white/[0.04] dark:text-gray-200"
-                      >
-                        <span className="min-w-0 truncate font-mono text-xs">{modelId}</span>
-                        <button
-                          type="button"
-                          onClick={() => removeModelId(modelId)}
-                          className="shrink-0 rounded-md px-2 py-1 text-xs text-red-500 transition hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-500/10"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    ))}
+              {([
+                { kind: 'image' as const, title: '图片模型下拉选项', placeholder: 'gpt-image-2', ids: adminAccess.modelIds },
+                { kind: 'planner' as const, title: '策划模型下拉选项', placeholder: 'gpt-5.5', ids: adminAccess.plannerModelIds },
+              ]).map(({ kind, title, placeholder, ids }) => (
+                <div key={kind} className="rounded-xl border border-gray-200/70 px-3 py-3 dark:border-white/[0.08]">
+                  <span className="mb-2 block text-sm text-gray-700 dark:text-gray-200">{title}</span>
+                  <div className="flex gap-2">
+                    <input
+                      value={modelIdInputs[kind]}
+                      onChange={(event) => setModelIdInputs((current) => ({ ...current, [kind]: event.target.value }))}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          addModelId(kind)
+                        }
+                      }}
+                      type="text"
+                      aria-label={`新增${kind === 'image' ? '图片' : '策划'}模型 ID`}
+                      placeholder={placeholder}
+                      className="min-w-0 flex-1 rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => addModelId(kind)}
+                      className="shrink-0 rounded-xl bg-blue-500 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-600"
+                    >
+                      新增
+                    </button>
                   </div>
-                )}
-              </div>
+                  {ids.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      {ids.map((modelId) => (
+                        <div key={modelId} className="flex items-center justify-between gap-2 rounded-lg bg-gray-50 px-2.5 py-2 text-sm text-gray-700 dark:bg-white/[0.04] dark:text-gray-200">
+                          <span className="min-w-0 truncate font-mono text-xs">{modelId}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeModelId(kind, modelId)}
+                            aria-label={`删除${kind === 'image' ? '图片' : '策划'}模型 ${modelId}`}
+                            className="shrink-0 rounded-md px-2 py-1 text-xs text-red-500 transition hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-500/10"
+                          >
+                            删除
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
             {error && (
               <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-200">

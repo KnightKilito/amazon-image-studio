@@ -34,6 +34,7 @@ import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { DEFAULT_DROPDOWN_MAX_HEIGHT, getDropdownMaxHeight } from '../lib/dropdown'
 import Select from './Select'
+import ModelIdInput from './ModelIdInput'
 import { Checkbox } from './Checkbox'
 import ViewportTooltip from './ViewportTooltip'
 import { ChevronDownIcon, CloseIcon, CopyIcon, PlusIcon, TrashIcon, GithubIcon, ExportIcon, ImportIcon, DragHandleIcon, LinkIcon, PhotoIcon } from './icons'
@@ -1094,16 +1095,15 @@ export default function SettingsModal() {
           </label>
         )}
 
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-gray-600 dark:text-gray-300">{isPlanner ? '策划模型' : '图片模型'}</span>
-          <input
-            value={profile.model}
-            onChange={(event) => updateProfileById(profile.id, { model: event.target.value })}
-            onBlur={(event) => updateProfileById(profile.id, { model: event.target.value }, true)}
-            placeholder={isPlanner ? getDefaultModelForMode(profile.apiMode) : DEFAULT_IMAGES_MODEL}
-            className="w-full rounded-xl bg-white/70 px-3 py-2.5 font-mono text-sm text-gray-700 outline-none transition focus:ring-2 focus:ring-blue-200 dark:bg-gray-950/30 dark:text-gray-200 dark:focus:ring-blue-500/20"
-          />
-        </label>
+        <ModelIdInput
+          key={profile.id}
+          label={isPlanner ? '策划模型' : '图片模型'}
+          value={profile.model}
+          options={isPlanner ? adminAccess.plannerModelIds : adminAccess.modelIds}
+          onChange={(model) => updateProfileById(profile.id, { model })}
+          onCommit={(model) => updateProfileById(profile.id, { model }, true)}
+          placeholder={isPlanner ? getDefaultModelForMode(profile.apiMode) : DEFAULT_IMAGES_MODEL}
+        />
 
         {profileValidation && <div className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">{profileValidation}</div>}
       </div>

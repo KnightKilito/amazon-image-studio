@@ -29,7 +29,9 @@ export interface AdminAccessSettings {
   unifiedGuestImageApiUrlEnabled: boolean
   unifiedGuestImageApiUrl: string
   referenceImageUploadLimit: number
+  /** 图片生成模型候选；保留旧字段以兼容已有管理员配置。 */
   modelIds: string[]
+  plannerModelIds: string[]
 }
 
 export type CustomProviderRequestMethod = 'GET' | 'POST'

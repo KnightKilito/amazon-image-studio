@@ -27,6 +27,7 @@ const DEFAULT_ADMIN_ACCESS = {
   unifiedGuestImageApiUrl: '',
   referenceImageUploadLimit: 16,
   modelIds: [],
+  plannerModelIds: [],
 }
 
 const sessions = new Map()
@@ -97,6 +98,12 @@ function normalizeAdminAccess(value) {
         .map((item) => item.trim())
         .filter(Boolean)))
     : DEFAULT_ADMIN_ACCESS.modelIds
+  const plannerModelIds = Array.isArray(input.plannerModelIds)
+    ? Array.from(new Set(input.plannerModelIds
+        .filter((item) => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean)))
+    : DEFAULT_ADMIN_ACCESS.plannerModelIds
   return {
     allowGuestEditApiUrl: Boolean(input.allowGuestEditApiUrl),
     allowGuestViewApiUrl: Boolean(input.allowGuestViewApiUrl),
@@ -109,6 +116,7 @@ function normalizeAdminAccess(value) {
     unifiedGuestImageApiUrl: typeof input.unifiedGuestImageApiUrl === 'string' ? input.unifiedGuestImageApiUrl : '',
     referenceImageUploadLimit: Number.isFinite(limit) ? Math.max(1, Math.min(64, Math.trunc(limit))) : DEFAULT_ADMIN_ACCESS.referenceImageUploadLimit,
     modelIds,
+    plannerModelIds,
   }
 }
 

@@ -14,6 +14,7 @@ const allowedAccess: AdminAccessSettings = {
   unifiedGuestImageApiUrl: '',
   referenceImageUploadLimit: 16,
   modelIds: [],
+  plannerModelIds: ['gpt-5.5'],
 }
 
 afterEach(() => {
@@ -43,7 +44,7 @@ describe('saveAdminSettingsAndLogout', () => {
       headers: expect.objectContaining({ Authorization: 'Bearer admin-token' }),
     })
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
-      adminAccess: { allowGuestCreateApiProfile: true },
+      adminAccess: { allowGuestCreateApiProfile: true, plannerModelIds: ['gpt-5.5'] },
     })
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/admin-api/logout')
     expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'POST' })

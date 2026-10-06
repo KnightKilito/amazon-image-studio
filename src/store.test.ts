@@ -1715,6 +1715,22 @@ describe('input persistence setting', () => {
   })
 })
 
+describe('admin model options compatibility', () => {
+  it('restores legacy model options as image models and keeps planner options separate', () => {
+    const current = useStore.getState()
+    const legacy = mergePersistedState({ adminAccess: { modelIds: ['gpt-image-2', 'gpt-image-2'] } }, current)
+    expect(legacy.adminAccess.modelIds).toEqual(['gpt-image-2'])
+    expect(legacy.adminAccess.plannerModelIds).toEqual([])
+
+    const separated = mergePersistedState({ adminAccess: {
+      modelIds: [' gpt-image-2 '],
+      plannerModelIds: ['gpt-5.5', ' gpt-5.5 ', 'deepseek-chat'],
+    } }, current)
+    expect(separated.adminAccess.modelIds).toEqual(['gpt-image-2'])
+    expect(separated.adminAccess.plannerModelIds).toEqual(['gpt-5.5', 'deepseek-chat'])
+  })
+})
+
 describe('app page prompt drafts', () => {
   beforeEach(() => {
     useStore.setState({

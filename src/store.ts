@@ -12,6 +12,8 @@ import type {
   AppSettings,
   AppMode,
   AppPage,
+  APlusBatchDraft,
+  APlusConversionContext,
   HistoryAspectFilter,
   HistoryWorkflowFilter,
   ImageEditorAnnotation,
@@ -72,6 +74,7 @@ import { resizeImageDataUrl, type ImageResizeOptions } from './lib/imageResizing
 import { getMobileMotherImageSize, getPremiumMotherImageSize, MAX_PREMIUM_MOTHER_SLICES, MIN_PREMIUM_MOTHER_SLICES } from './lib/premiumAPlusLayout'
 import { fetchAdminSettings, readAdminToken, saveAdminSettings } from './lib/adminApi'
 import { navigateToAppPage } from './lib/appNavigation'
+import { buildAPlusConversionSpec, DEFAULT_APLUS_CONVERSION_PROMPT, restoreAPlusBatchDraft } from './lib/aPlusConversion'
 import { normalizeAmazonMarketplace } from './lib/amazonMarketplace'
 import { mergeTextNotes, normalizeTextNotes, readTextNotes, saveTextNotes } from './lib/textNotes'
 import { DEFAULT_LISTING_TARGET_SIZE, normalizeListingTargetSize } from './lib/listingImageSize'
@@ -81,6 +84,7 @@ import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 // 内存缓存，id → dataUrl。只保留少量最近使用图片，避免大量 4K data URL 常驻内存。
 
 const imageCache = new Map<string, string>()
+const taskRuntimeContexts = new Map<string, { controller: AbortController; settings: AppSettings; background: boolean }>()
 const thumbnailCache = new Map<string, { dataUrl: string; width?: number; height?: number; thumbnailVersion?: number }>()
 const thumbnailBackfillIds = new Map<string, 'visible' | 'background'>()
 const thumbnailBackfillRunningIds = new Set<string>()
@@ -694,6 +698,8 @@ export function getPersistedState(state: AppState) {
   return {
     settings,
     params: state.params,
+    aPlusBatchDraft: state.aPlusBatchDraft,
+    singleAPlusConversion: settings.persistInputOnRestart ? state.singleAPlusConversion : null,
     ...(settings.persistInputOnRestart && (state.appMode === 'gallery' || galleryInputDraft)
       ? {
           prompt: galleryInputDraft?.prompt ?? '',
@@ -832,6 +838,9 @@ export function mergePersistedState(persistedState: unknown, currentState: AppSt
     editorActiveImageId: null,
     editorActiveTaskId: null,
     editorHiddenResultImageIds: [],
+    aPlusBatchDraft: restoreAPlusBatchDraft(persisted.aPlusBatchDraft),
+    singleAPlusConversion: settings.persistInputOnRestart && persisted.singleAPlusConversion?.sourceImageId
+      ? persisted.singleAPlusConversion : null,
     editorCanvasDraft: settings.persistInputOnRestart
       ? normalizeImageEditorCanvasDraft(persisted.editorCanvasDraft)
       : { ...DEFAULT_IMAGE_EDITOR_CANVAS_DRAFT },
@@ -894,6 +903,10 @@ interface AppState {
   editorHiddenResultImageIds: string[]
   setEditorHiddenResultImageIds: (ids: string[] | ((current: string[]) => string[])) => void
   editorCanvasDraft: ImageEditorCanvasDraft
+  aPlusBatchDraft: APlusBatchDraft | null
+  setAPlusBatchDraft: (draft: APlusBatchDraft | null | ((current: APlusBatchDraft | null) => APlusBatchDraft | null)) => void
+  singleAPlusConversion: APlusConversionContext | null
+  setSingleAPlusConversion: (context: APlusConversionContext | null) => void
   setEditorCanvasDraft: (patch: Partial<ImageEditorCanvasDraft>) => void
   resetEditorCanvasDraft: (sourceImageId?: string | null) => void
 
@@ -1044,6 +1057,8 @@ interface AppState {
 }
 
 function isImageReferencedByState(state: AppState, imageId: string) {
+  if (state.aPlusBatchDraft?.rows.some((row) => row.sourceImageId === imageId)) return true
+  if (state.singleAPlusConversion?.sourceImageId === imageId) return true
   if (state.inputImages.some((img) => img.id === imageId)) return true
   if (state.editorCanvasDraft.sourceImageId === imageId) return true
   if (state.styleReferenceImage?.id === imageId) return true
@@ -1355,7 +1370,12 @@ export const useStore = create<AppState>()(
         editorHiddenResultImageIds: typeof ids === 'function' ? ids(state.editorHiddenResultImageIds) : ids,
       })),
       editorCanvasDraft: { ...DEFAULT_IMAGE_EDITOR_CANVAS_DRAFT },
+      aPlusBatchDraft: null,
+      setAPlusBatchDraft: (draft) => set((state) => ({ aPlusBatchDraft: typeof draft === 'function' ? draft(state.aPlusBatchDraft) : draft })),
+      singleAPlusConversion: null,
+      setSingleAPlusConversion: (singleAPlusConversion) => set({ singleAPlusConversion }),
       setEditorCanvasDraft: (patch) => set((state) => ({
+        ...(patch.sourceImageId !== undefined && patch.sourceImageId !== state.editorCanvasDraft.sourceImageId ? { singleAPlusConversion: null } : {}),
         editorCanvasDraft: normalizeImageEditorCanvasDraft({
           ...state.editorCanvasDraft,
           ...patch,
@@ -1363,6 +1383,7 @@ export const useStore = create<AppState>()(
         }),
       })),
       resetEditorCanvasDraft: (sourceImageId = null) => set({
+        singleAPlusConversion: null,
         editorCanvasDraft: {
           ...DEFAULT_IMAGE_EDITOR_CANVAS_DRAFT,
           sourceImageId,
@@ -1484,6 +1505,7 @@ export const useStore = create<AppState>()(
           return syncActiveInputDraft(s, {
             inputImages,
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, inputImages, { [previous.id]: img.id }),
+            ...(previous.id === s.singleAPlusConversion?.sourceImageId ? { singleAPlusConversion: null } : {}),
             ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
           })
         })
@@ -1497,6 +1519,7 @@ export const useStore = create<AppState>()(
           return syncActiveInputDraft(s, {
             inputImages,
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, inputImages),
+            ...(removed?.id === s.singleAPlusConversion?.sourceImageId ? { singleAPlusConversion: null } : {}),
             ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
           })
         }),
@@ -1504,6 +1527,7 @@ export const useStore = create<AppState>()(
         set((s) => {
           for (const img of s.inputImages) imageCache.delete(img.id)
           return syncActiveInputDraft(s, {
+            singleAPlusConversion: null,
             inputImages: [],
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, []),
             maskDraft: null,
@@ -1833,6 +1857,11 @@ function isAsyncCustomProviderTask(settings: AppSettings, provider: string, hasI
 export function markInterruptedOpenAIRunningTasks(tasks: TaskRecord[], now = Date.now()) {
   const interruptedTasks: TaskRecord[] = []
   const updatedTasks = tasks.map((task) => {
+    if (task.aPlusConversion?.batchId && (task.status === 'running' || task.falRecoverable || task.customRecoverable)) {
+      const updated: TaskRecord = { ...task, status: 'error', error: '页面已刷新，请手动续跑。', falRecoverable: false, customRecoverable: false, finishedAt: now, elapsed: Math.max(0, now - task.createdAt) }
+      interruptedTasks.push(updated)
+      return updated
+    }
     if (!isRunningOpenAITask(task) || task.customTaskId) return task
 
     const updated: TaskRecord = {
@@ -2112,7 +2141,7 @@ async function resolveImageSizeParamsList(
 
 async function completeRecoveredFalTask(task: TaskRecord, result: Awaited<ReturnType<typeof getFalQueuedImageResult>>) {
   const latest = useStore.getState().tasks.find((item) => item.id === task.id)
-  if (!latest || latest.status === 'done') return
+  if (!latest || (latest.status !== 'running' && !latest.falRecoverable)) return
 
   const actualParamsList = await resolveImageSizeParamsList(result.images, result.actualParamsList)
   const outputIds: string[] = []
@@ -2122,6 +2151,9 @@ async function completeRecoveredFalTask(task: TaskRecord, result: Awaited<Return
     outputIds.push(imgId)
   }
 
+  const current = useStore.getState().tasks.find((item) => item.id === task.id)
+  if (!current || (current.status !== 'running' && !current.falRecoverable)) { await deleteUnreferencedImageIds(outputIds); return }
+  const background = taskRuntimeContexts.get(task.id)?.background
   updateTaskInStore(task.id, {
     outputImages: outputIds,
     actualParams: firstActualParams(actualParamsList),
@@ -2133,13 +2165,16 @@ async function completeRecoveredFalTask(task: TaskRecord, result: Awaited<Return
     finishedAt: Date.now(),
     elapsed: Date.now() - task.createdAt,
   })
-  useStore.getState().showToast(`fal.ai 任务已恢复，共 ${outputIds.length} 张图片`, 'success')
+  if (!background) useStore.getState().showToast(`fal.ai 任务已恢复，共 ${outputIds.length} 张图片`, 'success')
+  taskRuntimeContexts.delete(task.id)
 }
 
 async function recoverFalTask(taskId: string) {
-  const { settings, tasks } = useStore.getState()
+  const { tasks } = useStore.getState()
+  const runtime = taskRuntimeContexts.get(taskId)
+  const settings = runtime?.settings ?? useStore.getState().settings
   const task = tasks.find((item) => item.id === taskId)
-  if (!task || task.apiProvider !== 'fal' || !task.falRequestId || !task.falEndpoint || task.status === 'done') return
+  if (!task || (task.status !== 'running' && !task.falRecoverable) || task.apiProvider !== 'fal' || !task.falRequestId || !task.falEndpoint) return
 
   const profile = getFalRecoveryProfile(settings, task)
   if (!profile) {
@@ -2148,11 +2183,16 @@ async function recoverFalTask(taskId: string) {
   }
 
   try {
-    const result = await getFalQueuedImageResult(profile, task.falEndpoint, task.falRequestId, task.params)
+    const result = await getFalQueuedImageResult(profile, task.falEndpoint, task.falRequestId, task.params, runtime?.controller.signal, (urls) => {
+      const current = useStore.getState().tasks.find((item) => item.id === taskId)
+      if (current && (current.status === 'running' || current.falRecoverable)) updateTaskInStore(taskId, { rawImageUrls: urls })
+    })
     clearFalRecoveryTimer(taskId)
     await completeRecoveredFalTask(task, result)
     return
   } catch (err) {
+    const current = useStore.getState().tasks.find((item) => item.id === taskId)
+    if (!current || (current.status !== 'running' && !current.falRecoverable)) return
     if (isFalConnectionRecoverableError(err)) {
       scheduleFalRecovery(taskId)
       return
@@ -2222,6 +2262,19 @@ export async function initStore() {
   const { tasks, interruptedTasks } = markInterruptedOpenAIRunningTasks(storedTasks)
   await Promise.all(interruptedTasks.map((task) => putTask(task)))
   useStore.getState().setTasks(tasks)
+  useStore.getState().setAPlusBatchDraft((draft) => draft ? {
+    ...draft,
+    rows: draft.rows.map((row) => {
+      if (!row.taskId) return row
+      const task = tasks.find((item) => item.id === row.taskId)
+      if (!task) return { ...row, status: 'error' as const, taskId: null, error: '任务记录已移除，可重新提交。' }
+      if (task.status === 'done') return { ...row, status: 'done' as const, error: null }
+      if (task.status === 'error' && !task.falRecoverable && !task.customRecoverable) return {
+        ...row, status: task.error === AGENT_STOPPED_MESSAGE || task.error?.includes('页面已刷新') ? 'stopped' as const : 'error' as const, error: task.error,
+      }
+      return row
+    }),
+  } : null)
   showSupportPromptForExistingLocalData(tasks)
   for (const task of tasks) {
     if (
@@ -2501,7 +2554,7 @@ export async function initStore() {
   }
 }
 
-interface ExplicitTaskInput {
+export interface ExplicitTaskInput {
   prompt: string
   inputImages: InputImage[]
   styleReferenceImage: InputImage | null
@@ -2509,12 +2562,68 @@ interface ExplicitTaskInput {
   params: TaskParams
   category: NonNullable<TaskRecord['category']>
   imageEditContext?: TaskImageEditContext
+  aPlusConversion?: APlusConversionContext
 }
 
 interface SubmitTaskOptions {
   allowFullMask?: boolean
   useCurrentApiProfileWhenReusedMissing?: boolean
   explicitInput?: ExplicitTaskInput
+  background?: boolean
+  requestSettings?: AppSettings
+  signal?: AbortSignal
+  onTaskCreated?: (id: string) => void
+}
+
+export function captureAPlusRequestSettings() {
+  const state = useStore.getState()
+  const settings = normalizeSettings(state.settings)
+  const profile = applyGuestUnifiedApiUrl(getActiveApiProfile(state.settings), 'image', state.adminAccess, state.isAdminAuthenticated)
+  const error = validateApiProfile(profile)
+  if (error) throw new Error(`请完善生图配置：${error}`)
+  if (!canApiProfileGenerateImages(profile)) throw new Error('当前配置不能生成图片，请选择生图配置。')
+  return createSettingsForApiProfile(settings, profile)
+}
+
+export function waitForImageTask(taskId: string): Promise<TaskRecord | null> {
+  const terminal = (task?: TaskRecord) => !task || (task.status !== 'running' && !task.falRecoverable && !task.customRecoverable)
+  const current = useStore.getState().tasks.find((task) => task.id === taskId)
+  if (terminal(current)) return Promise.resolve(current ?? null)
+  return new Promise((resolve) => {
+    const unsubscribe = useStore.subscribe((state) => {
+      const task = state.tasks.find((candidate) => candidate.id === taskId)
+      if (!terminal(task)) return
+      unsubscribe()
+      taskRuntimeContexts.delete(taskId)
+      resolve(task ?? null)
+    })
+  })
+}
+
+export async function submitExplicitImageTask(input: ExplicitTaskInput, requestSettings: AppSettings, signal?: AbortSignal, onTaskCreated?: (id: string) => void) {
+  let taskId: string | null = null
+  const submitted = await submitTask({
+    explicitInput: input, requestSettings, background: true, signal,
+    onTaskCreated: (id) => { taskId = id; onTaskCreated?.(id) },
+  })
+  if (!submitted || !taskId) throw new Error('任务未能提交，请检查配置和图片。')
+  return { taskId, completion: waitForImageTask(taskId) }
+}
+
+export function stopImageTask(taskId: string) {
+  const task = useStore.getState().tasks.find((candidate) => candidate.id === taskId)
+  if (!task || (task.status !== 'running' && !task.falRecoverable && !task.customRecoverable)) return
+  const context = taskRuntimeContexts.get(taskId)
+  clearOpenAIWatchdogTimer(taskId)
+  clearFalRecoveryTimer(taskId)
+  clearCustomRecoveryTimer(taskId)
+  updateTaskInStore(taskId, {
+    status: 'error', error: AGENT_STOPPED_MESSAGE, falRecoverable: false, customRecoverable: false,
+    finishedAt: Date.now(), elapsed: Date.now() - task.createdAt,
+  })
+  context?.controller.abort()
+  taskRuntimeContexts.delete(taskId)
+  useStore.getState().setTaskStreamPreview(taskId)
 }
 
 /** 提交新任务 */
@@ -2537,10 +2646,12 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<boole
   const maskDraft = options.explicitInput ? options.explicitInput.maskDraft : state.maskDraft
   const params = options.explicitInput?.params ?? state.params
 
-  const normalizedSettings = normalizeSettings(settings)
-  let activeProfile = applyGuestUnifiedApiUrl(getActiveApiProfile(settings), 'image', adminAccess, isAdminAuthenticated)
+  const normalizedSettings = normalizeSettings(options.requestSettings ?? settings)
+  let activeProfile = options.requestSettings
+    ? getActiveApiProfile(normalizedSettings)
+    : applyGuestUnifiedApiUrl(getActiveApiProfile(settings), 'image', adminAccess, isAdminAuthenticated)
   let requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
-  if (normalizedSettings.reuseTaskApiProfileTemporarily && (reusedTaskApiProfileId || reusedTaskApiProfileMissing)) {
+  if (!options.requestSettings && normalizedSettings.reuseTaskApiProfileTemporarily && (reusedTaskApiProfileId || reusedTaskApiProfileMissing)) {
     const reusedProfile = getReusedTaskApiProfile(normalizedSettings, reusedTaskApiProfileId)
     if (!reusedProfile) {
       if (options.useCurrentApiProfileWhenReusedMissing) {
@@ -2564,6 +2675,7 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<boole
   }
 
   if (!canApiProfileGenerateImages(activeProfile)) {
+    if (options.background) throw new Error('当前配置不能生成图片。')
     setConfirmDialog({
       title: '当前配置不能生图',
       message: `当前配置「${activeProfile.name}」使用 ${getApiModeApiName(activeProfile.apiMode)}，普通生图只支持 Images API，OpenRouter 图片模型可使用 Chat Completions。生成图片前，请切换到生图配置。`,
@@ -2577,6 +2689,7 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<boole
   }
 
   if (validateApiProfile(activeProfile)) {
+    if (options.background) throw new Error(`生图配置不完整：${validateApiProfile(activeProfile)}`)
     showToast(`请先完善请求 API 配置：${validateApiProfile(activeProfile)}`, 'error')
     useStore.getState().setShowSettings(true)
     return false
@@ -2584,6 +2697,7 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<boole
 
   const trimmedPrompt = prompt.trim()
   if (!trimmedPrompt) {
+    if (options.background) throw new Error('请输入转换提示词。')
     showToast('请输入提示词', 'error')
     return false
   }
@@ -2595,6 +2709,7 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<boole
     const requestedSlices = motherPlanContext.sliceCount ?? 2
     const maxMotherSlices = Math.min(7, Math.max(2, activeProfile.maxMotherSlices ?? 7))
     if (activeProfile.motherImageSupport === 'unsupported' || requestedSlices > maxMotherSlices) {
+      if (options.background) throw new Error(`当前配置不支持 ${requestedSlices} 片连续母图。`)
       showToast(
         activeProfile.motherImageSupport === 'unsupported'
           ? `当前生图配置「${activeProfile.name}」已标记为不支持连续母图，请切换配置后再提交。`
@@ -2677,7 +2792,7 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<boole
     preserveAPlusMotherSize: Boolean(motherPlanContext),
   })
   const normalizedParamPatch = getChangedParams(params, normalizedParams)
-  if (Object.keys(normalizedParamPatch).length) {
+  if (!options.explicitInput && Object.keys(normalizedParamPatch).length) {
     useStore.getState().setParams(normalizedParamPatch)
   }
 
@@ -2702,31 +2817,49 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<boole
     elapsed: null,
     category: taskCategory,
     imageEditContext: options.explicitInput?.imageEditContext,
+    aPlusConversion: options.explicitInput?.aPlusConversion,
   }
 
+  options.signal?.throwIfAborted()
+  await putTask(task)
+  if (options.signal?.aborted) { await dbDeleteTask(taskId); options.signal.throwIfAborted() }
   const latestTasks = useStore.getState().tasks
   useStore.getState().setTasks([task, ...latestTasks])
-  if (useStore.getState().appPage === 'editor') {
+  if (!options.background && useStore.getState().appPage === 'editor') {
     useStore.getState().setEditorActiveTaskId(taskId)
   }
-  await putTask(task)
-  useStore.getState().showToast('任务已提交', 'success')
+  options.onTaskCreated?.(taskId)
+  if (!options.background) useStore.getState().showToast('任务已提交', 'success')
 
   if (settings.clearInputAfterSubmit && !options.explicitInput) {
     useStore.getState().setPrompt('')
     useStore.getState().clearInputImages()
     useStore.getState().clearStyleReferenceImage()
   }
-  useStore.getState().setReusedTaskApiProfile(null)
-  useStore.getState().setPendingTaskCategory(null)
+  if (!options.background) {
+    useStore.getState().setReusedTaskApiProfile(null)
+    useStore.getState().setPendingTaskCategory(null)
+  }
 
   // 异步调用 API
-  executeTask(taskId)
+  void executeTask(taskId, { requestSettings, background: options.background, signal: options.signal })
   return true
 }
 
 export async function submitImageEditorTask(options: { allowFullMask?: boolean; useCurrentApiProfileWhenReusedMissing?: boolean } = {}): Promise<boolean> {
   const state = useStore.getState()
+  if (state.singleAPlusConversion) {
+    const context = state.singleAPlusConversion
+    const dataUrl = await ensureImageCached(context.sourceImageId)
+    if (!dataUrl) { state.showToast('转换源图已不存在，请重新选择。', 'error'); return false }
+    if (!state.prompt.trim()) { state.showToast('请输入转换提示词', 'error'); return false }
+    const sourceTask = findSourceTaskForImage(context.sourceImageId)
+    const spec = buildAPlusConversionSpec(context.target, context.panelCount, state.prompt, sourceTask)
+    return submitTask({ ...options, explicitInput: {
+      ...spec, inputImages: [{ id: context.sourceImageId, dataUrl }], styleReferenceImage: null, maskDraft: null,
+      aPlusConversion: context,
+    } })
+  }
   const instruction = state.prompt.trim()
   if (!instruction) {
     state.showToast('请输入编辑要求', 'error')
@@ -3066,6 +3199,9 @@ function addTaskReferencedImageIds(target: Set<string>, task: TaskRecord) {
 
 function addEditorCanvasDraftReferencedImageIds(target: Set<string>, draft = useStore.getState().editorCanvasDraft) {
   if (draft.sourceImageId) target.add(draft.sourceImageId)
+  const state = useStore.getState()
+  for (const row of state.aPlusBatchDraft?.rows ?? []) target.add(row.sourceImageId)
+  if (state.singleAPlusConversion?.sourceImageId) target.add(state.singleAPlusConversion.sourceImageId)
 }
 
 async function deleteUnreferencedImageIds(imageIds: Iterable<string>) {
@@ -3100,7 +3236,7 @@ async function persistTaskStreamPartialImage(taskId: string, dataUrl: string) {
     cacheImage(imgId, dataUrl)
 
     const latestTask = useStore.getState().tasks.find((task) => task.id === taskId)
-    if (!latestTask || latestTask.status === 'done') {
+    if (!latestTask || latestTask.status === 'done' || latestTask.error === AGENT_STOPPED_MESSAGE) {
       await deleteUnreferencedImageIds([imgId])
       return
     }
@@ -4288,10 +4424,12 @@ async function executeAgentRound(
   }
 }
 
-async function executeTask(taskId: string, options: { referenceImageLimit?: number } = {}) {
-  const { settings, adminAccess, isAdminAuthenticated } = useStore.getState()
+async function executeTask(taskId: string, options: { referenceImageLimit?: number; requestSettings?: AppSettings; background?: boolean; signal?: AbortSignal } = {}) {
+  const state = useStore.getState()
+  const settings = options.requestSettings ?? state.settings
+  const { adminAccess, isAdminAuthenticated } = state
   const task = useStore.getState().tasks.find((t) => t.id === taskId)
-  if (!task) return
+  if (!task || task.status !== 'running') return
   const taskProfile = getTaskApiProfile(settings, task)
   if (!taskProfile && task.apiProfileId) {
     updateTaskInStore(taskId, {
@@ -4304,8 +4442,13 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
     })
     return
   }
-  const activeProfile = applyGuestUnifiedApiUrl(taskProfile ?? getActiveApiProfile(settings), 'image', adminAccess, isAdminAuthenticated)
+  const activeProfile = options.requestSettings ? getActiveApiProfile(settings) : applyGuestUnifiedApiUrl(taskProfile ?? getActiveApiProfile(settings), 'image', adminAccess, isAdminAuthenticated)
   const requestSettings = createSettingsForApiProfile(settings, activeProfile)
+  const controller = new AbortController()
+  taskRuntimeContexts.set(taskId, { controller, settings: requestSettings, background: Boolean(options.background) })
+  if (options.signal?.aborted) { stopImageTask(taskId); return }
+  options.signal?.addEventListener('abort', () => stopImageTask(taskId), { once: true })
+  const stillRunning = () => !controller.signal.aborted && useStore.getState().tasks.some((item) => item.id === taskId && item.status === 'running')
   const taskProvider = task.apiProvider ?? activeProfile.provider
   let falRequestInfo: { requestId: string; endpoint: string } | null = task.falRequestId && task.falEndpoint
         ? { requestId: task.falRequestId, endpoint: task.falEndpoint }
@@ -4338,11 +4481,13 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
     const apiMaskDataUrl = preparedPayload.maskDataUrl
     const result = await callImageApi({
       settings: requestSettings,
+      signal: controller.signal,
       prompt: replaceImageMentionsForApi(task.prompt, apiInputDataUrls.length),
       params: task.params,
       inputImageDataUrls: apiInputDataUrls,
       maskDataUrl: apiMaskDataUrl,
       onFalRequestEnqueued: (request) => {
+        if (!stillRunning()) return
         falRequestInfo = request
         updateTaskInStore(taskId, {
           falRequestId: request.requestId,
@@ -4351,6 +4496,7 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
         })
       },
       onCustomTaskEnqueued: (request) => {
+        if (!stillRunning()) return
         customTaskInfo = request
         updateTaskInStore(taskId, {
           customTaskId: request.taskId,
@@ -4358,6 +4504,7 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
         })
       },
       onPartialImage: (partial) => {
+        if (!stillRunning()) return
         useStore.getState().setTaskStreamPreview(taskId, partial.image, partial.requestIndex)
         void persistTaskStreamPartialImage(taskId, partial.image)
       },
@@ -4371,7 +4518,7 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
     })
 
     const latestBeforeSuccess = useStore.getState().tasks.find((t) => t.id === taskId)
-    if (!latestBeforeSuccess || latestBeforeSuccess.status !== 'running') {
+    if (!latestBeforeSuccess || !stillRunning()) {
       useStore.getState().setTaskStreamPreview(taskId)
       return
     }
@@ -4379,6 +4526,7 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
     // 存储输出图片
     const outputIds: string[] = []
     for (const dataUrl of result.images) {
+      if (!stillRunning()) { await deleteUnreferencedImageIds(outputIds); return }
       const imgId = await storeImage(dataUrl, 'generated')
       cacheImage(imgId, dataUrl)
       outputIds.push(imgId)
@@ -4415,7 +4563,8 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
 
     // 更新任务
     const latestBeforeUpdate = useStore.getState().tasks.find((t) => t.id === taskId)
-    if (!latestBeforeUpdate || latestBeforeUpdate.status !== 'running') {
+    if (!latestBeforeUpdate || !stillRunning()) {
+      await deleteUnreferencedImageIds(outputIds)
       useStore.getState().setTaskStreamPreview(taskId)
       return
     }
@@ -4438,7 +4587,7 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
     })
     void deleteUnreferencedImageIds(partialImageIdsToClean)
 
-    useStore.getState().showToast(`生成完成，共 ${outputIds.length} 张图片`, 'success')
+    if (!options.background) useStore.getState().showToast(`生成完成，共 ${outputIds.length} 张图片`, 'success')
     const currentMask = useStore.getState().maskDraft
     if (
       maskDataUrl &&
@@ -4460,6 +4609,7 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
     const referenceImageLimit = !latestTask.maskImageId ? getReferenceImageLimitFromError(err) : null
     if (
       referenceImageLimit &&
+      !options.background &&
       !options.referenceImageLimit &&
       latestTask.inputImageIds.length > referenceImageLimit
     ) {
@@ -4473,7 +4623,7 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
         finishedAt: Date.now(),
         elapsed: Date.now() - task.createdAt,
       })
-      useStore.getState().setDetailTaskId(taskId)
+      if (!options.background) useStore.getState().setDetailTaskId(taskId)
       useStore.getState().setConfirmDialog({
         title: '参考图数量受限',
         message: `当前生图接口最多支持 ${referenceImageLimit} 张参考图，本次任务实际需要发送 ${latestTask.inputImageIds.length} 张。${latestTask.imageEditContext?.visualGuideImageId ? '\n\n标注导引图额外占用一张输入图；继续时会优先保留主图和导引图。' : ''}\n\n是否只上传前 ${referenceImageLimit} 张继续生图？如果本任务带风格参考图，也会优先保留风格参考图。\n\n取消后不会继续请求，你可以切换生图 API 中转站后再重试。`,
@@ -4549,9 +4699,11 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
         finishedAt: Date.now(),
         elapsed: Date.now() - task.createdAt,
       })
-      useStore.getState().setDetailTaskId(taskId)
+      if (!options.background) useStore.getState().setDetailTaskId(taskId)
     }
   } finally {
+    const latest = useStore.getState().tasks.find((item) => item.id === taskId)
+    if (!latest?.falRecoverable && !latest?.customRecoverable) taskRuntimeContexts.delete(taskId)
     // 释放输入图片的内存缓存（已持久化到 IndexedDB，后续按需从 DB 加载）
     for (const imgId of task.inputImageIds) {
       imageCache.delete(imgId)
@@ -4910,6 +5062,7 @@ export async function retryTask(task: TaskRecord) {
       ...task.imageEditContext,
       referenceImageIds: [...task.imageEditContext.referenceImageIds],
     } : undefined,
+    aPlusConversion: task.aPlusConversion ? { ...task.aPlusConversion } : undefined,
   }
 
   const latestTasks = useStore.getState().tasks
@@ -4924,6 +5077,7 @@ export async function retryTask(task: TaskRecord) {
 
 /** 复用配置 */
 export async function reuseConfig(task: TaskRecord) {
+  useStore.getState().setSingleAPlusConversion(null)
   const { settings, setPrompt, setParams, setInputImages, setStyleReferenceImage, clearStyleReferenceImage, setMaskDraft, clearMaskDraft, showToast, setConfirmDialog, setReusedTaskApiProfile, setPendingTaskCategory } = useStore.getState()
   const normalizedSettings = normalizeSettings(settings)
   const currentProfile = getActiveApiProfile(settings)
@@ -5037,6 +5191,7 @@ export async function editOutputs(task: TaskRecord, selectedOutputImageId?: stri
 }
 
 export function clearImageEditorInputs() {
+  useStore.getState().setSingleAPlusConversion(null)
   const {
     clearInputImages,
     setEditorActiveImageId,
@@ -5190,21 +5345,24 @@ export async function prepareAPlusConversionFromImage(
   target: APlusOutputConversionTarget,
   explicitSliceCount?: number,
 ) {
-  const prepared = await convertOutputToAPlusFormat(
-    findSourceTaskForImage(sourceImageId),
-    sourceImageId,
-    target,
-    explicitSliceCount,
-  )
-  if (prepared) {
-    useStore.getState().setEditorActiveImageId(sourceImageId)
-    useStore.getState().setAppPage('editor')
-    navigateToAppPage('editor')
-  }
-  return prepared
+  const dataUrl = await ensureImageCached(sourceImageId)
+  if (!dataUrl) { useStore.getState().showToast('无法读取转换源图', 'error'); return false }
+  const sourceTask = findSourceTaskForImage(sourceImageId)
+  const panelCount = explicitSliceCount ?? getSuggestedAPlusOutputConversionSliceCount(sourceTask)
+  const spec = buildAPlusConversionSpec(target, panelCount, DEFAULT_APLUS_CONVERSION_PROMPT, sourceTask)
+  const state = useStore.getState()
+  state.setAppPage('editor')
+  state.setPrompt(DEFAULT_APLUS_CONVERSION_PROMPT)
+  state.setParams(spec.params)
+  state.setSingleAPlusConversion({ sourceImageId, target, panelCount })
+  state.setEditorActiveImageId(sourceImageId)
+  state.setPendingTaskCategory(null)
+  navigateToAppPage('editor')
+  return true
 }
 
 export async function removeMultipleTasks(taskIds: string[]) {
+  for (const id of taskIds) stopImageTask(id)
   const { tasks, setTasks, inputImages, styleReferenceImage, galleryInputDraft, showToast, clearSelection, selectedTaskIds } = useStore.getState()
   
   if (!taskIds.length) return
@@ -5260,6 +5418,7 @@ export async function removeMultipleTasks(taskIds: string[]) {
 
 /** 删除单条任务 */
 export async function removeTask(task: TaskRecord) {
+  stopImageTask(task.id)
   const { tasks, setTasks, inputImages, styleReferenceImage, galleryInputDraft, showToast } = useStore.getState()
 
   // 收集此任务关联的图片
@@ -5308,6 +5467,8 @@ export async function clearData(options: ClearOptions = { clearConfig: true, cle
   const { setTasks, clearInputImages, clearMaskDraft, resetEditorCanvasDraft, setSettings, setParams, showToast } = useStore.getState()
 
   if (options.clearTasks) {
+    for (const task of useStore.getState().tasks) stopImageTask(task.id)
+    useStore.setState({ aPlusBatchDraft: null, singleAPlusConversion: null })
     await dbClearTasks()
     await dbClearAmazonPlannerSessions()
     await dbClearListingCopySessions()
@@ -5359,7 +5520,7 @@ function bytesToDataUrl(bytes: Uint8Array, filePath: string): string {
 
 async function completeRecoveredCustomTask(task: TaskRecord, result: Awaited<ReturnType<typeof getCustomQueuedImageResult>>) {
   const latest = useStore.getState().tasks.find((item) => item.id === task.id)
-  if (!latest || latest.status === 'done') return
+  if (!latest || (latest.status !== 'running' && !latest.customRecoverable)) return
 
   const actualParamsList = await readImageSizeParamsList(result.images)
   const outputIds: string[] = []
@@ -5369,6 +5530,9 @@ async function completeRecoveredCustomTask(task: TaskRecord, result: Awaited<Ret
     outputIds.push(imgId)
   }
 
+  const current = useStore.getState().tasks.find((item) => item.id === task.id)
+  if (!current || (current.status !== 'running' && !current.customRecoverable)) { await deleteUnreferencedImageIds(outputIds); return }
+  const background = taskRuntimeContexts.get(task.id)?.background
   updateTaskInStore(task.id, {
     outputImages: outputIds,
     actualParams: firstActualParams(actualParamsList),
@@ -5380,13 +5544,16 @@ async function completeRecoveredCustomTask(task: TaskRecord, result: Awaited<Ret
     finishedAt: Date.now(),
     elapsed: Date.now() - task.createdAt,
   })
-  useStore.getState().showToast(`自定义异步任务已恢复，共 ${outputIds.length} 张图片`, 'success')
+  if (!background) useStore.getState().showToast(`自定义异步任务已恢复，共 ${outputIds.length} 张图片`, 'success')
+  taskRuntimeContexts.delete(task.id)
 }
 
 async function recoverCustomTask(taskId: string) {
-  const { settings, tasks } = useStore.getState()
+  const { tasks } = useStore.getState()
+  const runtime = taskRuntimeContexts.get(taskId)
+  const settings = runtime?.settings ?? useStore.getState().settings
   const task = tasks.find((item) => item.id === taskId)
-  if (!task || !task.customTaskId || task.status === 'done') return
+  if (!task || (task.status !== 'running' && !task.customRecoverable) || !task.customTaskId) return
 
   const profile = getCustomRecoveryProfile(settings, task)
   const customProvider = task.apiProvider ? getCustomProviderDefinition(settings, task.apiProvider) : null
@@ -5396,10 +5563,15 @@ async function recoverCustomTask(taskId: string) {
   }
 
   try {
-    const result = await getCustomQueuedImageResult(profile, customProvider, task.customTaskId, task.params)
+    const result = await getCustomQueuedImageResult(profile, customProvider, task.customTaskId, task.params, runtime?.controller.signal, (urls) => {
+      const current = useStore.getState().tasks.find((item) => item.id === taskId)
+      if (current && (current.status === 'running' || current.customRecoverable)) updateTaskInStore(taskId, { rawImageUrls: urls })
+    })
     clearCustomRecoveryTimer(taskId)
     await completeRecoveredCustomTask(task, result)
   } catch (err) {
+    const current = useStore.getState().tasks.find((item) => item.id === taskId)
+    if (!current || (current.status !== 'running' && !current.customRecoverable)) return
     clearCustomRecoveryTimer(taskId)
     updateTaskInStore(taskId, {
       status: 'error',

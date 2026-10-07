@@ -392,6 +392,8 @@ interface InputBarProps {
 
 export default function InputBar({ layout = 'home' }: InputBarProps) {
   const isEditorLayout = layout === 'editor'
+  const singleConversion = useStore((s) => s.singleAPlusConversion)
+  const setSingleConversion = useStore((s) => s.setSingleAPlusConversion)
   const prompt = useStore((s) => s.prompt)
   const appMode = useStore((s) => s.appMode)
   const setPrompt = useStore((s) => s.setPrompt)
@@ -539,7 +541,7 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
   const submitButtonAriaLabel = activeAgentIsRunning
     ? '停止生成'
     : hasSubmitApiConfig
-    ? maskDraft ? '遮罩编辑' : '生成图像'
+    ? isEditorLayout && singleConversion ? '提交 A+ 转换' : maskDraft ? '遮罩编辑' : '生成图像'
     : '请先配置 API'
   const submitTooltipText = activeAgentIsRunning ? '停止生成' : '尚未完成 API 配置，请在右上角设置中进行'
   const promptPlaceholder = '描述你想生成的图片，可输入 @ 来指定参考图...'
@@ -1533,7 +1535,7 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
 
   const renderImageThumb = (img: (typeof inputImages)[number], idx: number) => {
     const isMaskTarget = maskDraft?.targetImageId === img.id
-    const canEdit = !maskTargetImage || isMaskTarget
+    const canEdit = !(isEditorLayout && singleConversion) && (!maskTargetImage || isMaskTarget)
     const imageHintText = isMaskTarget ? '遮罩图必须为第一张图' : ''
     const displaySrc = isMaskTarget && maskPreviewUrl ? maskPreviewUrl : img.dataUrl
     const isImageDragging = imageDragId === img.id
@@ -1702,7 +1704,7 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
           }`}
           onClick={() => {
             if (suppressImageClickRef.current) return
-            if (isMaskTarget) {
+            if (isMaskTarget && !(isEditorLayout && singleConversion)) {
               setMaskEditorImageId(img.id)
               return
             }
@@ -1922,7 +1924,7 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
   }
 
   const renderParams = (cols: string) => (
-    <div className={`grid ${cols} gap-2 text-xs min-w-0 flex-1 lg:w-full lg:flex-none`}>
+    <div inert={isEditorLayout && singleConversion ? true : undefined} className={`grid ${cols} gap-2 text-xs min-w-0 flex-1 lg:w-full lg:flex-none ${isEditorLayout && singleConversion ? 'opacity-50' : ''}`}>
       <label
         className="relative flex flex-col gap-0.5"
         onMouseEnter={sizeHint.show}
@@ -2140,6 +2142,13 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
         ? 'pointer-events-auto h-full min-h-0 w-full'
         : 'home-input-dock pointer-events-none fixed bottom-4 left-1/2 z-30 w-full max-w-4xl -translate-x-1/2 px-3 transition-all duration-300 sm:bottom-6 sm:px-4 lg:bottom-6 lg:left-auto lg:top-20 lg:flex lg:max-w-none lg:translate-x-0 lg:flex-col lg:px-0'}>
         {!isEditorLayout && <TaskSelectionToolbar />}
+        {isEditorLayout && singleConversion && (
+          <div className="mb-2 rounded-xl border border-violet-200 bg-violet-50 p-2.5 text-[11px] leading-relaxed text-violet-800 dark:border-violet-400/20 dark:bg-violet-400/10 dark:text-violet-200">
+            <strong>{singleConversion.target === 'mobile' ? '手机' : '高级'} A+ 转换 · {singleConversion.panelCount} 片 · 仅使用已选源图</strong>
+            <p>其他素材保留。片数通过转换弹窗调整，转换不使用遮罩或画布标注。</p>
+            <button type="button" onClick={() => setSingleConversion(null)} className="mt-1 font-semibold underline">返回普通编辑</button>
+          </div>
+        )}
         <div ref={cardRef} className="pointer-events-auto bg-white/70 dark:bg-gray-900/70 backdrop-blur-2xl border border-white/50 dark:border-white/[0.08] shadow-[0_8px_30px_rgb(0,0,0,0.08)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.3)] rounded-2xl sm:rounded-3xl p-3 sm:p-4 ring-1 ring-black/5 dark:ring-white/10 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col lg:overflow-hidden">
           {/* 移动端拖动条 */}
           <div
@@ -2455,7 +2464,7 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                       </svg>
                     )}
-                    {activeAgentIsRunning ? '停止生成' : maskDraft ? '遮罩编辑' : '生成图像'}
+                    {activeAgentIsRunning ? '停止生成' : isEditorLayout && singleConversion ? '提交 A+ 转换' : maskDraft ? '遮罩编辑' : '生成图像'}
                   </button>
                 </div>
               </div>

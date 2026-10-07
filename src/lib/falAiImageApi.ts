@@ -198,11 +198,13 @@ export async function getFalQueuedImageResult(
   endpoint: string,
   requestId: string,
   params: TaskParams,
+  signal?: AbortSignal,
+  onRawImageUrls?: CallApiOptions['onRawImageUrls'],
 ): Promise<CallApiResult> {
   configureFal(profile)
-  await fal.queue.subscribeToStatus(endpoint, { requestId, logs: true })
+  await fal.queue.subscribeToStatus(endpoint, { requestId, logs: true, abortSignal: signal })
   const result = await fal.queue.result(endpoint, { requestId })
-  return parseFalResult(result.data as FalApiResponse, params, getFalCustomBaseUrlLabel(profile))
+  return parseFalResult(result.data as FalApiResponse, params, getFalCustomBaseUrlLabel(profile), signal, onRawImageUrls)
 }
 
 export async function callFalAiImageApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {

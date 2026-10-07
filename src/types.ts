@@ -207,6 +207,31 @@ export interface TaskImageEditContext {
 
 export type TaskStatus = 'running' | 'done' | 'error'
 
+export type APlusConversionTarget = 'premium' | 'mobile'
+export interface APlusConversionContext {
+  sourceImageId: string
+  target: APlusConversionTarget
+  panelCount: number
+  batchId?: string
+  rowId?: string
+}
+export type APlusBatchRowStatus = 'ready' | 'queued' | 'running' | 'done' | 'error' | 'stopped'
+export interface APlusBatchRow {
+  id: string
+  sourceImageId: string
+  label: string
+  panelCount: number
+  prompt: string
+  status: APlusBatchRowStatus
+  taskId: string | null
+  error: string | null
+}
+export interface APlusBatchDraft {
+  id: string
+  target: APlusConversionTarget
+  rows: APlusBatchRow[]
+}
+
 export interface TaskRecord {
   id: string
   prompt: string
@@ -273,6 +298,7 @@ export interface TaskRecord {
   agentToolAction?: 'generate' | 'edit' | 'auto' | string
   /** 图片编辑任务中的输入角色与原始用户要求。 */
   imageEditContext?: TaskImageEditContext
+  aPlusConversion?: APlusConversionContext
   derivation?: {
     type: 'premium-aplus-vertical-slices' | 'premium-aplus-horizontal-slices' | 'mobile-aplus-vertical-slices'
     sourceTaskId: string

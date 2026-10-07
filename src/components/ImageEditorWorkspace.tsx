@@ -6,6 +6,7 @@ import {
   createInputImageFromFile,
   deleteImageIfUnreferenced,
   ensureImageCached,
+  getSuggestedAPlusOutputConversionSliceCount,
   openImageEditor,
   prepareAPlusConversionFromImage,
   useStore,
@@ -24,6 +25,9 @@ import BatchImageResizeDialog, { type BatchResizeCandidate } from './BatchImageR
 import Select from './Select'
 import TaskGrid from './TaskGrid'
 import TaskSelectionToolbar from './TaskSelectionToolbar'
+import APlusConversionDialog from './MobileAPlusConversionDialog'
+import BatchAPlusConversionDialog from './BatchAPlusConversionDialog'
+import { addAPlusBatchSources } from '../lib/aPlusConversionBatch'
 
 type UpscaleMode = 'proportional' | 'custom'
 
@@ -117,6 +121,7 @@ export default function ImageEditorWorkspace() {
   const editorActiveTaskId = useStore((s) => s.editorActiveTaskId)
   const hiddenResultImageIds = useStore((s) => s.editorHiddenResultImageIds)
   const editorCanvasDraft = useStore((s) => s.editorCanvasDraft)
+  const singleConversion = useStore((s) => s.singleAPlusConversion)
   const setEditorActiveImageId = useStore((s) => s.setEditorActiveImageId)
   const setEditorActiveTaskId = useStore((s) => s.setEditorActiveTaskId)
   const setHiddenResultImageIds = useStore((s) => s.setEditorHiddenResultImageIds)
@@ -151,6 +156,9 @@ export default function ImageEditorWorkspace() {
   const [customUpscaleWidth, setCustomUpscaleWidth] = useState('')
   const [customUpscaleHeight, setCustomUpscaleHeight] = useState('')
   const [historyMultiSelectMode, setHistoryMultiSelectMode] = useState(false)
+  const [conversionDialog, setConversionDialog] = useState<{ sourceImageId: string; target: APlusOutputConversionTarget; count: number } | null>(null)
+  const [conversionBusy, setConversionBusy] = useState(false)
+  const [showBatchConversion, setShowBatchConversion] = useState(false)
 
   const activeTask = useMemo(
     () => tasks.find((task) => task.id === editorActiveTaskId) ?? null,
@@ -325,6 +333,7 @@ export default function ImageEditorWorkspace() {
   }
 
   const applyMainSource = (imageId: string) => {
+    useStore.getState().setSingleAPlusConversion(null)
     const nextSource = inputImages.find((image) => image.id === imageId)
     if (!nextSource) return
     const reordered = [nextSource, ...inputImages.filter((image) => image.id !== imageId)]
@@ -421,6 +430,7 @@ export default function ImageEditorWorkspace() {
 
   const removeMaterialImage = (imageId: string, inputIndex?: number) => {
     const applyRemoval = () => {
+      if (useStore.getState().singleAPlusConversion?.sourceImageId === imageId) useStore.getState().setSingleAPlusConversion(null)
       const removingMainSource = imageId === mainSourceImageId
       const nextSourceImageId = removingMainSource
         ? inputImages.find((image) => image.id !== imageId)?.id ?? null
@@ -506,13 +516,27 @@ export default function ImageEditorWorkspace() {
     }
   }
 
-  const handlePrepareConversion = async (target: APlusOutputConversionTarget) => {
+  const handlePrepareConversion = (target: APlusOutputConversionTarget) => {
     if (!currentImageId) return
-    const prepared = await prepareAPlusConversionFromImage(currentImageId, target)
-    if (prepared) {
-      setEditorActiveImageId(currentImageId)
-      showToast('已准备 A+ 编辑提示词，请确认后提交', 'success')
+    const sourceTask = tasks.find((task) => task.outputImages.includes(currentImageId))
+    setConversionDialog({ sourceImageId: currentImageId, target, count: sourceTask ? getSuggestedAPlusOutputConversionSliceCount(sourceTask) : 1 })
+  }
+
+  const confirmConversion = async (count: number) => {
+    if (!conversionDialog || conversionBusy) return
+    setConversionBusy(true)
+    try {
+      const prepared = await prepareAPlusConversionFromImage(conversionDialog.sourceImageId, conversionDialog.target, count)
+      if (prepared) { setConversionDialog(null); showToast('已准备单图 A+ 转换，其他素材已保留，请确认提示词后提交。', 'success') }
+    } catch (error) { showToast(error instanceof Error ? error.message : '准备转换失败', 'error') }
+    finally { setConversionBusy(false) }
+  }
+
+  const openBatchConversion = () => {
+    if (!useStore.getState().aPlusBatchDraft) {
+      addAPlusBatchSources(inputImages.map((image, index) => ({ id: image.id, label: image.id === mainSourceImageId ? '当前主图' : `参考素材 ${index + 1}` })), sliceFormat)
     }
+    setShowBatchConversion(true)
   }
 
   const handlePreview = () => {
@@ -616,7 +640,7 @@ export default function ImageEditorWorkspace() {
                 annotationSourceImageId={mainSourceImageId}
                 src={previewSrc}
                 annotations={currentImageId === mainSourceImageId ? editorCanvasDraft.annotations : []}
-                editable={currentImageId === mainSourceImageId && Boolean(currentInputImage)}
+                editable={!singleConversion && currentImageId === mainSourceImageId && Boolean(currentInputImage)}
                 outputImageIds={outputImageIds}
                 onAnnotationsChange={(annotations) => setEditorCanvasDraft({ annotations })}
                 onDimensionsChange={setDimensions}
@@ -692,7 +716,7 @@ export default function ImageEditorWorkspace() {
                 />
               </div>
             </div>
-            <ToolButton onClick={handleOpenMask} disabled={!currentImageId || !currentSourceIsInput} title="在当前输入图片上绘制局部重绘遮罩">
+            <ToolButton onClick={handleOpenMask} disabled={Boolean(singleConversion) || !currentImageId || !currentSourceIsInput} title="在当前输入图片上绘制局部重绘遮罩">
               打开遮罩编辑
             </ToolButton>
             <ToolButton onClick={() => { if (currentOutputImageId) handlePromoteResult(currentOutputImageId) }} disabled={!currentOutputImageId}>
@@ -769,12 +793,13 @@ export default function ImageEditorWorkspace() {
             </ToolButton>
             <div className="grid grid-cols-2 gap-2 pt-1">
               <ToolButton onClick={() => void handlePrepareConversion('premium')} disabled={!currentImageId}>
-                准备高级 A+
+                转为高级 A+
               </ToolButton>
               <ToolButton onClick={() => void handlePrepareConversion('mobile')} disabled={!currentImageId}>
-                准备手机 A+
+                转为手机 A+
               </ToolButton>
             </div>
+            <ToolButton onClick={openBatchConversion} tone="primary">批量转为 A+</ToolButton>
           </section>
 
           {activeTask?.error && <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-700 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-200">{activeTask.error}</div>}
@@ -823,6 +848,11 @@ export default function ImageEditorWorkspace() {
           onConfirm={(count) => void handleConfirmSlice(count)}
         />
       )}
+      {conversionDialog && (
+        <APlusConversionDialog target={conversionDialog.target} initialPanelCount={conversionDialog.count} busy={conversionBusy}
+          onClose={() => { if (!conversionBusy) setConversionDialog(null) }} onConfirm={(count) => void confirmConversion(count)} />
+      )}
+      {showBatchConversion && <BatchAPlusConversionDialog onClose={() => setShowBatchConversion(false)} />}
       {showBatchResizeDialog && (
         <BatchImageResizeDialog
           candidates={batchResizeCandidates}

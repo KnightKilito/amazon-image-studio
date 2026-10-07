@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
-import { getMobileMotherImageSize, MAX_PREMIUM_MOTHER_SLICES } from '../lib/premiumAPlusLayout'
+import { MAX_PREMIUM_MOTHER_SLICES } from '../lib/premiumAPlusLayout'
 import { CloseIcon } from './icons'
 import Select from './Select'
+import { getAPlusConversionSize } from '../lib/aPlusConversion'
+import type { APlusConversionTarget } from '../types'
 
 interface Props {
+  target?: APlusConversionTarget
   initialPanelCount: number
   busy?: boolean
   onClose: () => void
@@ -17,22 +20,19 @@ function normalizePanelCount(value: unknown) {
   return Math.min(MAX_PREMIUM_MOTHER_SLICES, Math.max(1, Math.trunc(numeric)))
 }
 
-function getTargetSize(panelCount: number) {
-  return panelCount === 1 ? '1200x900' : getMobileMotherImageSize(panelCount)
-}
-
-export default function MobileAPlusConversionDialog({ initialPanelCount, busy = false, onClose, onConfirm }: Props) {
+export default function APlusConversionDialog({ target = 'mobile', initialPanelCount, busy = false, onClose, onConfirm }: Props) {
   const [panelCount, setPanelCount] = useState(() => normalizePanelCount(initialPanelCount))
-  const targetSize = getTargetSize(panelCount)
+  const targetSize = getAPlusConversionSize(target, panelCount)
+  const targetLabel = target === 'mobile' ? '手机 A+' : '高级 A+'
   const options = useMemo(
     () => Array.from({ length: MAX_PREMIUM_MOTHER_SLICES }, (_, index) => {
       const count = index + 1
       return {
         value: count,
-        label: `${count} 张合成 · ${getTargetSize(count)}`,
+        label: `${count} 张合成 · ${getAPlusConversionSize(target, count)}`,
       }
     }),
-    [],
+    [target],
   )
 
   useEffect(() => {
@@ -47,9 +47,9 @@ export default function MobileAPlusConversionDialog({ initialPanelCount, busy = 
       <div className="relative z-10 w-full max-w-lg overflow-visible rounded-2xl border border-white/50 bg-white shadow-2xl dark:border-white/[0.08] dark:bg-gray-900" onClick={(event) => event.stopPropagation()}>
         <div className="flex items-start justify-between border-b border-gray-200 px-5 py-4 dark:border-white/[0.08]">
           <div className="min-w-0 pr-4">
-            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">转为手机 A+</h3>
+            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">转为{targetLabel}</h3>
             <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-              选择转换后的母图包含几张手机 A+ 图片。每张子图为 1200x900，生成完成后可在图片详情中切割。
+              选择转换后的母图包含几张{targetLabel}图片。每片为 {getAPlusConversionSize(target, 1)}，生成完成后可在图片详情中切割。
             </p>
           </div>
           <button type="button" disabled={busy} onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-gray-400 transition hover:bg-gray-100 disabled:opacity-40 dark:hover:bg-white/[0.06]" aria-label="关闭转换窗口">
@@ -73,7 +73,7 @@ export default function MobileAPlusConversionDialog({ initialPanelCount, busy = 
             <div className="font-semibold">目标画布：{targetSize}</div>
             <div className="mt-1 text-xs leading-relaxed opacity-80">
               {panelCount === 1
-                ? '按一张普通手机 A+ 图片重新排版。'
+                ? `按一张普通${targetLabel}图片重新排版。`
                 : `按一张上下连续的 ${panelCount} 片母图重新排版，不会在生成阶段自动切割。`}
             </div>
           </div>

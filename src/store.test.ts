@@ -162,6 +162,9 @@ vi.mock('./lib/agentApi', () => ({
 }))
 import { clearAmazonPlannerSessions, clearImages, clearListingCopySessions, clearTasks, getAllAmazonPlannerSessions, getAllImages, getAllListingCopySessions, getImage, putAmazonPlannerSession, putImage, putListingCopySession } from './lib/db'
 import { callImageApi } from './lib/api'
+import { captureAPlusRequestSettings, prepareAPlusConversionFromImage, stopImageTask, submitExplicitImageTask, deleteImageIfUnreferenced, waitForImageTask, updateTaskInStore } from './store'
+import { addAPlusBatchSources, enqueueAPlusBatchRows, stopAllAPlusBatchRows, stopAPlusBatchRow } from './lib/aPlusConversionBatch'
+import { buildAPlusConversionSpec } from './lib/aPlusConversion'
 import { createImageEditorVisualGuideDataUrl } from './lib/imageEditorAnnotations'
 import { upscaleImageDataUrlForAPlus } from './lib/imageUpscaling'
 import { resizeImageDataUrl } from './lib/imageResizing'
@@ -489,6 +492,8 @@ describe('mask draft lifecycle in store actions', () => {
       maskEditorImageId: null,
       params: { ...DEFAULT_PARAMS },
       pendingTaskCategory: null,
+      singleAPlusConversion: null,
+      aPlusBatchDraft: null,
       tasks: [],
       detailTaskId: null,
       lightboxImageId: null,
@@ -509,6 +514,89 @@ describe('mask draft lifecycle in store actions', () => {
 
     expect(inserted).toBe(true)
     expect(useStore.getState().styleReferenceImage).toEqual(generatedStyleImage)
+  })
+
+  it('prepares an editor conversion without removing materials and sends only the selected source', async () => {
+    await Promise.all([putImage(imageA), putImage(imageB)])
+    useStore.setState({ inputImages: [imageA, imageB], styleReferenceImage: imageA, appPage: 'editor' })
+    expect(await prepareAPlusConversionFromImage(imageB.id, 'mobile', 3)).toBe(true)
+    expect(useStore.getState().inputImages).toEqual([imageA, imageB])
+    expect(useStore.getState().styleReferenceImage).toEqual(imageA)
+    expect(await submitImageEditorTask()).toBe(true)
+    await waitForCondition(() => vi.mocked(callImageApi).mock.calls.length > 0)
+    expect(vi.mocked(callImageApi).mock.calls[0][0]).toMatchObject({ inputImageDataUrls: [imageB.dataUrl], params: { size: '1200x2700', n: 1 } })
+    await waitForCondition(() => useStore.getState().tasks[0]?.status === 'done')
+  })
+
+  it('keeps batch-only upload references alive during orphan cleanup', async () => {
+    await putImage(imageA)
+    addAPlusBatchSources([{ id: imageA.id, label: 'batch-only' }], 'mobile')
+    await deleteImageIfUnreferenced(imageA.id)
+    expect(await getImage(imageA.id)).toBeTruthy()
+    expect(getPersistedState(useStore.getState()).aPlusBatchDraft?.rows[0].sourceImageId).toBe(imageA.id)
+    const sourceTask = task({ outputImages: [imageA.id] })
+    useStore.getState().setTasks([sourceTask])
+    await removeTask(sourceTask)
+    expect(await getImage(imageA.id)).toBeTruthy()
+  })
+
+  it('does not finish a batch slot while a disconnected task is recoverable', async () => {
+    const reconnecting = task({ id: 'batch-recovery', status: 'running' })
+    useStore.getState().setTasks([reconnecting])
+    let settled = false
+    const completion = waitForImageTask(reconnecting.id).then((result) => { settled = true; return result })
+    updateTaskInStore(reconnecting.id, { status: 'error', falRecoverable: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(settled).toBe(false)
+    stopImageTask(reconnecting.id)
+    expect((await completion)?.error).toBe('已停止生成。')
+  })
+
+  it('stops downloading and ignores late callbacks and results without changing editor inputs', async () => {
+    await putImage(imageA)
+    let resolveApi!: (result: Awaited<ReturnType<typeof callImageApi>>) => void
+    vi.mocked(callImageApi).mockImplementation(() => new Promise((resolve) => { resolveApi = resolve }))
+    useStore.setState({ prompt: '保留草稿', params: { ...DEFAULT_PARAMS }, inputImages: [imageB], editorActiveTaskId: 'old-task' })
+    const spec = buildAPlusConversionSpec('mobile', 2, '转换')
+    const handle = await submitExplicitImageTask({ ...spec, inputImages: [imageA], maskDraft: null, styleReferenceImage: null }, captureAPlusRequestSettings())
+    await waitForCondition(() => !!resolveApi)
+    const opts = vi.mocked(callImageApi).mock.calls[0][0]
+    opts.onRawImageUrls?.(['https://images.example/result.png'])
+    opts.onPartialImage?.({ image: 'data:image/png;base64,racing-partial', partialImageIndex: 0 })
+    stopImageTask(handle.taskId)
+    expect(opts.signal?.aborted).toBe(true)
+    expect((await handle.completion)?.error).toBe('已停止生成。')
+    opts.onPartialImage?.({ image: 'data:image/png;base64,late-partial', partialImageIndex: 0 })
+    resolveApi({ images: ['data:image/png;base64,late-final'] })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const storedTask = useStore.getState().tasks.find((task) => task.id === handle.taskId)!
+    expect(storedTask).toMatchObject({ status: 'error', outputImages: [], rawImageUrls: ['https://images.example/result.png'] })
+    expect(useStore.getState()).toMatchObject({ prompt: '保留草稿', inputImages: [imageB], editorActiveTaskId: 'old-task', params: DEFAULT_PARAMS })
+    expect((await getAllImages()).some((image) => image.dataUrl.includes('late-final') || image.dataUrl.includes('late-partial') || image.dataUrl.includes('racing-partial'))).toBe(false)
+  })
+
+  it('limits all batch submits to nine slots, cancels queued work and freezes queued API settings', async () => {
+    const resolvers: Array<(result: Awaited<ReturnType<typeof callImageApi>>) => void> = []
+    vi.mocked(callImageApi).mockImplementation(() => new Promise((resolve) => { resolvers.push(resolve) }))
+    const images = Array.from({ length: 11 }, (_, index) => ({ id: `queue-source-${index}`, dataUrl: `data:image/png;base64,queue-${index}` }))
+    await Promise.all(images.map(putImage))
+    addAPlusBatchSources(images.map((image) => ({ id: image.id, label: image.id })), 'mobile')
+    const rows = useStore.getState().aPlusBatchDraft!.rows
+    enqueueAPlusBatchRows(rows.map((row) => row.id))
+    await waitForCondition(() => resolvers.length === 9)
+    expect(useStore.getState().aPlusBatchDraft!.rows.filter((row) => row.status === 'queued')).toHaveLength(2)
+    stopAPlusBatchRow(rows[10].id)
+    const originalModel = vi.mocked(callImageApi).mock.calls[0][0].settings.model
+    useStore.getState().setSettings({ model: 'changed-model' })
+    resolvers[0]({ images: ['data:image/png;base64,queue-success'] })
+    await waitForCondition(() => resolvers.length === 10)
+    expect(vi.mocked(callImageApi).mock.calls[9][0].settings.model).toBe(originalModel)
+    expect(vi.mocked(callImageApi).mock.calls.every(([opts]) => opts.params.n === 1 && opts.inputImageDataUrls.length === 1)).toBe(true)
+    stopAllAPlusBatchRows()
+    for (const resolve of resolvers) resolve({ images: [] })
+    await waitForCondition(() => !useStore.getState().aPlusBatchDraft!.rows.some((row) => row.status === 'running' || row.status === 'queued'))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(vi.mocked(callImageApi)).toHaveBeenCalledTimes(10)
   })
 
   it('treats a non-renderable persisted style placeholder as an empty slot', () => {
@@ -1648,6 +1736,16 @@ describe('mask draft lifecycle in store actions', () => {
 })
 
 describe('interrupted OpenAI running tasks', () => {
+  it('requires manual continuation for every provider in a restored A+ batch', () => {
+    const tasks = ['openai', 'fal', 'custom'].map((provider) => task({
+      id: `restore-${provider}`, apiProvider: provider, status: 'running',
+      falRecoverable: provider === 'fal', customRecoverable: provider === 'custom',
+      aPlusConversion: { sourceImageId: 'source', target: 'mobile', panelCount: 2, batchId: 'batch' },
+    }))
+    const result = markInterruptedOpenAIRunningTasks(tasks)
+    expect(result.tasks.every((task) => task.status === 'error' && !task.falRecoverable && !task.customRecoverable)).toBe(true)
+    expect(result.interruptedTasks).toHaveLength(3)
+  })
   it('marks legacy and OpenAI running tasks as interrupted', () => {
     const now = 10_000
     const legacyRunning = task({ id: 'legacy-running', status: 'running', createdAt: 1_000, finishedAt: null, elapsed: null })

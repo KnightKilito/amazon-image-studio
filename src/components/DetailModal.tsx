@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import type { TaskRecord } from '../types'
-import { useStore, getCachedImage, ensureImageCached, reuseConfig, openImageEditor, convertOutputToAPlusFormat, createPremiumAPlusSliceTask, createAPlusUpscaleTask, createAPlusBatchUpscaleTask, getSuggestedAPlusOutputConversionSliceCount, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask } from '../store'
+import { useStore, getCachedImage, ensureImageCached, reuseConfig, openImageEditor, convertOutputToAPlusFormat, createPremiumAPlusSliceTask, createAPlusUpscaleTask, createAPlusBatchUpscaleTask, getSuggestedAPlusOutputConversionSliceCount, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask, retryTaskImageDownload } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { useTooltip } from '../hooks/useTooltip'
@@ -903,9 +903,23 @@ export default function DetailModal() {
                     <p className="mt-1 text-[11px] leading-relaxed text-emerald-800/75 dark:text-emerald-200/75">
                       {task.status === 'running'
                         ? '图片服务已返回地址，浏览器正在下载到本机；网速较慢时可先复制链接打开。'
+                        : task.status === 'error'
+                        ? '图片服务已返回地址，可点击“重新下载图片”取回结果，不会重新生图或消耗生图额度。链接过期或跨域限制仍可能导致下载失败。'
                         : '这是图片服务返回的原始地址，可复制到其他网络环境打开或下载。'}
                     </p>
                   </div>
+                  <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                  {task.status === 'error' && (
+                    <button
+                      type="button"
+                      onClick={() => void retryTaskImageDownload(task.id)}
+                      title="只重新下载已生成的图片，不重新生图、不消耗生图额度"
+                      className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-2.5 text-xs font-semibold text-white transition hover:bg-emerald-700"
+                    >
+                      <DownloadIcon className="h-3.5 w-3.5" />
+                      重新下载图片
+                    </button>
+                  )}
                   {rawImageUrls.length > 1 && (
                     <button
                       type="button"
@@ -916,6 +930,7 @@ export default function DetailModal() {
                       复制全部
                     </button>
                   )}
+                  </div>
                 </div>
                 <div className="mt-3 space-y-2">
                   {rawImageUrls.map((url, index) => (

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { APlusBatchRow, APlusConversionTarget, TaskRecord } from '../types'
 import { getImage } from '../lib/db'
 import { getImageDimensions } from '../lib/canvasImage'
-import { buildAPlusConversionSpec, getAPlusConversionSize, normalizeAPlusPanelCount } from '../lib/aPlusConversion'
+import { buildAPlusConversionSpec, getAPlusConversionSize, normalizeAPlusPanelCount, updateDefaultAPlusConversionPrompt } from '../lib/aPlusConversion'
 import { addAPlusBatchSources, enqueueAPlusBatchRows, removeAPlusBatchRow, stopAllAPlusBatchRows, stopAPlusBatchRow } from '../lib/aPlusConversionBatch'
 import { estimateResizedImageByteSize, formatImageFileSize, getDataUrlByteSize } from '../lib/imageResizing'
 import { getTaskLoadingPhase } from '../lib/taskLoadingPhase'
@@ -95,7 +95,7 @@ export default function BatchAPlusConversionDialog({ onClose }: { onClose: () =>
   const profile = getActiveApiProfile(settings)
   const editRow = (id: string, patch: Partial<APlusBatchRow>) => setDraft((current) => current
     ? { ...current, rows: current.rows.map((row) => row.id === id && row.status !== 'queued' && row.status !== 'running'
-      ? { ...row, ...patch, status: 'ready', error: null, taskId: null } : row) } : current)
+      ? { ...row, ...patch, prompt: patch.prompt ?? updateDefaultAPlusConversionPrompt(row.prompt, current.target, row.panelCount, current.target, patch.panelCount ?? row.panelCount), status: 'ready', error: null, taskId: null } : row) } : current)
   const addCurrentMaterials = () => {
     addAPlusBatchSources(useStore.getState().inputImages.map((image, index) => ({ id: image.id, label: `素材 ${index + 1}` })), target)
   }
@@ -134,7 +134,7 @@ export default function BatchAPlusConversionDialog({ onClose }: { onClose: () =>
       </header>
       <div className="flex flex-wrap items-end gap-3 border-b border-gray-200 p-4 dark:border-white/10">
         <div className="w-40"><label className="mb-1 block text-xs text-gray-500">转换类型</label><Select value={target} disabled={busy}
-          onChange={(value) => setDraft((current) => current ? { ...current, target: value as APlusConversionTarget, rows: current.rows.map((row) => ({ ...row, status: 'ready', taskId: null, error: null })) } : current)}
+          onChange={(value) => setDraft((current) => current ? { ...current, target: value as APlusConversionTarget, rows: current.rows.map((row) => ({ ...row, prompt: updateDefaultAPlusConversionPrompt(row.prompt, current.target, row.panelCount, value as APlusConversionTarget, row.panelCount), status: 'ready', taskId: null, error: null })) } : current)}
           options={[{ label: '高级 A+', value: 'premium' }, { label: '手机 A+', value: 'mobile' }]} className={selectClass} /></div>
         <button type="button" onClick={addCurrentMaterials} className={buttonClass}>添加当前素材</button>
         <button type="button" onClick={() => uploadRef.current?.click()} disabled={uploading} className={buttonClass}>{uploading ? '上传中…' : '上传图片'}</button>

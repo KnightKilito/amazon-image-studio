@@ -95,7 +95,7 @@ export default function TaskSelectionToolbar({ variant = 'dock' }: Props) {
   return (
     <div className={variant === 'dock' ? 'mb-3 flex justify-center lg:justify-end' : 'flex justify-end'} data-task-selection-toolbar>
       <div className="pointer-events-auto flex items-center rounded-full border border-gray-200/50 bg-white/90 p-1 shadow-[0_8px_30px_rgb(0,0,0,0.12)] backdrop-blur dark:border-white/10 dark:bg-gray-800/90 dark:shadow-lg">
-        {variant === 'inline' && <span className="pl-2 pr-1 text-[11px] font-semibold text-gray-500 dark:text-gray-300">已选 {selectedTaskIds.length}</span>}
+        <span aria-live="polite" className="shrink-0 whitespace-nowrap pl-2 pr-1 text-[11px] font-semibold text-gray-500 dark:text-gray-300">已选 {selectedTaskIds.length}</span>
         <button type="button" onClick={clearSelection} className="p-2 text-gray-600 transition-colors hover:text-gray-900 dark:text-gray-300 dark:hover:text-white" title="取消选择" aria-label="取消选择">
           <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
         </button>

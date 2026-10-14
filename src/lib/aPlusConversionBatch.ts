@@ -1,12 +1,33 @@
 import type { APlusBatchRow, APlusConversionTarget, AppSettings } from '../types'
 import { getActiveApiProfile } from './apiProfiles'
-import { APLUS_BATCH_CONCURRENCY, buildAPlusConversionSpec, DEFAULT_APLUS_CONVERSION_PROMPT } from './aPlusConversion'
+import { APLUS_BATCH_CONCURRENCY, buildAPlusConversionSpec, getDefaultAPlusConversionPrompt } from './aPlusConversion'
 import { captureAPlusRequestSettings, deleteImageIfUnreferenced, ensureImageCached, getSuggestedAPlusOutputConversionSliceCount, stopImageTask, submitExplicitImageTask, useStore } from '../store'
 
 type Job = { batchId: string; row: APlusBatchRow; target: APlusConversionTarget; settings: AppSettings; controller: AbortController; taskId: string | null }
 const queue: Job[] = []
 const active = new Map<string, Job>()
 const id = () => `aplus-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+
+// 素材删除或清空后，不允许已移除的表格行继续排队或执行。
+const unsubscribeMaterialSync = useStore.subscribe((state, previous) => {
+  if (state.aPlusBatchDraft === previous.aPlusBatchDraft) return
+  const draft = state.aPlusBatchDraft
+  const contains = (job: Job) => draft?.id === job.batchId && draft.rows.some((row) => row.id === job.row.id && row.sourceImageId === job.row.sourceImageId)
+  for (let index = queue.length - 1; index >= 0; index--) {
+    if (contains(queue[index])) continue
+    queue.splice(index, 1)[0].controller.abort()
+  }
+  for (const job of active.values()) {
+    if (contains(job) || job.controller.signal.aborted) continue
+    job.controller.abort()
+    if (job.taskId) stopImageTask(job.taskId)
+  }
+  const keptSources = new Set(draft?.rows.map((row) => row.sourceImageId) ?? [])
+  for (const row of previous.aPlusBatchDraft?.rows ?? []) {
+    if (!keptSources.has(row.sourceImageId)) void deleteImageIfUnreferenced(row.sourceImageId)
+  }
+})
+if (import.meta.hot) import.meta.hot.dispose(unsubscribeMaterialSync)
 
 function patchRow(batchId: string, rowId: string, patch: Partial<APlusBatchRow>) {
   useStore.getState().setAPlusBatchDraft((draft) => draft?.id === batchId
@@ -23,8 +44,9 @@ export function addAPlusBatchSources(images: Array<{ id: string; label: string }
       if (seen.has(image.id)) continue
       seen.add(image.id)
       const task = useStore.getState().tasks.find((item) => item.outputImages.includes(image.id))
-      added.push({ id: id(), sourceImageId: image.id, label: image.label, panelCount: task ? getSuggestedAPlusOutputConversionSliceCount(task) : 1,
-        prompt: DEFAULT_APLUS_CONVERSION_PROMPT, status: 'ready', taskId: null, error: null })
+      const panelCount = task ? getSuggestedAPlusOutputConversionSliceCount(task) : 1
+      added.push({ id: id(), sourceImageId: image.id, label: image.label, panelCount,
+        prompt: getDefaultAPlusConversionPrompt(draft.target, panelCount), status: 'ready', taskId: null, error: null })
     }
     return { ...draft, rows: [...draft.rows, ...added] }
   })
@@ -51,7 +73,8 @@ async function run(job: Job) {
   patchRow(job.batchId, job.row.id, { status: 'running' })
   try {
     const dataUrl = await ensureImageCached(job.row.sourceImageId)
-    if (useStore.getState().aPlusBatchDraft?.id !== job.batchId) job.controller.abort()
+    const draft = useStore.getState().aPlusBatchDraft
+    if (draft?.id !== job.batchId || !draft.rows.some((row) => row.id === job.row.id)) job.controller.abort()
     job.controller.signal.throwIfAborted()
     if (!dataUrl) throw new Error('源图已不存在，请重新上传。')
     const sourceTask = useStore.getState().tasks.find((task) => task.outputImages.includes(job.row.sourceImageId))

@@ -57,7 +57,7 @@ import {
 import { callImageApi } from './lib/api'
 import { callAgentConversationTitleApi, callAgentResponsesApi, callBatchImageSingle, parseBatchImageCallArguments, type AgentApiResultImage, type BatchImageCallResult } from './lib/agentApi'
 import { collectAgentRoundOutputImageSlots, getAgentCurrentReferenceId, getAgentGeneratedImageReferenceId, replaceAgentPromptImageReferencesForApi } from './lib/agentImageReferences'
-import { IMAGE_FETCH_CORS_HINT } from './lib/imageApiShared'
+import { IMAGE_FETCH_CORS_HINT, MIME_MAP, createLinkedAbortController, fetchImageUrlAsDataUrl, isHttpUrl } from './lib/imageApiShared'
 import { getFalErrorMessage, getFalQueuedImageResult } from './lib/falAiImageApi'
 import { getCustomQueuedImageResult } from './lib/openaiCompatibleImageApi'
 import { validateMaskMatchesImage } from './lib/canvasImage'
@@ -74,7 +74,7 @@ import { resizeImageDataUrl, type ImageResizeOptions } from './lib/imageResizing
 import { getMobileMotherImageSize, getPremiumMotherImageSize, MAX_PREMIUM_MOTHER_SLICES, MIN_PREMIUM_MOTHER_SLICES } from './lib/premiumAPlusLayout'
 import { fetchAdminSettings, readAdminToken, saveAdminSettings } from './lib/adminApi'
 import { navigateToAppPage } from './lib/appNavigation'
-import { buildAPlusConversionSpec, DEFAULT_APLUS_CONVERSION_PROMPT, restoreAPlusBatchDraft } from './lib/aPlusConversion'
+import { buildAPlusConversionSpec, getAPlusConversionSize, getDefaultAPlusConversionPrompt, normalizeAPlusPanelCount, restoreAPlusBatchDraft } from './lib/aPlusConversion'
 import { normalizeAmazonMarketplace } from './lib/amazonMarketplace'
 import { mergeTextNotes, normalizeTextNotes, readTextNotes, saveTextNotes } from './lib/textNotes'
 import { DEFAULT_LISTING_TARGET_SIZE, normalizeListingTargetSize } from './lib/listingImageSize'
@@ -1506,6 +1506,7 @@ export const useStore = create<AppState>()(
             inputImages,
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, inputImages, { [previous.id]: img.id }),
             ...(previous.id === s.singleAPlusConversion?.sourceImageId ? { singleAPlusConversion: null } : {}),
+            ...(s.appPage === 'editor' && s.aPlusBatchDraft ? { aPlusBatchDraft: { ...s.aPlusBatchDraft, rows: s.aPlusBatchDraft.rows.filter((row) => row.sourceImageId !== previous.id) } } : {}),
             ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
           })
         })
@@ -1520,6 +1521,7 @@ export const useStore = create<AppState>()(
             inputImages,
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, inputImages),
             ...(removed?.id === s.singleAPlusConversion?.sourceImageId ? { singleAPlusConversion: null } : {}),
+            ...(s.appPage === 'editor' && s.aPlusBatchDraft ? { aPlusBatchDraft: { ...s.aPlusBatchDraft, rows: s.aPlusBatchDraft.rows.filter((row) => row.sourceImageId !== removed?.id) } } : {}),
             ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
           })
         }),
@@ -1529,6 +1531,10 @@ export const useStore = create<AppState>()(
           return syncActiveInputDraft(s, {
             singleAPlusConversion: null,
             inputImages: [],
+            ...(s.appPage === 'editor' ? {
+              styleReferenceImage: null,
+              aPlusBatchDraft: s.aPlusBatchDraft ? { ...s.aPlusBatchDraft, rows: [] } : null,
+            } : {}),
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, []),
             maskDraft: null,
             maskEditorImageId: null,
@@ -1537,11 +1543,13 @@ export const useStore = create<AppState>()(
       setInputImages: (imgs, options) =>
         set((s) => {
           const inputImages = orderImagesWithMaskFirst(imgs, s.maskDraft?.targetImageId)
+          const removedIds = new Set(s.inputImages.filter((image) => !inputImages.some((next) => next.id === image.id)).map((image) => image.id))
           const shouldClearMask =
             Boolean(s.maskDraft) && !inputImages.some((img) => img.id === s.maskDraft?.targetImageId)
           return syncActiveInputDraft(s, {
             inputImages,
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, inputImages, options?.equivalentImageIds),
+            ...(s.appPage === 'editor' && s.aPlusBatchDraft && removedIds.size ? { aPlusBatchDraft: { ...s.aPlusBatchDraft, rows: s.aPlusBatchDraft.rows.filter((row) => !removedIds.has(row.sourceImageId)) } } : {}),
             ...(shouldClearMask ? { maskDraft: null, maskEditorImageId: null } : {}),
           })
         }),
@@ -5017,6 +5025,65 @@ export async function createBatchImageResizeTask(
   }
 }
 
+/** 只取回服务商已生成的图片，不重新提交生图请求或创建新任务。 */
+export async function retryTaskImageDownload(taskId: string) {
+  const state = useStore.getState()
+  const task = state.tasks.find((item) => item.id === taskId)
+  const urls = task?.rawImageUrls?.filter(isHttpUrl) ?? []
+  if (!task || task.status !== 'error' || !urls.length || taskRuntimeContexts.has(taskId)) return
+
+  clearFalRecoveryTimer(taskId)
+  clearCustomRecoveryTimer(taskId)
+  clearOpenAIWatchdogTimer(taskId)
+  const profile = getTaskApiProfile(state.settings, task)
+  const { controller, cleanup } = createLinkedAbortController(profile?.timeout ?? 120)
+  taskRuntimeContexts.set(taskId, { controller, settings: state.settings, background: false })
+  const stillDownloading = () => !controller.signal.aborted && useStore.getState().tasks.some((item) => item.id === taskId && item.status === 'running')
+  const outputIds: string[] = []
+  let committed = false
+  updateTaskInStore(taskId, { status: 'running', error: null, finishedAt: null, falRecoverable: false, customRecoverable: false })
+  try {
+    const images: string[] = []
+    for (const url of urls) {
+      images.push(await fetchImageUrlAsDataUrl(url, MIME_MAP[task.params.output_format] ?? 'image/png', controller.signal))
+      if (!stillDownloading()) return
+    }
+    const actualParamsList = await readImageSizeParamsList(images)
+    for (const dataUrl of images) {
+      if (!stillDownloading()) return
+      const imageId = await storeImage(dataUrl, 'generated')
+      cacheImage(imageId, dataUrl)
+      outputIds.push(imageId)
+    }
+    if (!stillDownloading()) return
+    updateTaskInStore(taskId, {
+      outputImages: outputIds,
+      actualParams: { ...task.actualParams, ...firstActualParams(actualParamsList), n: outputIds.length },
+      actualParamsByImage: mapActualParamsByImage(outputIds, actualParamsList),
+      streamPartialImageIds: undefined,
+      status: 'done', error: null, finishedAt: Date.now(), elapsed: Date.now() - task.createdAt,
+    })
+    committed = true
+    state.setTaskStreamPreview(taskId)
+    await deleteUnreferencedImageIds([...(task.outputImages ?? []), ...(task.streamPartialImageIds ?? [])])
+    state.showToast(`图片重新下载完成，共 ${outputIds.length} 张`, 'success')
+  } catch (err) {
+    const latest = useStore.getState().tasks.find((item) => item.id === taskId)
+    if (latest?.status === 'running') {
+      const message = controller.signal.aborted ? '图片重新下载超时，请再次重试。' : `图片重新下载失败：${err instanceof Error ? err.message : String(err)}`
+      updateTaskInStore(taskId, { status: 'error', error: message, finishedAt: Date.now(), elapsed: Date.now() - task.createdAt })
+      state.showToast(message, 'error')
+    }
+  } finally {
+    cleanup()
+    if (controller.signal.aborted && useStore.getState().tasks.some((item) => item.id === taskId && item.status === 'running')) {
+      updateTaskInStore(taskId, { status: 'error', error: '图片重新下载超时，请再次重试。', finishedAt: Date.now(), elapsed: Date.now() - task.createdAt })
+    }
+    if (!committed) await deleteUnreferencedImageIds(outputIds)
+    if (taskRuntimeContexts.get(taskId)?.controller === controller) taskRuntimeContexts.delete(taskId)
+  }
+}
+
 /** 重试失败的任务：创建新任务并执行 */
 export async function retryTask(task: TaskRecord) {
   const { settings, setConfirmDialog, adminAccess, isAdminAuthenticated } = useStore.getState()
@@ -5191,24 +5258,31 @@ export async function editOutputs(task: TaskRecord, selectedOutputImageId?: stri
 }
 
 export function clearImageEditorInputs() {
+  const { inputImages, styleReferenceImage } = useStore.getState()
+  const sourceIds = [...inputImages.map((image) => image.id), ...(styleReferenceImage ? [styleReferenceImage.id] : [])]
   useStore.getState().setSingleAPlusConversion(null)
   const {
     clearInputImages,
+    clearStyleReferenceImage,
+    setAPlusBatchDraft,
     setEditorActiveImageId,
     setEditorActiveTaskId,
     resetEditorCanvasDraft,
   } = useStore.getState()
   clearInputImages()
+  clearStyleReferenceImage()
+  setAPlusBatchDraft((draft) => draft ? { ...draft, rows: [] } : null)
   setEditorActiveImageId(null)
   setEditorActiveTaskId(null)
   resetEditorCanvasDraft()
+  void deleteUnreferencedImageIds(sourceIds)
 }
 
 export async function openImageEditor(imageId: string) {
   const { showToast, setParams, setPendingTaskCategory, setAppPage, setEditorActiveImageId, setEditorActiveTaskId, resetEditorCanvasDraft, clearStyleReferenceImage, clearMaskDraft } = useStore.getState()
   const dataUrl = await ensureImageCached(imageId)
   if (!dataUrl) {
-    showToast('鏃犳硶璇诲彇鍥剧墖锛岃绋嶅悗閲嶈瘯', 'error')
+    showToast('无法读取图片，请稍后重试', 'error')
     return false
   }
 
@@ -5227,7 +5301,7 @@ export async function openImageEditor(imageId: string) {
   setEditorActiveTaskId(null)
   resetEditorCanvasDraft(imageId)
   navigateToAppPage('editor')
-  showToast('宸插湪鍥剧墖缂栬緫椤典腑鎵撳紑鍥剧墖', 'success')
+  showToast('已在图片编辑页中打开图片', 'success')
   return true
 }
 
@@ -5242,23 +5316,6 @@ export function getSuggestedAPlusOutputConversionSliceCount(task: TaskRecord) {
   const sliceCount = Number(task.category.aPlusPlanContext.sliceCount)
   if (!Number.isFinite(sliceCount)) return 1
   return Math.min(MAX_PREMIUM_MOTHER_SLICES, Math.max(MIN_PREMIUM_MOTHER_SLICES, Math.trunc(sliceCount)))
-}
-
-function getAPlusOutputConversionSize(target: APlusOutputConversionTarget, sliceCount: number) {
-  if (sliceCount > 1) {
-    return target === 'premium'
-      ? getPremiumMotherImageSize(sliceCount)
-      : getMobileMotherImageSize(sliceCount)
-  }
-  return target === 'premium' ? '2928x1200' : '1200x900'
-}
-
-function buildAPlusOutputConversionPrompt(target: APlusOutputConversionTarget, size: string, sliceCount: number) {
-  const targetLabel = target === 'premium' ? '高级A+' : '移动端高级A+'
-  const motherImageRequirement = sliceCount > 1
-    ? `当前参考图是一张 ${sliceCount} 片连续母图，请继续将输出设计为一张完整、上下连贯的连续母图，目标画布为 ${size}，不得拆成 ${sliceCount} 张独立图片或独立海报。`
-    : ''
-  return `我是一名亚马逊美国站专业卖家。请将这张高级A+图片的画布尺寸调整为 ${size}，以适配亚马逊${targetLabel}展示需求。${motherImageRequirement}保持产品本身完全不变，包括产品外观、颜色、材质、角度、光影、细节及清晰度，不得修改或重新设计产品。仅调整整体画面排版和元素布局，合理重新安排文字、背景及装饰元素，使画面在 ${size} 画布下依然美观、平衡且具有高级感。禁止对整张图片进行拉伸、压缩、裁切或变形，不要通过缩放或拉伸来适配比例，而是通过重新布局画面内容完成适配。`
 }
 
 function createAPlusOutputConversionTaskCategory(
@@ -5321,10 +5378,10 @@ export async function convertOutputToAPlusFormat(
   const sliceCount = explicitSliceCount == null
     ? suggestedSliceCount
     : Math.min(MAX_PREMIUM_MOTHER_SLICES, Math.max(1, Math.trunc(Number(explicitSliceCount) || 1)))
-  const size = getAPlusOutputConversionSize(target, sliceCount)
+  const size = getAPlusConversionSize(target, sliceCount)
 
   useStore.setState((state) => syncActiveInputDraft(state, {
-    prompt: buildAPlusOutputConversionPrompt(target, size, sliceCount),
+    prompt: getDefaultAPlusConversionPrompt(target, sliceCount),
     inputImages: [{ id: outputImageId, dataUrl }],
     maskDraft: null,
     maskEditorImageId: null,
@@ -5348,11 +5405,12 @@ export async function prepareAPlusConversionFromImage(
   const dataUrl = await ensureImageCached(sourceImageId)
   if (!dataUrl) { useStore.getState().showToast('无法读取转换源图', 'error'); return false }
   const sourceTask = findSourceTaskForImage(sourceImageId)
-  const panelCount = explicitSliceCount ?? getSuggestedAPlusOutputConversionSliceCount(sourceTask)
-  const spec = buildAPlusConversionSpec(target, panelCount, DEFAULT_APLUS_CONVERSION_PROMPT, sourceTask)
+  const panelCount = normalizeAPlusPanelCount(explicitSliceCount ?? getSuggestedAPlusOutputConversionSliceCount(sourceTask))
+  const prompt = getDefaultAPlusConversionPrompt(target, panelCount)
+  const spec = buildAPlusConversionSpec(target, panelCount, prompt, sourceTask)
   const state = useStore.getState()
   state.setAppPage('editor')
-  state.setPrompt(DEFAULT_APLUS_CONVERSION_PROMPT)
+  state.setPrompt(prompt)
   state.setParams(spec.params)
   state.setSingleAPlusConversion({ sourceImageId, target, panelCount })
   state.setEditorActiveImageId(sourceImageId)

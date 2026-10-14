@@ -471,7 +471,7 @@ export default function ImageEditorWorkspace() {
     if (editorCanvasDraft.annotations.length > 0) {
       setConfirmDialog({
         title: '清空全部素材？',
-        message: '清空素材会同时清除当前主图、画布标注、遮罩和风格参考；历史结果不会被删除。',
+        message: '清空素材会同时清除当前主图、画布标注、遮罩、风格参考和批量 A+ 转换列表；对应排队或执行中的转换会停止，已完成的历史结果不会被删除。',
         confirmText: '清空素材',
         cancelText: '取消',
         tone: 'warning',
@@ -533,9 +533,7 @@ export default function ImageEditorWorkspace() {
   }
 
   const openBatchConversion = () => {
-    if (!useStore.getState().aPlusBatchDraft) {
-      addAPlusBatchSources(inputImages.map((image, index) => ({ id: image.id, label: image.id === mainSourceImageId ? '当前主图' : `参考素材 ${index + 1}` })), sliceFormat)
-    }
+    addAPlusBatchSources(inputImages.map((image, index) => ({ id: image.id, label: image.id === mainSourceImageId ? '当前主图' : `参考素材 ${index + 1}` })), sliceFormat)
     setShowBatchConversion(true)
   }
 

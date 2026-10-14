@@ -62,4 +62,11 @@ describe('TaskSelectionToolbar', () => {
     useStore.setState({ tasks: [createTask('task-a')], selectedTaskIds: [] })
     expect(renderToStaticMarkup(<TaskSelectionToolbar variant="inline" />)).toBe('')
   })
+
+  it('shows the selected count in the home dock as well', () => {
+    useStore.setState({ tasks: [createTask('a'), createTask('b'), createTask('c')], selectedTaskIds: ['a', 'b', 'c'] })
+    const markup = renderToStaticMarkup(<TaskSelectionToolbar />)
+    expect(markup).toContain('已选 3')
+    expect(markup).toContain('aria-live="polite"')
+  })
 })

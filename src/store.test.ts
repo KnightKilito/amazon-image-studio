@@ -162,7 +162,7 @@ vi.mock('./lib/agentApi', () => ({
 }))
 import { clearAmazonPlannerSessions, clearImages, clearListingCopySessions, clearTasks, getAllAmazonPlannerSessions, getAllImages, getAllListingCopySessions, getImage, putAmazonPlannerSession, putImage, putListingCopySession } from './lib/db'
 import { callImageApi } from './lib/api'
-import { captureAPlusRequestSettings, prepareAPlusConversionFromImage, stopImageTask, submitExplicitImageTask, deleteImageIfUnreferenced, waitForImageTask, updateTaskInStore } from './store'
+import { captureAPlusRequestSettings, prepareAPlusConversionFromImage, stopImageTask, submitExplicitImageTask, deleteImageIfUnreferenced, waitForImageTask, updateTaskInStore, retryTaskImageDownload } from './store'
 import { addAPlusBatchSources, enqueueAPlusBatchRows, stopAllAPlusBatchRows, stopAPlusBatchRow } from './lib/aPlusConversionBatch'
 import { buildAPlusConversionSpec } from './lib/aPlusConversion'
 import { createImageEditorVisualGuideDataUrl } from './lib/imageEditorAnnotations'
@@ -328,6 +328,74 @@ function task(overrides: Partial<TaskRecord> = {}): TaskRecord {
     ...overrides,
   }
 }
+
+describe('generated image download retry', () => {
+  beforeEach(async () => {
+    await clearTasks()
+    await clearImages()
+    vi.mocked(callImageApi).mockClear()
+    useStore.setState({ tasks: [], settings: DEFAULT_SETTINGS, showToast: vi.fn() })
+  })
+
+  it('downloads existing URLs in order into the original task without calling the generation API', async () => {
+    const failed = task({ status: 'error', error: 'timeout', rawImageUrls: ['https://images.test/one.png', 'https://images.test/two.png'], category: { workflow: 'amazon-aplus', aPlusType: 'premium' } })
+    useStore.setState({ tasks: [failed] })
+    const fetchMock = vi.fn(async () => new Response(new Blob(['image'], { type: 'image/png' })))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      await retryTaskImageDownload(failed.id)
+      expect(fetchMock.mock.calls.map((args: unknown[]) => args[0])).toEqual(failed.rawImageUrls)
+      expect(callImageApi).not.toHaveBeenCalled()
+      const [completed] = useStore.getState().tasks
+      expect(useStore.getState().tasks).toHaveLength(1)
+      expect(completed).toMatchObject({ id: failed.id, status: 'done', error: null, category: failed.category, rawImageUrls: failed.rawImageUrls, actualParams: { n: 2 } })
+      expect(completed.outputImages).toHaveLength(2)
+      expect(await getImage(completed.outputImages[0])).toMatchObject({ source: 'generated' })
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('keeps URLs and allows retry again after a download fails', async () => {
+    const failed = task({ status: 'error', rawImageUrls: ['https://images.test/one.png'] })
+    useStore.setState({ tasks: [failed] })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 503 })))
+    try {
+      await retryTaskImageDownload(failed.id)
+      expect(useStore.getState().tasks[0]).toMatchObject({ status: 'error', rawImageUrls: failed.rawImageUrls, outputImages: [] })
+      expect(useStore.getState().tasks[0].error).toContain('503')
+      expect(callImageApi).not.toHaveBeenCalled()
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('blocks duplicate downloads and does not revive a stopped task with a late response', async () => {
+    const failed = task({ status: 'error', rawImageUrls: ['https://images.test/one.png'] })
+    useStore.setState({ tasks: [failed] })
+    let resolveDownload!: (response: Response) => void
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => { resolveDownload = resolve }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const pending = retryTaskImageDownload(failed.id)
+      await retryTaskImageDownload(failed.id)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      stopImageTask(failed.id)
+      resolveDownload(new Response(new Blob(['image'], { type: 'image/png' })))
+      await pending
+      expect(useStore.getState().tasks[0].status).toBe('error')
+      expect(await getAllImages()).toHaveLength(0)
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('does nothing for running, completed or URL-less tasks', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      for (const record of [task(), task({ status: 'running', rawImageUrls: ['https://images.test/one.png'] }), task({ status: 'error' })]) {
+        useStore.setState({ tasks: [record] })
+        await retryTaskImageDownload(record.id)
+      }
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally { vi.unstubAllGlobals() }
+  })
+})
 
 function amazonPlannerSession(overrides: Partial<AmazonPlannerSession> = {}): AmazonPlannerSession {
   return {
@@ -528,6 +596,24 @@ describe('mask draft lifecycle in store actions', () => {
     await waitForCondition(() => useStore.getState().tasks[0]?.status === 'done')
   })
 
+  it('uses the same conversion copy and size in home and editor for each target and count', async () => {
+    await putImage(imageB)
+    const source = task({ outputImages: [imageB.id] })
+    useStore.setState({ tasks: [source] })
+    for (const target of ['premium', 'mobile'] as const) {
+      for (const count of [1, 2, 3, 7]) {
+        await convertOutputToAPlusFormat(source, imageB.id, target, count)
+        const homePrompt = useStore.getState().prompt
+        const homeSize = useStore.getState().params.size
+        await prepareAPlusConversionFromImage(imageB.id, target, count)
+        expect(useStore.getState().prompt).toBe(homePrompt)
+        expect(useStore.getState().params.size).toBe(homeSize)
+        expect(homeSize).toBe(target === 'mobile' ? `1200x${900 * count}` : `2928x${1200 * count}`)
+        expect(useStore.getState().singleAPlusConversion?.panelCount).toBe(count)
+      }
+    }
+  })
+
   it('keeps batch-only upload references alive during orphan cleanup', async () => {
     await putImage(imageA)
     addAPlusBatchSources([{ id: imageA.id, label: 'batch-only' }], 'mobile')
@@ -538,6 +624,69 @@ describe('mask draft lifecycle in store actions', () => {
     useStore.getState().setTasks([sourceTask])
     await removeTask(sourceTask)
     expect(await getImage(imageA.id)).toBeTruthy()
+  })
+
+  it('removes only the deleted editor material from the batch and keeps remaining row edits', () => {
+    useStore.setState({ appPage: 'editor', inputImages: [imageA, imageB] })
+    addAPlusBatchSources([{ id: imageA.id, label: 'A' }, { id: imageB.id, label: 'B' }, { id: 'batch-upload', label: '额外上传' }], 'premium')
+    useStore.getState().setAPlusBatchDraft((draft) => ({ ...draft!, rows: draft!.rows.map((row) => ({ ...row, panelCount: 3, prompt: '自定义描述' })) }))
+    useStore.getState().removeInputImage(0)
+    expect(useStore.getState().aPlusBatchDraft!.rows.map((row) => row.sourceImageId)).toEqual([imageB.id, 'batch-upload'])
+    expect(useStore.getState().aPlusBatchDraft!.rows[0]).toMatchObject({ panelCount: 3, prompt: '自定义描述' })
+    useStore.getState().replaceInputImage(0, imageA)
+    expect(useStore.getState().aPlusBatchDraft!.rows.map((row) => row.sourceImageId)).toEqual(['batch-upload'])
+  })
+
+  it('does not prune batch rows on reordering but does on material list removal', () => {
+    useStore.setState({ appPage: 'editor', inputImages: [imageA, imageB] })
+    addAPlusBatchSources([{ id: imageA.id, label: 'A' }, { id: imageB.id, label: 'B' }], 'mobile')
+    useStore.getState().setInputImages([imageB, imageA])
+    expect(useStore.getState().aPlusBatchDraft!.rows).toHaveLength(2)
+    useStore.getState().setInputImages([imageA])
+    expect(useStore.getState().aPlusBatchDraft!.rows.map((row) => row.sourceImageId)).toEqual([imageA.id])
+  })
+
+  it('clears all batch rows including separate uploads and style from both editor clear entry points', () => {
+    for (const clear of [() => useStore.getState().clearInputImages(), clearImageEditorInputs]) {
+      useStore.setState({ appPage: 'editor', inputImages: [imageA], styleReferenceImage: imageB })
+      addAPlusBatchSources([{ id: imageA.id, label: '素材' }, { id: 'batch-upload', label: '额外上传' }], 'premium')
+      clear()
+      expect(useStore.getState().inputImages).toEqual([])
+      expect(useStore.getState().styleReferenceImage).toBeNull()
+      expect(useStore.getState().aPlusBatchDraft!.rows).toEqual([])
+    }
+  })
+
+  it('preserves home style and editor batch when clearing home reference images', () => {
+    useStore.setState({ appPage: 'home', inputImages: [imageA], styleReferenceImage: imageB })
+    addAPlusBatchSources([{ id: imageA.id, label: '素材' }], 'premium')
+    useStore.getState().clearInputImages()
+    expect(useStore.getState().styleReferenceImage).toEqual(imageB)
+    expect(useStore.getState().aPlusBatchDraft!.rows).toHaveLength(1)
+  })
+
+  it('stops deleted material work and removes queued work before it can submit', async () => {
+    const resolvers: Array<(result: Awaited<ReturnType<typeof callImageApi>>) => void> = []
+    vi.mocked(callImageApi).mockImplementation(() => new Promise((resolve) => { resolvers.push(resolve) }))
+    const images = Array.from({ length: 10 }, (_, index) => ({ id: `sync-source-${index}`, dataUrl: `data:image/png;base64,sync-${index}` }))
+    await Promise.all(images.map(putImage))
+    useStore.setState({ appPage: 'editor', inputImages: images })
+    addAPlusBatchSources(images.map((image) => ({ id: image.id, label: image.id })), 'premium')
+    enqueueAPlusBatchRows(useStore.getState().aPlusBatchDraft!.rows.map((row) => row.id))
+    await waitForCondition(() => resolvers.length === 9)
+    const firstTaskId = useStore.getState().aPlusBatchDraft!.rows[0].taskId!
+    useStore.getState().removeInputImage(9)
+    useStore.getState().removeInputImage(0)
+    expect(useStore.getState().aPlusBatchDraft!.rows).toHaveLength(8)
+    expect(useStore.getState().tasks.find((item) => item.id === firstTaskId)?.status).toBe('error')
+    const removedSourceRequest = vi.mocked(callImageApi).mock.calls.find(([options]) => options.inputImageDataUrls[0] === images[0].dataUrl)![0]
+    expect(removedSourceRequest.signal?.aborted).toBe(true)
+    useStore.getState().clearInputImages()
+    for (const resolve of resolvers) resolve({ images: ['data:image/png;base64,late-sync'] })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(callImageApi).toHaveBeenCalledTimes(9)
+    expect(useStore.getState().aPlusBatchDraft!.rows).toEqual([])
+    expect(useStore.getState().tasks.every((item) => item.status === 'error' && !item.outputImages.length)).toBe(true)
   })
 
   it('does not finish a batch slot while a disconnected task is recoverable', async () => {
@@ -680,6 +829,7 @@ describe('mask draft lifecycle in store actions', () => {
     })
 
     expect(await openImageEditor(imageB.id)).toBe(true)
+    expect(useStore.getState().showToast).toHaveBeenCalledWith('已在图片编辑页中打开图片', 'success')
 
     const state = useStore.getState()
     expect(state.appPage).toBe('editor')
@@ -695,7 +845,12 @@ describe('mask draft lifecycle in store actions', () => {
     expect(state.pendingTaskCategory).toBeNull()
   })
 
-  it('fully clears the editor main image state while preserving prompt and style reference', () => {
+  it('shows a readable error when the editor source image is missing', async () => {
+    expect(await openImageEditor('missing-editor-source')).toBe(false)
+    expect(useStore.getState().showToast).toHaveBeenCalledWith('无法读取图片，请稍后重试', 'error')
+  })
+
+  it('fully clears editor materials including style reference while preserving prompt', () => {
     useStore.setState({
       prompt: 'keep this instruction',
       inputImages: [imageA],
@@ -717,7 +872,7 @@ describe('mask draft lifecycle in store actions', () => {
     expect(state.editorActiveTaskId).toBeNull()
     expect(state.editorCanvasDraft).toMatchObject({ sourceImageId: null, annotations: [] })
     expect(state.prompt).toBe('keep this instruction')
-    expect(state.styleReferenceImage).toEqual(imageB)
+    expect(state.styleReferenceImage).toBeNull()
   })
 
   it('submits annotated editor inputs in source, guide, reference, and style order', async () => {

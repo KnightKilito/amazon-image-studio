@@ -1704,6 +1704,10 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
           }`}
           onClick={() => {
             if (suppressImageClickRef.current) return
+            if (!isEditorLayout) {
+              setLightboxImageId(img.id, inputImages.map((i) => i.id))
+              return
+            }
             if (isMaskTarget && !(isEditorLayout && singleConversion)) {
               setMaskEditorImageId(img.id)
               return
@@ -1732,16 +1736,26 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
           <span className="absolute bottom-1 left-1 flex h-4 w-4 items-center justify-center rounded-full bg-black/55 text-[9px] font-semibold text-white backdrop-blur-sm z-10 pointer-events-none">
             {idx + 1}
           </span>
+          {!isEditorLayout && (
+            <button
+              type="button"
+              className="absolute inset-0 z-10 cursor-pointer rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+              aria-label={`预览参考图 ${idx + 1}`}
+              title={`预览参考图 ${idx + 1}`}
+            />
+          )}
           {canEdit && (
-            <button 
-              className="absolute inset-0 w-full h-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-20 focus:outline-none border-none"
+            <button
+              type="button"
+              className={`${isEditorLayout ? 'absolute inset-0 w-full h-full bg-black/40' : 'absolute bottom-1 right-1 h-5 w-5 rounded-full bg-black/60 hover:bg-black/80'} opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-20 focus-visible:ring-2 focus-visible:ring-blue-500 border-none`}
               onClick={(e) => {
                 e.stopPropagation()
                 handleEditReferenceImage(img, idx, isMaskTarget)
               }}
               title={isMaskTarget ? "编辑遮罩" : "编辑"}
+              aria-label={`${isMaskTarget ? '编辑遮罩' : '编辑参考图'} ${idx + 1}`}
             >
-              <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className={`${isEditorLayout ? 'w-5 h-5' : 'w-3 h-3'} text-white`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
               </svg>
             </button>
@@ -1773,7 +1787,9 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
       onClick={() =>
         setConfirmDialog({
           title: maskTargetImage ? '清空全部输入图' : '清空参考图',
-          message: maskTargetImage
+          message: isEditorLayout
+            ? '确定要清空全部素材、风格参考图、遮罩和画布标注，以及批量 A+ 转换列表吗？对应排队或执行中的转换会停止，已完成的历史结果保留。'
+            : maskTargetImage
             ? `确定要清空遮罩主图、${referenceImages.length} 张参考图和当前遮罩吗？`
             : `确定要清空全部 ${inputImages.length} 张参考图吗？`,
           action: () => {
@@ -1866,16 +1882,25 @@ export default function InputBar({ layout = 'home' }: InputBarProps) {
           <span className="absolute left-1 top-1 rounded bg-violet-500/90 px-1.5 py-0.5 text-[8px] leading-none text-white font-bold tracking-wider backdrop-blur-sm z-10 pointer-events-none">
             STYLE
           </span>
+          {!isEditorLayout && (
+            <button
+              type="button"
+              className="absolute inset-0 z-10 cursor-pointer rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500"
+              aria-label="预览风格参考图"
+              title="预览风格参考图"
+            />
+          )}
           <button
             type="button"
-            className="absolute inset-0 w-full h-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-20 focus:outline-none border-none"
+            className={`${isEditorLayout ? 'absolute inset-0 w-full h-full bg-black/40' : 'absolute bottom-1 right-1 h-5 w-5 rounded-full bg-black/60 hover:bg-black/80'} opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity flex items-center justify-center cursor-pointer z-20 focus-visible:ring-2 focus-visible:ring-violet-500 border-none`}
             onClick={(e) => {
               e.stopPropagation()
               styleReferenceFileInputRef.current?.click()
             }}
             title="替换风格参考图"
+            aria-label="替换风格参考图"
           >
-            <ImportIcon className="w-5 h-5 text-white" />
+            <ImportIcon className={`${isEditorLayout ? 'w-5 h-5' : 'w-3 h-3'} text-white`} />
           </button>
         </div>
         <button

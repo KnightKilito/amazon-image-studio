@@ -3562,6 +3562,15 @@ export default function AmazonPlanner() {
                 <ExternalLinkIcon className="h-4 w-4" />
                 打开 OpenAI 服务状态页
               </a>
+              <a
+                  href="https://status.dragtokens.com/"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-blue-600"
+              >
+                <ExternalLinkIcon className="h-4 w-4" />
+                打开 DragAI 服务状态页
+              </a>
             </div>
           </div>
         </div>

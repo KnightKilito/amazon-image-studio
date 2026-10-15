@@ -2,7 +2,7 @@
 
 面向 Amazon Listing 与 A+ Content 的 AI 文案、图片策划和生成工作台。输入商品信息与参考图，即可生成中英文 Listing 文案、利润建议、分镜方案、提示词并逐张出图。
 
-[🌐 作者博客](https://meochun.fun) · [🐛 反馈问题](https://github.com/KnightKilito/amazon-image-studio/issues) · [📝 更新日志](#-更新日志)
+[🌐 作者博客](https://meochun.fun) · [🐛 反馈问题](https://github.com/KnightKilito/amazon-image-studio/issues) · [📝 更新日志](#-更新日志) · [✒️ 体验地址](https://amzpic.moechun.fun/)
 
 > 在线体验和本地应用均不内置 API Key。请使用自己的 OpenAI 或兼容服务，并自行承担调用费用。
 
@@ -16,23 +16,28 @@
 - 🧠 支持 OpenAI / OpenAI 兼容接口、OpenRouter，以及独立的 Chat Completions / Responses 策划配置。
 - 📒 内置 Amazon 主图、附图与 A+ 尺寸规则；生成时会带入目标分辨率与合规约束。
 
+**后期打算加上一些后台管理功能，做成可选的充值模式，有别的想法也欢迎提交pr(●'◡'●)**
+
 ## 📸 截图
 
 <!-- 截图预留：上传后将图片放至 docs/screenshots/，并取消对应 img 标签的注释。 -->
 
-<!--
 <p align="center">
-  <img src="docs/screenshots/overview.png" alt="亚马逊AI工作台主界面" width="100%">
+  <img src="docs/screenshots/亚马逊AI工作台-主界面.png" alt="亚马逊AI工作台-主界面" width="100%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/亚马逊AI工作台-AI风格图.png" alt="亚马逊AI工作台-AI风格图" width="100%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/亚马逊AI工作台-图片结果页.png" alt="亚马逊AI工作台-图片结果页" width="100%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/亚马逊AI工作台-Listing文案策划页-1.png" alt="亚马逊AI工作台-Listing文案策划页-1" width="100%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/亚马逊AI工作台-Listing文案策划页-2.png" alt="亚马逊AI工作台-Listing文案策划页-2" width="100%">
 </p>
 
-<p align="center">
-  <img src="docs/screenshots/planner.png" alt="Listing 与 A+ 图片策划" width="100%">
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/settings.png" alt="API 与管理员设置" width="100%">
-</p>
--->
 
 ## 🚀 快速开始
 

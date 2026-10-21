@@ -618,6 +618,19 @@ export interface ListingCopyProfitResult {
   error: string
 }
 
+export interface PersonalKnowledgeDocument {
+  id: string
+  filename: string
+  mimeType: string
+  byteSize: number
+  originalFile: Blob
+  text: string
+  summary: string
+  enabledForListing: boolean
+  createdAt: number
+  updatedAt: number
+}
+
 export interface ListingCopySession {
   id: string
   kind: 'draft' | 'version'

@@ -9,11 +9,11 @@ import {
 } from './listingCopyKnowledge'
 
 describe('listing copy prompts and source viewer', () => {
-  it('bundles the three requested source files and uses titlePrompt.txt without extra prose', () => {
+  it('bundles only public docs and uses titlePrompt.txt without extra prose', () => {
     expect(LISTING_COPY_KNOWLEDGE_SOURCES.map((source) => source.filename)).toEqual([
       '标题Prompt.txt',
-      '【笔记】20250813-标题1.md',
-      '【笔记】20251013-标题2.md',
+      '亚马逊图片规范与附图策划逻辑.md',
+      '亚马逊美国站A加尺寸图.md',
     ])
     expect(DEFAULT_LISTING_TITLE_PROMPT).toBe(LISTING_COPY_KNOWLEDGE_SOURCES[0]?.content)
     expect(DEFAULT_LISTING_TITLE_PROMPT).toContain('严格控制在75个字符以内')

@@ -162,7 +162,7 @@ vi.mock('./lib/agentApi', () => ({
 }))
 import { clearAmazonPlannerSessions, clearImages, clearListingCopySessions, clearTasks, getAllAmazonPlannerSessions, getAllImages, getAllListingCopySessions, getImage, putAmazonPlannerSession, putImage, putListingCopySession } from './lib/db'
 import { callImageApi } from './lib/api'
-import { captureAPlusRequestSettings, prepareAPlusConversionFromImage, stopImageTask, submitExplicitImageTask, deleteImageIfUnreferenced, waitForImageTask, updateTaskInStore, retryTaskImageDownload } from './store'
+import { captureAPlusRequestSettings, prepareAPlusConversionFromImage, stopImageTask, submitExplicitImageTask, deleteImageIfUnreferenced, waitForImageTask, updateTaskInStore, retryTaskImageDownload, addTasksOutputsToInputImages } from './store'
 import { addAPlusBatchSources, enqueueAPlusBatchRows, stopAllAPlusBatchRows, stopAPlusBatchRow } from './lib/aPlusConversionBatch'
 import { buildAPlusConversionSpec } from './lib/aPlusConversion'
 import { createImageEditorVisualGuideDataUrl } from './lib/imageEditorAnnotations'
@@ -1169,6 +1169,58 @@ describe('mask draft lifecycle in store actions', () => {
     expect(result.skippedCount).toBe(0)
     expect(useStore.getState().inputImages.map((image) => image.id)).toEqual([imageA.id, imageB.id])
     useStore.setState({ adminAccess: previousAdminAccess })
+  })
+
+  it('appends all selected task outputs once and preserves current editor state', async () => {
+    const c = { id: 'bulk-ref-c', dataUrl: 'data:image/png;base64,c' }
+    const d = { id: 'bulk-ref-d', dataUrl: 'data:image/png;base64,d' }
+    await Promise.all([putImage(c), putImage(d)])
+    const mask = { targetImageId: imageA.id, maskDataUrl: 'data:image/png;base64,mask', updatedAt: 1 }
+    useStore.setState({ appPage: 'editor', inputImages: [imageA], styleReferenceImage: imageB, maskDraft: mask, prompt: '保留草稿', editorActiveImageId: imageA.id, editorActiveTaskId: 'keep-result', adminAccess: { ...useStore.getState().adminAccess, referenceImageUploadLimit: 16 } })
+    const result = await addTasksOutputsToInputImages([{ outputImages: [c.id, imageA.id, c.id] }, { outputImages: [d.id, imageB.id] }])
+    expect(result).toMatchObject({ addedImageIds: [c.id, d.id], missingImageIds: [], skippedCount: 0, duplicateCount: 3, cancelled: false })
+    expect(useStore.getState()).toMatchObject({ inputImages: [imageA, c, d], styleReferenceImage: imageB, maskDraft: mask, prompt: '保留草稿', editorActiveImageId: imageA.id, editorActiveTaskId: 'keep-result' })
+  })
+
+  it('counts the style image against capacity when adding multiple selected results', async () => {
+    const c = { id: 'bulk-limit-c', dataUrl: 'data:image/png;base64,c' }
+    const d = { id: 'bulk-limit-d', dataUrl: 'data:image/png;base64,d' }
+    await Promise.all([putImage(c), putImage(d)])
+    useStore.setState({ inputImages: [imageA], styleReferenceImage: imageB, maskDraft: null, adminAccess: { ...useStore.getState().adminAccess, referenceImageUploadLimit: 3 } })
+    const result = await addTasksOutputsToInputImages([{ outputImages: [c.id] }, { outputImages: [d.id] }])
+    expect(result).toMatchObject({ addedImageIds: [c.id], skippedCount: 1 })
+    expect(useStore.getState().inputImages.map((image) => image.id)).toEqual([imageA.id, c.id])
+  })
+
+  it('continues after a missing image without wasting available reference capacity', async () => {
+    const c = { id: 'bulk-missing-c', dataUrl: 'data:image/png;base64,c' }
+    const d = { id: 'bulk-missing-d', dataUrl: 'data:image/png;base64,d' }
+    await Promise.all([putImage(c), putImage(d)])
+    useStore.setState({ inputImages: [], styleReferenceImage: null, maskDraft: null, adminAccess: { ...useStore.getState().adminAccess, referenceImageUploadLimit: 2 } })
+    const result = await addTasksOutputsToInputImages([{ outputImages: ['bulk-truly-missing', c.id, d.id] }])
+    expect(result).toMatchObject({ addedImageIds: [c.id, d.id], missingImageIds: ['bulk-truly-missing'], skippedCount: 0 })
+  })
+
+  it('rechecks capacity after asynchronous reads so simultaneous additions cannot exceed the limit', async () => {
+    const c = { id: 'bulk-race-c', dataUrl: 'data:image/png;base64,c' }
+    const d = { id: 'bulk-race-d', dataUrl: 'data:image/png;base64,d' }
+    await Promise.all([putImage(c), putImage(d)])
+    useStore.setState({ inputImages: [], styleReferenceImage: null, maskDraft: null, adminAccess: { ...useStore.getState().adminAccess, referenceImageUploadLimit: 1 } })
+    const results = await Promise.all([addTasksOutputsToInputImages([{ outputImages: [c.id] }]), addTasksOutputsToInputImages([{ outputImages: [d.id] }])])
+    expect(useStore.getState().inputImages).toHaveLength(1)
+    expect(results.reduce((sum, result) => sum + result.addedImageIds.length, 0)).toBe(1)
+    expect(results.reduce((sum, result) => sum + result.skippedCount, 0)).toBe(1)
+  })
+
+  it('does not append a late image after the originating page changes', async () => {
+    const c = { id: 'bulk-cancel-c', dataUrl: 'data:image/png;base64,c' }
+    await putImage(c)
+    useStore.setState({ inputImages: [], styleReferenceImage: null, maskDraft: null })
+    let active = true
+    const pending = addTasksOutputsToInputImages([{ outputImages: [c.id] }], () => active)
+    active = false
+    expect(await pending).toMatchObject({ addedImageIds: [], cancelled: true })
+    expect(useStore.getState().inputImages).toEqual([])
   })
 
   it('clears an invalid mask draft when submit cannot find the mask target image', async () => {

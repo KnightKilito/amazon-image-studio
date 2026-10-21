@@ -1,7 +1,7 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { downloadImageIds, formatExportFileTime } from '../lib/downloadImages'
 import { getFilteredTaskHistory } from '../lib/taskHistory'
-import { removeMultipleTasks, updateTaskInStore, useStore } from '../store'
+import { addTasksOutputsToInputImages, removeMultipleTasks, updateTaskInStore, useStore } from '../store'
 
 interface Props {
   variant?: 'dock' | 'inline'
@@ -22,6 +22,8 @@ export default function TaskSelectionToolbar({ variant = 'dock' }: Props) {
   const filterAspect = useStore((s) => s.filterAspect)
   const historyPage = useStore((s) => s.historyPage)
   const historyPageSize = useStore((s) => s.historyPageSize)
+  const addingReferencesRef = useRef(false)
+  const [isAddingReferences, setIsAddingReferences] = useState(false)
 
   const visibleTaskIds = useMemo(() => {
     const filteredTasks = getFilteredTaskHistory(tasks, {
@@ -90,11 +92,43 @@ export default function TaskSelectionToolbar({ variant = 'dock' }: Props) {
     clearSelection()
   }, [clearSelection, selectedTaskIds, showToast, tasks])
 
+  const handleAddReferences = useCallback(async () => {
+    if (addingReferencesRef.current) return
+    const selectedIds = new Set(selectedTaskIds)
+    const selectedTasks = tasks.filter((task) => selectedIds.has(task.id))
+    if (!selectedTasks.some((task) => task.outputImages?.length)) {
+      showToast('选中的记录没有可加入的结果图片', 'info')
+      return
+    }
+    const page = useStore.getState().appPage
+    addingReferencesRef.current = true
+    setIsAddingReferences(true)
+    try {
+      const result = await addTasksOutputsToInputImages(selectedTasks, () => useStore.getState().appPage === page)
+      if (result.cancelled) return
+      const details = [
+        result.addedImageIds.length ? `已加入 ${result.addedImageIds.length} 张参考图` : '',
+        result.duplicateCount ? `${result.duplicateCount} 张重复图片已跳过` : '',
+        result.skippedCount ? `${result.skippedCount} 张因参考图数量达到上限未加入（风格图也占用名额）` : '',
+        result.missingImageIds.length ? `${result.missingImageIds.length} 张图片已丢失或读取失败` : '',
+      ].filter(Boolean)
+      showToast(details.join('，') || '没有可加入的结果图片', result.addedImageIds.length ? (result.skippedCount || result.missingImageIds.length ? 'info' : 'success') : result.missingImageIds.length ? 'error' : 'info')
+      if ((result.addedImageIds.length || result.duplicateCount) && !result.skippedCount && !result.missingImageIds.length) {
+        setSelectedTaskIds((current) => current.filter((id) => !selectedIds.has(id)))
+      }
+    } catch (error) {
+      showToast(`加入参考图失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+    } finally {
+      addingReferencesRef.current = false
+      setIsAddingReferences(false)
+    }
+  }, [selectedTaskIds, setSelectedTaskIds, showToast, tasks])
+
   if (selectedTaskIds.length === 0) return null
 
   return (
-    <div className={variant === 'dock' ? 'mb-3 flex justify-center lg:justify-end' : 'flex justify-end'} data-task-selection-toolbar>
-      <div className="pointer-events-auto flex items-center rounded-full border border-gray-200/50 bg-white/90 p-1 shadow-[0_8px_30px_rgb(0,0,0,0.12)] backdrop-blur dark:border-white/10 dark:bg-gray-800/90 dark:shadow-lg">
+    <div className={variant === 'dock' ? 'mb-3 flex min-w-0 justify-center lg:justify-end' : 'flex min-w-0 justify-end'} data-task-selection-toolbar>
+      <div className="pointer-events-auto flex max-w-full items-center overflow-x-auto rounded-full border border-gray-200/50 bg-white/90 p-1 shadow-[0_8px_30px_rgb(0,0,0,0.12)] backdrop-blur dark:border-white/10 dark:bg-gray-800/90 dark:shadow-lg [&>button]:shrink-0 [&>div]:shrink-0">
         <span aria-live="polite" className="shrink-0 whitespace-nowrap pl-2 pr-1 text-[11px] font-semibold text-gray-500 dark:text-gray-300">已选 {selectedTaskIds.length}</span>
         <button type="button" onClick={clearSelection} className="p-2 text-gray-600 transition-colors hover:text-gray-900 dark:text-gray-300 dark:hover:text-white" title="取消选择" aria-label="取消选择">
           <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
@@ -106,6 +140,10 @@ export default function TaskSelectionToolbar({ variant = 'dock' }: Props) {
           ) : (
             <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path strokeDasharray="4 4" d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z" /></svg>
           )}
+        </button>
+        <div className="mx-1 h-5 w-px bg-gray-200 dark:bg-white/20" />
+        <button type="button" onClick={() => void handleAddReferences()} disabled={isAddingReferences} aria-busy={isAddingReferences} title={isAddingReferences ? '正在加入参考图…' : '批量加入参考图（选中记录的全部结果图片）'} aria-label="批量加入参考图" className="p-2 text-violet-500 transition-colors hover:text-violet-600 disabled:cursor-wait disabled:opacity-40 dark:text-violet-400 dark:hover:text-violet-300">
+          {isAddingReferences ? <span className="block h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M14 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M3 16l5-5 6 6 3-3 4 4M19 2v6M16 5h6" /><circle cx="8" cy="7" r="1" /></svg>}
         </button>
         <div className="mx-1 h-5 w-px bg-gray-200 dark:bg-white/20" />
         <button type="button" onClick={handleToggleFavorite} className="p-2 text-yellow-500 transition-colors hover:text-yellow-600 dark:text-yellow-400 dark:hover:text-yellow-300" title="收藏/取消收藏" aria-label="收藏或取消收藏选中记录">

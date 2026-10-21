@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import { readFileSync } from 'fs'
 import { loadAdminConfig } from './server/config.mjs'
 import { normalizeDevProxyConfig } from './src/lib/devProxy'
+import { serviceWorkerCachePlugin } from './build/serviceWorkerCache'
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
 const adminConfig = loadAdminConfig()
@@ -56,7 +57,7 @@ export default defineConfig(({ command }) => {
   }
 
   return {
-    plugins: [react()],
+    plugins: [react(), serviceWorkerCachePlugin()],
     base: './',
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),

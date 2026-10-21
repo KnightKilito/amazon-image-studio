@@ -3,6 +3,7 @@ import { createDefaultOpenAIProfile } from './apiProfiles'
 import { DEFAULT_LISTING_COPY_INPUT } from './listingCopy'
 import { DEFAULT_LISTING_COPY_PROMPTS } from './listingCopyKnowledge'
 import { generateListingCopy } from './listingCopyApi'
+import { buildListingKnowledgePrompt } from './personalKnowledge'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -39,6 +40,18 @@ const baseOptions = {
 }
 
 describe('generateListingCopy', () => {
+  it('includes only enabled knowledge summaries and omits them once disabled', async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => jsonResponse(validPayload()))
+    vi.stubGlobal('fetch', fetchMock)
+    const documents = [{ filename: '本地规则.txt', summary: 'MY_SAVED_KNOWLEDGE_SUMMARY', enabledForListing: true, text: 'PRIVATE_ORIGINAL_BODY' }]
+    await generateListingCopy({ ...baseOptions, personalKnowledgePrompt: buildListingKnowledgePrompt(documents) })
+    const first = String(fetchMock.mock.calls[0]?.[1]?.body)
+    expect(first).toContain('MY_SAVED_KNOWLEDGE_SUMMARY')
+    expect(first).not.toContain('PRIVATE_ORIGINAL_BODY')
+    documents[0].enabledForListing = false
+    await generateListingCopy({ ...baseOptions, personalKnowledgePrompt: buildListingKnowledgePrompt(documents) })
+    expect(String(fetchMock.mock.calls[1]?.[1]?.body)).not.toContain('MY_SAVED_KNOWLEDGE_SUMMARY')
+  })
   it('sends a strict bilingual schema and returns valid copy', async () => {
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => jsonResponse(validPayload()))
     vi.stubGlobal('fetch', fetchMock)

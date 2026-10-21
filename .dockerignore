@@ -1,8 +1,15 @@
 node_modules
 dist
+log
+*.log
 .git
 .gitignore
 config.yaml
 *.md
+!src/docs/*.md
+!docs/knowledge/*.md
+**/【笔记】20250813-标题1.md
+**/【笔记】20251013-标题2.md
+**/SKU标题.docx
 Dockerfile
 .dockerignore

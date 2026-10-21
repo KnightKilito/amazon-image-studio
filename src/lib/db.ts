@@ -1,12 +1,13 @@
-import type { AmazonPlannerSession, ListingCopySession, TaskRecord, StoredImage, StoredImageThumbnail } from '../types'
+import type { AmazonPlannerSession, ListingCopySession, PersonalKnowledgeDocument, TaskRecord, StoredImage, StoredImageThumbnail } from '../types'
 
 const DB_NAME = 'amazon-image-studio'
-const DB_VERSION = 4
+const DB_VERSION = 5
 const STORE_TASKS = 'tasks'
 const STORE_IMAGES = 'images'
 const STORE_THUMBNAILS = 'thumbnails'
 const STORE_AMAZON_PLANNER_SESSIONS = 'amazonPlannerSessions'
 const STORE_LISTING_COPY_SESSIONS = 'listingCopySessions'
+const STORE_PERSONAL_KNOWLEDGE = 'personalKnowledgeDocuments'
 const THUMBNAIL_MAX_SIZE = 720
 const THUMBNAIL_QUALITY = 0.9
 const THUMBNAIL_VERSION = 2
@@ -33,9 +34,17 @@ function openDB(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE_LISTING_COPY_SESSIONS)) {
         db.createObjectStore(STORE_LISTING_COPY_SESSIONS, { keyPath: 'id' })
       }
+      if (!db.objectStoreNames.contains(STORE_PERSONAL_KNOWLEDGE)) {
+        db.createObjectStore(STORE_PERSONAL_KNOWLEDGE, { keyPath: 'id' })
+      }
     }
-    req.onsuccess = () => resolve(req.result)
+    req.onsuccess = () => {
+      const db = req.result
+      db.onversionchange = () => db.close()
+      resolve(db)
+    }
     req.onerror = () => reject(req.error)
+    req.onblocked = () => reject(new Error('本地数据库升级被旧页面阻止，请关闭其他本站标签页后刷新重试。'))
   })
 }
 
@@ -50,7 +59,9 @@ function dbTransaction<T>(
         const tx = db.transaction(storeName, mode)
         const store = tx.objectStore(storeName)
         const req = fn(store)
-        req.onsuccess = () => resolve(req.result)
+        tx.oncomplete = () => { db.close(); resolve(req.result) }
+        tx.onabort = () => { db.close(); reject(tx.error ?? new Error('本地数据保存失败，可能是存储空间不足。')) }
+        tx.onerror = () => { db.close(); reject(tx.error) }
         req.onerror = () => reject(req.error)
       }),
   )
@@ -108,6 +119,24 @@ export function deleteListingCopySession(id: string): Promise<undefined> {
 
 export function clearListingCopySessions(): Promise<undefined> {
   return dbTransaction(STORE_LISTING_COPY_SESSIONS, 'readwrite', (s) => s.clear())
+}
+
+// ===== Personal knowledge (local browser only) =====
+
+export function getAllPersonalKnowledgeDocuments(): Promise<PersonalKnowledgeDocument[]> {
+  return dbTransaction(STORE_PERSONAL_KNOWLEDGE, 'readonly', (store) => store.getAll())
+}
+
+export function putPersonalKnowledgeDocument(document: PersonalKnowledgeDocument): Promise<IDBValidKey> {
+  return dbTransaction(STORE_PERSONAL_KNOWLEDGE, 'readwrite', (store) => store.put(document))
+}
+
+export function deletePersonalKnowledgeDocument(id: string): Promise<undefined> {
+  return dbTransaction(STORE_PERSONAL_KNOWLEDGE, 'readwrite', (store) => store.delete(id))
+}
+
+export function clearPersonalKnowledgeDocuments(): Promise<undefined> {
+  return dbTransaction(STORE_PERSONAL_KNOWLEDGE, 'readwrite', (store) => store.clear())
 }
 
 // ===== Images =====

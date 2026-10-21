@@ -59,6 +59,12 @@ npm run dev
 | `npm run test` | 运行测试 |
 | `npm run admin:server` | 启动管理员 API |
 
+### 本地日志
+
+开发服务（含 Windows 启动脚本）、预览、构建、管理员 API 和 Mock API 的终端输出会同时追加到根目录 `log/`：例如 `vite.out.log`、`vite.err.log`、`admin-server.out.log`。目录不存在时自动创建；npm 自身诊断日志放在 `log/npm/`（最多保留 10 份）。这些日志不提交 Git，也不打入 Docker 构建上下文，不影响浏览器中的图片和历史数据。
+
+每次启动上述命令，还会将根目录遗留的 `.log` 文件归拢到 `log/`，重名文件保留两份，文件被占用时跳过并提示。IDE 的 Java/Git 辅助进程崩溃日志不受网站配置控制，可能临时出现在根目录，下次启动项目会再次收集。日志可能包含本地调试信息，分享前请检查敏感内容；长期运行可按需清理 `log/` 中不再需要的日志。
+
 ## 📖 使用流程
 
 1. 在右上角设置中分别配置生图 API 与 AI 策划 API。
@@ -71,6 +77,14 @@ npm run dev
 
 ## 🛠️ 管理与部署
 
+### 参考文档与个人知识库
+
+公开参考文档和示例材料位于 `docs/reference-materials/`、`docs/knowledge/`；原 `参考物料/` 目录已移除。私有标题笔记及 Word 参考文件不再包含于当前源码或内置知识库。
+
+Listing 文案页支持个人本地知识库：上传 TXT / Markdown / `.docx`、可选使用策划 AI 总结、手动编辑概要，并按开关将概要用于后续文案策划。上传文档默认不总结、不启用。原件与概要保存在浏览器 IndexedDB，AI 总结时才会发送正文给当前策划服务商；Listing 请求只带已启用的概要。使用和备份边界见 [Listing 文案说明](src/docs/05-listing-copy.md)。
+
+注意：删除当前文件并不会抹除 Git 旧提交或已发布构建。若旧版本已经公开且包含私有文件，应另行评估清理仓库历史和旧发布产物；本次改动不自动重写 Git 历史。
+
 前端可作为 Vite 静态站点部署，构建命令为 `npm run build`，输出目录为 `dist/`。GitHub Pages、Cloudflare Pages 等静态托管均可使用此构建产物。
 
 需要统一管理游客权限、API URL、模型列表和参考图上限时，另行部署 Node 管理 API 与 MySQL：
@@ -82,7 +96,22 @@ npm run admin:server
 
 编辑 `config.yaml` 中的管理员账户和 MySQL 连接信息。生产环境需将 `/admin-api` 反向代理到 Node 服务；跨域 API 才需要启用可选的 `/api-proxy`，并应通过 `allowedTargets` 限制目标地址。部署示例见 [config.example.yaml](config.example.yaml) 与 [deploy/nginx.conf](deploy/nginx.conf)。
 
+### 访问统计（Cloudflare Web Analytics）
+
+已接入 Cloudflare 官方统计脚本，站点标识位于 `src/lib/cloudflareAnalytics.ts`。它是公开统计标识，不是 Cloudflare API 密钥；部署到自己的其他域名时应替换为自己的标识，或移除 `src/main.tsx` 中的加载调用。
+
+- 仅生产构建启用，开发环境、localhost、回环及常见内网 IPv4 地址不会主动加载统计脚本。
+- 统计非阻塞加载，被网络或广告拦截器阻止不影响生图、策划、编辑和历史记录。
+- HTML 解析完成后检测已有 CF 统计脚本，已自动注入时不重复添加。推荐在 CF Web Analytics 的站点管理中使用 **Enable with JS Snippet installation（手动安装 JS）**，不要再另行复制相同脚本。
+- 发布更新后，在正式网站开发者工具的 Network 中检查 `beacon.min.js` 和统计上报请求，再到 Cloudflare 的 Web Analytics 查看数据。数据不保证即时显示，也无法补记接入前的历史访问。
+- 当前接入仅使用官方默认访问/性能统计，不上传业务提示词、参考图、API Key 或自定义业务事件；不改现有 `#home` / `#editor` / `#listing-copy` 导航，也不承诺三个 hash Tab 一定被识别为独立页面。
+- 尚未接入任何广告。访问量统计不等于未来广告曝光量或可计费展示量。
+
+参考：[官方安装说明](https://developers.cloudflare.com/web-analytics/get-started/)、[官方 FAQ](https://developers.cloudflare.com/web-analytics/faq/)。
+
 ### 部署 FAQ
+
+**更新版本时需要修改 `sw.js` 的缓存名吗？** 不需要。`CACHE_NAME` 是固定项目名，`npm run build` 会根据本次构建资源和 public 文件内容自动生成缓存标识，写入 `dist/sw.js`。新 Service Worker 激活后会删除本项目旧静态缓存，兼容清理过去的 `amazon-image-studio-v*` 缓存，不删除同源其他应用的缓存。请发布完整 `dist/`，不要直接复制未构建的 `public/sw.js`。这与保存图片、任务历史、个人知识库的 IndexedDB 分离，不会重置或复制这些数据。
 
 **构建或启动失败怎么办？** 确认使用 Node.js 20+，在项目根目录执行 `npm ci` 后重试。部署静态站点时，安装命令为 `npm ci`，构建命令为 `npm run build`，发布目录为 `dist/`。
 

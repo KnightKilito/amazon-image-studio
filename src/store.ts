@@ -5931,34 +5931,43 @@ export async function addImageFromFile(file: File): Promise<void> {
 }
 
 export async function addTaskOutputsToInputImages(task: TaskRecord) {
-  const state = useStore.getState()
-  const limit = getReferenceImageUploadLimit(state.adminAccess)
-  const existingIds = new Set([
-    ...state.inputImages.map((image) => image.id),
-    ...(state.styleReferenceImage ? [state.styleReferenceImage.id] : []),
-  ])
-  const outputImageIds = [...new Set(task.outputImages ?? [])]
-  const candidateImageIds = outputImageIds.filter((imageId) => !existingIds.has(imageId))
-  const available = Math.max(0, limit - existingIds.size)
-  const acceptedImageIds = candidateImageIds.slice(0, available)
+  return addTasksOutputsToInputImages([task])
+}
+
+/** 多条任务的所有输出追加到现有素材，每张按最新状态去重和校验容量。 */
+export async function addTasksOutputsToInputImages(tasks: readonly Pick<TaskRecord, 'outputImages'>[], shouldContinue: () => boolean = () => true) {
+  const allOutputIds = tasks.flatMap((task) => task.outputImages ?? [])
+  const outputImageIds = [...new Set(allOutputIds)]
   const addedImageIds: string[] = []
   const missingImageIds: string[] = []
-
-  for (const imageId of acceptedImageIds) {
-    const dataUrl = await ensureImageCached(imageId)
-    if (!dataUrl) {
-      missingImageIds.push(imageId)
-      continue
+  let duplicateCount = allOutputIds.length - outputImageIds.length
+  let skippedCount = 0
+  let cancelled = false
+  const getCapacity = (imageId: string) => {
+    const state = useStore.getState()
+    return {
+      exists: state.inputImages.some((image) => image.id === imageId) || state.styleReferenceImage?.id === imageId,
+      full: state.inputImages.length + (state.styleReferenceImage ? 1 : 0) >= getReferenceImageUploadLimit(state.adminAccess),
     }
+  }
+
+  for (const imageId of outputImageIds) {
+    if (!shouldContinue()) { cancelled = true; break }
+    const beforeRead = getCapacity(imageId)
+    if (beforeRead.exists) { duplicateCount++; continue }
+    if (beforeRead.full) { skippedCount++; continue }
+    let dataUrl: string | null | undefined
+    try { dataUrl = await ensureImageCached(imageId) } catch { /* 继续处理其他结果。 */ }
+    if (!shouldContinue()) { cancelled = true; break }
+    if (!dataUrl) { missingImageIds.push(imageId); continue }
+    const afterRead = getCapacity(imageId)
+    if (afterRead.exists) { duplicateCount++; continue }
+    if (afterRead.full) { skippedCount++; continue }
     useStore.getState().addInputImage({ id: imageId, dataUrl })
     addedImageIds.push(imageId)
   }
 
-  return {
-    addedImageIds,
-    missingImageIds,
-    skippedCount: Math.max(0, candidateImageIds.length - acceptedImageIds.length),
-  }
+  return { addedImageIds, missingImageIds, skippedCount, duplicateCount, cancelled }
 }
 
 export async function createInputImageFromFile(file: File): Promise<InputImage | null> {

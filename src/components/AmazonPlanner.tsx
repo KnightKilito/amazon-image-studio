@@ -75,6 +75,10 @@ import PlannerRunDetailsModal, { type PlannerRunStatus } from './PlannerRunDetai
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, EditIcon, ExternalLinkIcon, EyeIcon, HelpCircleIcon, HistoryIcon, PhotoIcon, PlusIcon, RefreshIcon, SettingsIcon, TrashIcon } from './icons'
 import { clearAmazonPlannerResultSnapshot } from '../lib/amazonPlannerReset'
 import SizePickerModal from './SizePickerModal'
+import PlannerReferenceImage from './PlannerReferenceImage'
+import Pagination from './Pagination'
+import { HISTORY_PAGE_SIZE, HISTORY_PAGE_SIZE_OPTIONS, normalizeHistoryPageSize } from '../lib/taskHistory'
+import { getPlannerHistoryPage } from '../lib/plannerHistory'
 import {
   DEFAULT_LISTING_TARGET_SIZE,
   formatListingTargetSize,
@@ -451,6 +455,12 @@ export default function AmazonPlanner() {
   const [plannerSessions, setPlannerSessions] = useState<AmazonPlannerSession[]>([])
   const [currentPlannerSessionId, setCurrentPlannerSessionId] = useState<string | null>(null)
   const [showPlannerHistory, setShowPlannerHistory] = useState(false)
+  const [plannerHistoryPage, setPlannerHistoryPage] = useState(1)
+  const [plannerHistoryPageSize, setPlannerHistoryPageSize] = useState(HISTORY_PAGE_SIZE)
+  const pagedPlannerHistory = getPlannerHistoryPage(plannerSessions, plannerHistoryPage, plannerHistoryPageSize)
+  useEffect(() => {
+    if (plannerHistoryPage !== pagedPlannerHistory.currentPage) setPlannerHistoryPage(pagedPlannerHistory.currentPage)
+  }, [plannerHistoryPage, pagedPlannerHistory.currentPage])
   const [isPlanning, setIsPlanning] = useState(false)
   const [plannerError, setPlannerError] = useState('')
   const [showPlannerRunDetails, setShowPlannerRunDetails] = useState(false)
@@ -2223,7 +2233,7 @@ export default function AmazonPlanner() {
             </div>
             {plannerSessions.length > 0 ? (
               <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                {plannerSessions.map((session) => (
+                {pagedPlannerHistory.items.map((session) => (
                   <div key={session.id} className="rounded-lg border border-gray-200 bg-white p-3 dark:border-white/[0.08] dark:bg-gray-900">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
@@ -2269,6 +2279,22 @@ export default function AmazonPlanner() {
             ) : (
               <div className="rounded-lg border border-dashed border-gray-200 bg-white px-3 py-4 text-center text-xs text-gray-500 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-400">
                 暂无策划历史。AI 策划成功后会自动保存。
+              </div>
+            )}
+            {plannerSessions.length > 0 && (
+              <div className="mt-3 border-t border-gray-200 pt-3 dark:border-white/[0.08]">
+                <Pagination
+                  page={pagedPlannerHistory.currentPage}
+                  pageSize={plannerHistoryPageSize}
+                  totalItems={plannerSessions.length}
+                  onPageChange={setPlannerHistoryPage}
+                  pageSizeOptions={HISTORY_PAGE_SIZE_OPTIONS}
+                  onPageSizeChange={(size) => {
+                    setPlannerHistoryPageSize(normalizeHistoryPageSize(size))
+                    setPlannerHistoryPage(1)
+                  }}
+                  ariaLabel="策划历史分页"
+                />
               </div>
             )}
           </div>
@@ -2540,26 +2566,11 @@ export default function AmazonPlanner() {
             {inputImages.length > 0 ? (
               <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(64px,1fr))] gap-2 sm:grid-cols-[repeat(auto-fill,72px)]">
                 {inputImages.map((image, index) => (
-                  <div key={image.id} className="group relative aspect-square overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-white/[0.08] dark:bg-gray-900">
-                    <img src={image.dataUrl} alt={`参考图 ${index + 1}`} className="h-full w-full object-cover" />
-                    <span className="absolute bottom-1 left-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-black/60 px-1.5 text-[10px] font-semibold text-white">
-                      {index + 1}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const nextReferenceImageIds = inputImages.filter((_, imageIndex) => imageIndex !== index).map((item) => item.id)
-                        removeInputImage(index)
-                        updateCurrentPlannerSession({ referenceImageIds: nextReferenceImageIds })
-                      }}
-                      className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-white opacity-100 transition hover:bg-red-500 sm:opacity-0 sm:group-hover:opacity-100"
-                      aria-label={`删除参考图 ${index + 1}`}
-                    >
-                      <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
+                  <PlannerReferenceImage key={image.id} image={image} index={index} imageIds={inputImages.map((item) => item.id)} onRemove={() => {
+                    const nextReferenceImageIds = inputImages.filter((_, imageIndex) => imageIndex !== index).map((item) => item.id)
+                    removeInputImage(index)
+                    updateCurrentPlannerSession({ referenceImageIds: nextReferenceImageIds })
+                  }} />
                 ))}
               </div>
             ) : (
@@ -2573,6 +2584,8 @@ export default function AmazonPlanner() {
                 <span className="mt-1 text-xs text-gray-400">支持多选、拖到底部输入栏或直接在这里选择文件</span>
               </button>
             )}
+
+            {inputImages.length > 0 && <p className="mt-2 text-[11px] text-gray-400">点击图片可预览，右下角可添加或编辑遮罩；与右侧参考图同步。</p>}
 
             {atImageLimit && (
               <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200">

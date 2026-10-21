@@ -5,6 +5,7 @@ import App from './App'
 import 'streamdown/styles.css'
 import './index.css'
 import { installMobileViewportGuards } from './lib/viewport'
+import { installCloudflareAnalytics } from './lib/cloudflareAnalytics'
 
 installMobileViewportGuards()
 
@@ -27,3 +28,9 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </StrictMode>,
 )
+
+installCloudflareAnalytics({
+  production: import.meta.env.PROD,
+  hostname: window.location.hostname,
+  document,
+})

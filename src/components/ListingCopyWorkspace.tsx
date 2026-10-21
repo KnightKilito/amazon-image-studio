@@ -36,6 +36,7 @@ import { preparePlannerReferenceImagePayload } from '../lib/referenceImagePayloa
 import {
   deleteListingCopySession,
   getAllListingCopySessions,
+  getAllPersonalKnowledgeDocuments,
   putListingCopySession,
 } from '../lib/db'
 import { copyRichTextToClipboard, copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
@@ -45,6 +46,8 @@ import PlannerRunDetailsModal, { type PlannerRunStatus } from './PlannerRunDetai
 import { BookOpenIcon, CloseIcon, CopyIcon, EditIcon, EyeIcon, HistoryIcon, LinkIcon, PhotoIcon, RefreshIcon, SettingsIcon, TrashIcon } from './icons'
 import type { PlannerAttemptInfo } from '../lib/listingPlannerApi'
 import { replaceInputImagesWithReferenceImages } from '../lib/referenceImageSync'
+import PersonalKnowledgeBase from './PersonalKnowledgeBase'
+import { buildListingKnowledgePrompt } from '../lib/personalKnowledge'
 
 const DRAFT_ID = 'listing-copy-current-draft'
 const FIELD_CLASS = 'w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 pr-10 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-100 dark:placeholder:text-gray-500'
@@ -505,12 +508,15 @@ export default function ListingCopyWorkspace() {
     setStatus(refinementRequest ? '正在准备当前文案与参考图…' : '正在准备产品资料与参考图…')
     setGenerationRun({ startedAt: Date.now(), finishedAt: null, status: 'preparing', attempt: null, responseText: '', error: '' })
     try {
+      const personalKnowledgePrompt = buildListingKnowledgePrompt(await getAllPersonalKnowledgeDocuments())
+      if (controller.signal.aborted) return
       const payload = await preparePlannerReferenceImagePayload(referenceImages.map((image) => image.dataUrl), { signal: controller.signal })
       const generated = await generateListingCopy({
         input,
         prompts,
         marketplace,
         profile: plannerProfile,
+        personalKnowledgePrompt,
         referenceImageDataUrls: payload.dataUrls,
         previousRaw: refinementRequest && resultBeforeRefinement ? JSON.stringify(resultBeforeRefinement) : undefined,
         refinementInstruction: refinementRequest || undefined,
@@ -739,11 +745,12 @@ export default function ListingCopyWorkspace() {
             <div className="mb-4 flex items-start justify-between gap-3"><div><h3 className="font-bold text-gray-900 dark:text-white">Listing 策划提示词</h3><p className="mt-1 text-xs text-gray-400">标题、五点描述和长描述可分别修改，生成时会连同产品资料一起提交给 AI。</p></div><button type="button" onClick={() => setPrompts(cloneDefaultListingCopyPrompts())} className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]"><RefreshIcon className="h-3.5 w-3.5" />全部恢复默认</button></div>
             <div className="space-y-3">
               <PromptEditor label="标题提示词" description="默认仅使用《标题Prompt.txt》原文；系统只额外禁止逗号和独立单词 and，不再追加其他标题说明。" value={prompts.title} onChange={(value) => setPrompts((current) => ({ ...current, title: value }))} onReset={() => setPrompts((current) => ({ ...current, title: DEFAULT_LISTING_COPY_PROMPTS.title }))} rows={9} tone="emerald" />
-              <PromptEditor label="五点描述提示词" description="按《SKU标题.docx》的销售文风：严格五条，用具体利益型小标题把真实参数转化为购买理由。" value={prompts.bullets} onChange={(value) => setPrompts((current) => ({ ...current, bullets: value }))} onReset={() => setPrompts((current) => ({ ...current, bullets: DEFAULT_LISTING_COPY_PROMPTS.bullets }))} rows={16} tone="blue" />
-              <PromptEditor label="长描述提示词" description="按《SKU标题.docx》的成品风格：独立大标题、卖点叙事、适用场景、规格说明和优雅收尾；AI 只返回无 Markdown/HTML 标签的纯文本。" value={prompts.longDescription} onChange={(value) => setPrompts((current) => ({ ...current, longDescription: value }))} onReset={() => setPrompts((current) => ({ ...current, longDescription: DEFAULT_LISTING_COPY_PROMPTS.longDescription }))} rows={18} tone="violet" />
+              <PromptEditor label="五点描述提示词" description="严格五条，用具体利益型小标题把真实参数转化为购买理由。" value={prompts.bullets} onChange={(value) => setPrompts((current) => ({ ...current, bullets: value }))} onReset={() => setPrompts((current) => ({ ...current, bullets: DEFAULT_LISTING_COPY_PROMPTS.bullets }))} rows={16} tone="blue" />
+              <PromptEditor label="长描述提示词" description="独立大标题、卖点叙事、适用场景、规格说明和优雅收尾；AI 只返回无 Markdown/HTML 标签的纯文本。" value={prompts.longDescription} onChange={(value) => setPrompts((current) => ({ ...current, longDescription: value }))} onReset={() => setPrompts((current) => ({ ...current, longDescription: DEFAULT_LISTING_COPY_PROMPTS.longDescription }))} rows={18} tone="violet" />
             </div>
             <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-xs leading-5 text-gray-500 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-400"><span className="font-semibold text-gray-700 dark:text-gray-200">系统固定契约：</span>标题只额外禁用逗号和独立单词 and；五点与长描述必须是买家销售文案，缺失资料只能进入内部清单，不能出现在买家可见内容中。JSON 结构和禁止编造规则始终保留。</div>
-            {/*<button type="button" onClick={() => setShowSystemKnowledgeBase(true)} className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50/60 px-4 text-sm font-semibold text-blue-700 transition hover:bg-blue-100/70 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200 dark:hover:bg-blue-400/15"><EyeIcon className="h-4 w-4" />查看内置知识库</button>*/}
+            <button type="button" onClick={() => setShowSystemKnowledgeBase(true)} className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50/60 px-4 text-sm font-semibold text-blue-700 transition hover:bg-blue-100/70 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200 dark:hover:bg-blue-400/15"><EyeIcon className="h-4 w-4" />查看内置知识库</button>
+            <PersonalKnowledgeBase profile={plannerProfile} onOpenSettings={() => setShowSettings(true, 'api')} />
             <div className="mt-4 flex flex-col gap-2 sm:flex-row">
               <button type="button" onClick={() => void runGeneration()} disabled={isGenerating} className="inline-flex h-11 flex-1 items-center justify-center rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 px-5 text-sm font-bold text-white shadow-sm transition hover:from-blue-700 hover:to-violet-700 disabled:cursor-not-allowed disabled:opacity-60">{isGenerating ? status || 'AI 生成中…' : '生成 Listing 文案'}</button>
               {generationRun.startedAt && (plannerProfile?.streamImages || !isGenerating) && <button type="button" onClick={() => setShowGenerationDetails(true)} className="inline-flex h-11 items-center justify-center gap-1.5 rounded-xl border border-gray-200 px-4 text-sm font-semibold text-gray-600 hover:bg-gray-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]"><EyeIcon className="h-4 w-4" />{isGenerating && plannerProfile?.streamImages ? '查看流式数据' : '查看返回'}</button>}
@@ -794,7 +801,7 @@ export default function ListingCopyWorkspace() {
             <header className="flex items-start justify-between gap-4 border-b border-gray-200 px-4 py-4 dark:border-white/[0.08] sm:px-5">
               <div className="flex min-w-0 items-start gap-3">
                 <div className="rounded-xl bg-blue-50 p-2 text-blue-600 dark:bg-blue-400/10 dark:text-blue-300"><BookOpenIcon className="h-5 w-5" /></div>
-                <div><h3 id="listing-knowledge-base-title" className="font-bold text-gray-900 dark:text-white">内置知识库原文</h3><p className="mt-1 text-xs text-gray-400">查看标题 Prompt 和两份笔记的完整内容；右侧三个默认提示词以这些文件为依据。</p></div>
+                <div><h3 id="listing-knowledge-base-title" className="font-bold text-gray-900 dark:text-white">内置知识库原文</h3><p className="mt-1 text-xs text-gray-400">仅展示 docs 中的公开标题 Prompt 和图片规范参考，不再包含私有笔记。个人上传文档请在下方个人知识库管理。</p></div>
               </div>
               <button type="button" aria-label="关闭系统内置知识库" onClick={() => setShowSystemKnowledgeBase(false)} className="rounded-lg p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"><CloseIcon className="h-5 w-5" /></button>
             </header>

@@ -55,6 +55,7 @@ describe('TaskSelectionToolbar', () => {
     expect(markup).toContain('取消选择当前页')
     expect(markup).toContain('收藏或取消收藏选中记录')
     expect(markup).toContain('批量下载')
+    expect(markup).toContain('批量加入参考图')
     expect(markup).toContain('删除选中')
   })
 
@@ -67,6 +68,7 @@ describe('TaskSelectionToolbar', () => {
     useStore.setState({ tasks: [createTask('a'), createTask('b'), createTask('c')], selectedTaskIds: ['a', 'b', 'c'] })
     const markup = renderToStaticMarkup(<TaskSelectionToolbar />)
     expect(markup).toContain('已选 3')
+    expect(markup).toContain('批量加入参考图')
     expect(markup).toContain('aria-live="polite"')
   })
 })

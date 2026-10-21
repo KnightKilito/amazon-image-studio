@@ -1,10 +1,10 @@
 import type { ListingCopyPrompts } from '../types'
-import titlePromptSource from '../../参考物料/标题Prompt.txt?raw'
-import titleNotes20250813Source from '../../参考物料/【笔记】20250813-标题1.md?raw'
-import titleNotes20251013Source from '../../参考物料/【笔记】20251013-标题2.md?raw'
+import titlePromptSource from '../../docs/reference-materials/标题Prompt.txt?raw'
+import imageRulesSource from '../../docs/knowledge/亚马逊图片规范与附图策划逻辑.md?raw'
+import aPlusSizesSource from '../../docs/knowledge/亚马逊美国站A加尺寸图.md?raw'
 
 export interface ListingCopyKnowledgeSource {
-  id: 'title-prompt' | 'notes-20250813' | 'notes-20251013'
+  id: 'title-prompt' | 'image-rules' | 'aplus-sizes'
   filename: string
   label: string
   content: string
@@ -18,16 +18,16 @@ export const LISTING_COPY_KNOWLEDGE_SOURCES: ListingCopyKnowledgeSource[] = [
     content: titlePromptSource.trim(),
   },
   {
-    id: 'notes-20250813',
-    filename: '【笔记】20250813-标题1.md',
-    label: '2025-08-13 笔记',
-    content: titleNotes20250813Source.trim(),
+    id: 'image-rules',
+    filename: '亚马逊图片规范与附图策划逻辑.md',
+    label: '公共图片参考',
+    content: imageRulesSource.trim(),
   },
   {
-    id: 'notes-20251013',
-    filename: '【笔记】20251013-标题2.md',
-    label: '2025-10-13 笔记',
-    content: titleNotes20251013Source.trim(),
+    id: 'aplus-sizes',
+    filename: '亚马逊美国站A加尺寸图.md',
+    label: '公共 A+ 尺寸参考',
+    content: aPlusSizesSource.trim(),
   },
 ]
 
@@ -35,39 +35,16 @@ const PREVIOUS_DEFAULT_LISTING_TITLE_PROMPT = `${titlePromptSource.trim()}
 
 标题格式补充要求：Item Name 和 Item Highlight 都不要使用英文逗号、中文逗号，也不要使用独立单词 and。需要连接属性时使用自然的空格、介词或 with 等结构，避免用逗号堆砌关键词。`
 
-const PREVIOUS_DEFAULT_LISTING_BULLETS_PROMPT = `请根据产品资料、参考图以及最终采用的标题信息，撰写严格五条中英文对照的五点描述。所有卖点必须有明确依据，不得因为常见鞋款通常具备某项功能就自行补充。
+// 仅以稳定格式标记识别旧默认值，不再打包其引用的私有资料示例。
+function isPreviousDefaultBulletsPrompt(value: string) {
+  return value.startsWith('请根据产品资料、参考图以及最终采用的标题信息')
+    && value.includes('序号必须依次为 1–5') && value.includes('通用商品使用相同的信息逻辑')
+}
 
-格式参考《SKU标题.docx》：英文和中文每条都必须以“序号 + 方括号小标题”开头，然后再写正文，例如：
-1. [Heel & Height]
-Features a stable wedge heel design...
-
-中文对应格式：
-1. [鞋跟与高度]
-采用稳定的坡跟设计……
-
-序号必须依次为 1–5；方括号小标题应短而具体，先让买家快速抓住这一点的主题。正文建议用一至两句或两行展开，不要把小标题和其他要点重复写成长段。
-
-鞋靴商品按以下顺序组织：
-1. 设计与穿戴方式：说明最显著的设计元素，以及系带、套脚、搭扣等真实穿戴方式。
-2. 鞋头与关键结构：说明鞋头类型、装饰、材质或其他能帮助买家理解外观和适配性的结构。
-3. 鞋跟、鞋底与功能：说明鞋跟类型或高度，以及有证据支持的防滑、舒适等特点。
-4. 搭配与适用场景：说明真实可用的搭配方式，以及日常、通勤、沙滩、聚会等适用场景。
-5. 注意事项：优先写尺码建议、窄版提示或材质特性；没有可靠注意事项时，补充前四点尚未覆盖的事实型材质或场景信息。
-
-通用商品使用相同的信息逻辑，将鞋头、鞋跟等鞋靴字段替换为该品类最关键的结构和功能。每一点应具体、自然、易扫读，避免重复标题或其他要点。禁止出现保证、售后政策、绝对化承诺、未经证实的认证或功效。英文符合美国消费者表达习惯，中文准确对照且不增加新事实。`
-
-const PREVIOUS_DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT = `请根据产品资料、参考图、标题和五点描述，撰写中英文对照的长描述。格式参考《SKU标题.docx》：英文和中文都先输出一行独立的大标题，例如“Elegant Summer Elevation: Suede Wedge Heel Thong Sandals”或“优雅夏日增高：坡跟夹趾凉鞋”，空一行后再写正文。大标题要有画面感并准确概括商品，不得编造卖点。
-
-正文采用稳定的富文本式层次，但返回纯文本：
-
-1. 开头准确说明产品是什么、适合谁，以及最核心的购买价值。
-2. 展开有依据的设计、材质、结构、穿戴或使用体验。
-3. 自然说明搭配方式、目标人群和真实适用场景。
-4. 可根据资料加入“Key Features:”/“核心特点：”、适用场景或规格说明，并用项目符号逐条展示；资料不足时不要为了凑格式而编造。
-5. 在倒数部分补充必要的尺码、材质、使用或信息缺失注意事项。
-6. 最后一段必须是一句优雅、自然、与商品和使用场景相关的收束语，例如从清晨海风到夜晚晚餐的穿着画面；它应提升阅读体验，但不能使用绝对化承诺或新增事实。
-
-正文使用多个自然段，便于系统转换成安全 HTML 和富文本预览。使用自然、连贯、便于美国消费者阅读的纯文本，不直接输出 HTML。只写用户提供或参考图能够可靠确认的事实；不得虚构品牌故事、认证、奖项、医学功效、保证、售后政策或绝对化承诺。资料不足时不要用空泛营销话术补齐，应将缺失事实和风险分别放入 missingFacts 与 complianceWarnings。中文应准确对应英文，不增加英文中不存在的信息。`
+function isPreviousDefaultLongDescriptionPrompt(value: string) {
+  return value.startsWith('请根据产品资料、参考图、标题和五点描述')
+    && value.includes('正文采用稳定的富文本式层次') && value.includes('missingFacts 与 complianceWarnings')
+}
 
 export const DEFAULT_LISTING_TITLE_PROMPT = titlePromptSource.trim()
 
@@ -151,8 +128,8 @@ export function normalizeListingCopyPrompts(
     const longDescription = prompts.longDescription?.trim()
     return {
       title: !title || title === PREVIOUS_DEFAULT_LISTING_TITLE_PROMPT ? DEFAULT_LISTING_TITLE_PROMPT : title,
-      bullets: !bullets || bullets === PREVIOUS_DEFAULT_LISTING_BULLETS_PROMPT || isRestrainedDefaultBulletsPrompt(bullets) ? DEFAULT_LISTING_BULLETS_PROMPT : bullets,
-      longDescription: !longDescription || longDescription === PREVIOUS_DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT || longDescription === PREVIOUS_MARKDOWN_LISTING_LONG_DESCRIPTION_PROMPT || isMarkdownDefaultLongDescriptionPrompt(longDescription) || isRestrainedDefaultLongDescriptionPrompt(longDescription) ? DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT : longDescription,
+      bullets: !bullets || isPreviousDefaultBulletsPrompt(bullets) || isRestrainedDefaultBulletsPrompt(bullets) ? DEFAULT_LISTING_BULLETS_PROMPT : bullets,
+      longDescription: !longDescription || isPreviousDefaultLongDescriptionPrompt(longDescription) || longDescription === PREVIOUS_MARKDOWN_LISTING_LONG_DESCRIPTION_PROMPT || isMarkdownDefaultLongDescriptionPrompt(longDescription) || isRestrainedDefaultLongDescriptionPrompt(longDescription) ? DEFAULT_LISTING_LONG_DESCRIPTION_PROMPT : longDescription,
     }
   }
 

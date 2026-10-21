@@ -16,6 +16,8 @@ dev-proxy.config.json
 .amazon-image-studio-deps.hash
 *.pid
 *.log
+/log/*
+!/log/.gitkeep
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -39,4 +41,7 @@ Desktop.ini
 .idea/
 .vscode/
 /.planning/
-/参考物料/
+# Private reference documents must not be reintroduced into public sources.
+**/【笔记】20250813-标题1.md
+**/【笔记】20251013-标题2.md
+**/SKU标题.docx

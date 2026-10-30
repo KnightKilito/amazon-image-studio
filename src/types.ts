@@ -82,6 +82,15 @@ export interface CustomProviderDefinition {
 }
 
 export interface ApiProfile {
+  source?: 'custom' | 'assigned' | 'site'
+  purpose?: 'image' | 'planner'
+  managedId?: string
+  managedOverrides?: Partial<Pick<ApiProfile, 'model' | 'apiMode' | 'timeout' | 'codexCli' | 'responseFormatB64Json' | 'streamImages' | 'streamPartialImages' | 'motherImageSupport' | 'maxMotherSlices'>>
+  unavailable?: boolean
+  isDefault?: boolean
+  customProvider?: CustomProviderDefinition
+  /** Non-secret platform routing metadata. Assigned credentials never enter persisted settings. */
+  platformRoute?: { purpose: 'image' | 'planner'; selection: 'assigned' | 'custom' | 'proxy'; version: number }
   id: string
   name: string
   provider: ApiProvider
@@ -101,6 +110,7 @@ export interface ApiProfile {
 }
 
 export interface AppSettings {
+  platformProfilesVersion?: number
   /** 旧版单配置字段：保留用于导入/查询参数兼容，实际请求以 active profile 为准 */
   baseUrl: string
   apiKey: string
@@ -233,6 +243,8 @@ export interface APlusBatchDraft {
 }
 
 export interface TaskRecord {
+  /** Non-secret route used when submitting this task. */
+  connectionRoute?: ApiProfile['platformRoute']
   id: string
   prompt: string
   params: TaskParams

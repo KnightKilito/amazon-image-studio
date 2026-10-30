@@ -1,6 +1,7 @@
 import type { TextNote } from '../types'
 
-export const TEXT_NOTES_STORAGE_KEY = 'amazon-image-studio.text-notes.v1'
+import { accountStorageKey } from './platform'
+export const TEXT_NOTES_STORAGE_KEY = accountStorageKey('amazon-image-studio.text-notes.v1')
 export const TEXT_NOTES_CHANGED_EVENT = 'amazon-image-studio:text-notes-changed'
 
 type TextNotesStorage = Pick<Storage, 'getItem' | 'setItem'>

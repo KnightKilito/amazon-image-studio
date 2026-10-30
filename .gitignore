@@ -8,6 +8,11 @@ dist/
 .env
 .env.*
 !.env.example
+!deploy/platform/.env.example
+/data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
 config.yaml
 dev-proxy.config.json
 

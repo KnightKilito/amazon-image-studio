@@ -2,6 +2,7 @@ import { DEFAULT_STREAM_PARTIAL_IMAGES, type ApiProfile, type CustomProviderDefi
 import { dataUrlToBlob, imageDataUrlToPngBlob, maskDataUrlToPngBlob } from './canvasImage'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import { isOpenRouterImageGenerationProfile } from './apiProfiles'
+import { requestProfile, profileHeaders } from './platform'
 import {
   assertImageInputPayloadSize,
   assertMaskEditFileSize,
@@ -100,7 +101,7 @@ function normalizeImageApiPayload(value: unknown): ImageApiResponse {
 
 function createRequestHeaders(profile: ApiProfile): Record<string, string> {
   return {
-    Authorization: `Bearer ${profile.apiKey}`,
+    ...profileHeaders(profile),
   }
 }
 
@@ -617,6 +618,7 @@ async function parseResponsesApiStreamResponse(
 }
 
 export async function callOpenAICompatibleImageApi(opts: CallApiOptions, profile: ApiProfile, customProvider?: CustomProviderDefinition | null): Promise<CallApiResult> {
+  profile = requestProfile('image', profile)
   if (customProvider) {
     return callCustomHttpImageApi(opts, profile, customProvider)
   }
@@ -904,7 +906,7 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile, cu
       try {
         return await parseImagesApiStreamResponse(response, mime, opts.onPartialImage)
       } catch (err) {
-        if (!isMissingFinalStreamImageError(err)) throw err
+        if (profile.platformRoute || !isMissingFinalStreamImageError(err)) throw err
         return callImagesApiSingle(opts, { ...profile, streamImages: false }, customProvider)
       }
     }
@@ -1186,6 +1188,8 @@ export async function getCustomQueuedImageResult(
   onRawImageUrls?: CallApiOptions['onRawImageUrls'],
 ): Promise<CallApiResult> {
   if (!customProvider.poll) throw new Error('自定义异步任务缺少 poll 配置')
+  profile = requestProfile('image', profile)
+  if (profile.platformRoute?.selection === 'proxy') throw new Error('恢复自定义任务需要原来的直连配置')
   const mime = MIME_MAP[params.output_format] || 'image/png'
   return pollCustomTaskResult(profile, customProvider.poll, taskId, mime, signal, onRawImageUrls)
 }
@@ -1309,7 +1313,7 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
       try {
         return await parseResponsesApiStreamResponse(response, mime, opts.onPartialImage)
       } catch (err) {
-        if (!isMissingFinalStreamImageError(err)) throw err
+        if (profile.platformRoute || !isMissingFinalStreamImageError(err)) throw err
         return callResponsesImageApiSingle(opts, { ...profile, streamImages: false })
       }
     }

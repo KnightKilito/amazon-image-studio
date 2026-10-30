@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { normalizeBaseUrl } from '../lib/api'
+import { getPlatformState, getPlatformAccess, getPlatformModelOptions, subscribePlatform, makeSiteProfile, optionOverrides } from '../lib/platform'
+import ApiProfileEditor, { SETTINGS_BUTTON, SETTINGS_CARD } from './ApiProfileEditor'
+import { AccountSettings, AdministratorSettings } from './PlatformSettings'
 import { isApiProxyAvailable, isApiProxyLocked, readClientDevProxyConfig } from '../lib/devProxy'
 import { useStore, exportData, importData, clearData, type SettingsTab } from '../store'
 import {
@@ -320,7 +323,9 @@ export default function SettingsModal() {
   const setReusedTaskApiProfile = useStore((s) => s.setReusedTaskApiProfile)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const showToast = useStore((s) => s.showToast)
-  const adminAccess = useStore((s) => s.adminAccess)
+  const storedAdminAccess = useStore((s) => s.adminAccess)
+  const platformSnapshot = useSyncExternalStore(subscribePlatform, getPlatformState)
+  const adminAccess = platformSnapshot.enabled ? getPlatformAccess() : storedAdminAccess
   const isAdminAuthenticated = useStore((s) => s.isAdminAuthenticated)
   const importInputRef = useRef<HTMLInputElement>(null)
   const profileMenuRef = useRef<HTMLDivElement>(null)
@@ -330,6 +335,7 @@ export default function SettingsModal() {
   const duplicateProfileTooltipTimerRef = useRef<number | null>(null)
   const llmPromptTooltipTimerRef = useRef<number | null>(null)
   const settingsScrollBoundaryRef = useRef<HTMLDivElement>(null)
+  const settingsContentRef = useRef<HTMLDivElement>(null)
   const customProviderScrollBoundaryRef = useRef<HTMLDivElement>(null)
   
   const [draft, setDraft] = useState<AppSettings>(normalizeDraftSettings(settings))
@@ -349,6 +355,8 @@ export default function SettingsModal() {
   const [duplicateProfileTooltipVisible, setDuplicateProfileTooltipVisible] = useState(false)
   const [llmPromptTooltipVisible, setLlmPromptTooltipVisible] = useState(false)
   const [activeTab, setActiveTab] = useState<SettingsTab>('api')
+  const [newProfilePurpose, setNewProfilePurpose] = useState<ProfilePurpose | null>(null)
+  useEffect(() => { settingsContentRef.current?.scrollTo({ top: 0 }) }, [activeTab])
   const [exportConfig, setExportConfig] = useState(true)
   const [exportTasks, setExportTasks] = useState(true)
   const [importConfig, setImportConfig] = useState(true)
@@ -409,7 +417,7 @@ export default function SettingsModal() {
     ?? draft.profiles[0]
     ?? getActiveApiProfile(draft)
   const plannerProfile = amazonPlannerProfiles.find((profile) => profile.id === draft.amazonPlannerProfileId) ?? amazonPlannerProfiles[0] ?? null
-  const plannerConnectionProfile = plannerProfile && draft.plannerConnectionMode === 'reuse-image'
+  const plannerConnectionProfile = plannerProfile && draft.plannerConnectionMode === 'reuse-image' && (!plannerProfile.source || plannerProfile.source === 'custom') && (!imageProfile.source || imageProfile.source === 'custom')
     ? { ...plannerProfile, baseUrl: imageProfile.baseUrl, apiKey: imageProfile.apiKey }
     : plannerProfile
   const imageProfileValidation = validateApiProfile(imageProfile)
@@ -421,15 +429,16 @@ export default function SettingsModal() {
   const apiProxyEnabled = apiProxyAvailable && activeProfile.provider === 'openai' && apiProxyChecked
   const activeProviderIsOpenAICompatible = isOpenAICompatibleProvider(draft, activeProfile.provider)
   const activeProviderUsesApiUrl = activeProviderIsOpenAICompatible || activeProfile.provider === 'fal'
+  const platform = getPlatformState()
   const canViewApiUrl = isAdminAuthenticated || adminAccess.allowGuestViewApiUrl
   const canEditApiUrl = isAdminAuthenticated || adminAccess.allowGuestEditApiUrl
   const canCreateApiProfile = isAdminAuthenticated || adminAccess.allowGuestCreateApiProfile
   const canEditApiProvider = isAdminAuthenticated || adminAccess.allowGuestEditApiProvider
   const canCreateCustomProvider = isAdminAuthenticated || adminAccess.allowGuestCreateCustomProvider
-  const guestUnifiedImageApiUrl = !isAdminAuthenticated && adminAccess.unifiedGuestImageApiUrlEnabled
+  const guestUnifiedImageApiUrl = !platform.enabled && !isAdminAuthenticated && adminAccess.unifiedGuestImageApiUrlEnabled
     ? adminAccess.unifiedGuestImageApiUrl.trim()
     : ''
-  const guestUnifiedPlannerApiUrl = !isAdminAuthenticated && adminAccess.unifiedGuestPlannerApiUrlEnabled
+  const guestUnifiedPlannerApiUrl = !platform.enabled && !isAdminAuthenticated && adminAccess.unifiedGuestPlannerApiUrlEnabled
     ? adminAccess.unifiedGuestPlannerApiUrl.trim()
     : ''
   const activeProfileUsesUnifiedPlannerApiUrl = Boolean(guestUnifiedPlannerApiUrl) && isAmazonPlannerProfile(activeProfile)
@@ -506,6 +515,8 @@ export default function SettingsModal() {
   const managedProfiles = profilePurpose === 'planner' ? amazonPlannerProfiles : imageProfiles
 
   const wasSettingsOpenRef = useRef(false)
+  useEffect(() => { if (showSettings && platform.enabled) setDraft(current => normalizeDraftSettings(current)) }, [showSettings, platform.connections?.version])
+  useEffect(() => { if (activeTab === 'admin' && !isAdminAuthenticated) setActiveTab('api') }, [activeTab, isAdminAuthenticated])
 
   useEffect(() => {
     if (!showSettings) {
@@ -642,9 +653,9 @@ export default function SettingsModal() {
         model: profile.model.trim() || defaultModel,
         timeout: Number(profile.timeout) || DEFAULT_SETTINGS.timeout,
         apiProxy: profile.provider === 'openai' && apiProxyAvailable ? (apiProxyLocked || profile.apiProxy) : false,
-        codexCli: profile.provider === 'openai' ? profile.codexCli : false,
-        streamImages: profile.provider === 'openai' ? profile.streamImages : false,
-        streamPartialImages: profile.provider === 'openai' ? normalizeStreamPartialImages(profile.streamPartialImages) : DEFAULT_STREAM_PARTIAL_IMAGES,
+        codexCli: profile.provider === 'openai' || profile.source === 'assigned' || profile.source === 'site' ? profile.codexCli : false,
+        streamImages: profile.provider === 'openai' || profile.source === 'assigned' || profile.source === 'site' ? profile.streamImages : false,
+        streamPartialImages: profile.provider === 'openai' || profile.source === 'assigned' || profile.source === 'site' ? normalizeStreamPartialImages(profile.streamPartialImages) : DEFAULT_STREAM_PARTIAL_IMAGES,
       }
     })
     const fallbackProfile = createDefaultOpenAIProfile({ id: newId('openai') })
@@ -751,6 +762,7 @@ export default function SettingsModal() {
   }
 
   const confirmCopyProfileImportUrl = (profile: ApiProfile) => {
+    if (profile.source === 'assigned' || profile.source === 'site') { showToast('此配置不支持导出连接信息', 'info'); return }
     setShowProfileMenu(false)
     setProfileImportUrlTooltipVisible(false)
     setCopyImportUrlProfile(profile)
@@ -769,6 +781,9 @@ export default function SettingsModal() {
   }
 
   const updateProfileById = (profileId: string, patch: Partial<ApiProfile>, commit = false) => {
+    const original = draft.profiles.find(p => p.id === profileId)
+    if (original?.source === 'assigned') patch = { managedOverrides: { ...original.managedOverrides, ...optionOverrides(patch) }, ...optionOverrides(patch) }
+    if (original?.source === 'site') patch = { ...optionOverrides(patch), ...(patch.name !== undefined ? { name: patch.name } : {}) }
     const nextDraft = {
       ...draft,
       profiles: draft.profiles.map((profile) => profile.id === profileId ? { ...profile, ...patch } : profile),
@@ -783,6 +798,7 @@ export default function SettingsModal() {
   }
 
   const handleClose = () => {
+    if (platform.enabled) { commitSettings(draft); setShowSettings(false); return }
     const nextTimeout = Number(timeoutInput)
     const normalizedTimeout =
       timeoutInput.trim() === '' || Number.isNaN(nextTimeout)
@@ -843,14 +859,17 @@ export default function SettingsModal() {
     setShowProfileMenu(false)
   }
 
-  const createNewProfile = (purpose: ProfilePurpose = profilePurpose) => {
+  const createNewProfile = (purpose: ProfilePurpose = profilePurpose, source?: 'custom' | 'site') => {
     if (!canCreateApiProfile) {
       showToast('游客暂不能创建新 API 配置', 'error')
       setShowProfileMenu(false)
       return
     }
+    if (platform.enabled && !source) { setNewProfilePurpose(purpose); return }
+    if (platform.enabled && source === 'custom' && !isAdminAuthenticated && !platform.connections?.policy.allowCustomDirect) { showToast('管理员已关闭自定义直连', 'error'); return }
+    setNewProfilePurpose(null)
     setReusedTaskApiProfile(null)
-    const profile = purpose === 'planner'
+    const profile = source === 'site' ? makeSiteProfile(purpose, newId('site')) : purpose === 'planner'
       ? createDefaultOpenAIProfile({
           id: newId('openai'),
           name: 'AI 策划新配置',
@@ -858,6 +877,7 @@ export default function SettingsModal() {
           apiMode: 'responses',
         })
       : createDefaultOpenAIProfile({ id: newId('openai'), name: '新配置' })
+    if (platform.enabled && source !== 'site') { profile.source = 'custom'; profile.purpose = purpose }
     const nextDraft = normalizeDraftSettings({
       ...draft,
       profiles: [...draft.profiles, profile],
@@ -877,6 +897,7 @@ export default function SettingsModal() {
     setReusedTaskApiProfile(null)
     setDuplicateProfileTooltipVisible(false)
     const sourceProfile = purpose === 'planner' ? plannerProfile : imageProfile
+    if (sourceProfile?.source === 'assigned') { showToast('管理员配置不能复制连接信息，请新建自己的配置', 'info'); return }
     if (!sourceProfile) {
       showToast('当前没有可复制的配置', 'error')
       return
@@ -929,6 +950,7 @@ export default function SettingsModal() {
   }
   
   const renameProfile = (purpose: ProfilePurpose, profile: ApiProfile | null) => {
+    if (profile?.source === 'assigned') return
     if (!profile) return
     const nextName = window.prompt('重命名配置', profile.name)?.trim()
     if (!nextName || nextName === profile.name) return
@@ -942,7 +964,7 @@ export default function SettingsModal() {
 
   const renderProfileManagementMenu = (purpose: ProfilePurpose, profile: ApiProfile | null) => {
     const isOpen = openProfileManageMenu === purpose
-    const canDelete = Boolean(profile && draft.profiles.length > 1)
+    const canDelete = Boolean(profile && profile.source !== 'assigned' && draft.profiles.length > 1)
     return (
       <div className="relative shrink-0" data-profile-manage-menu>
         <button
@@ -964,15 +986,15 @@ export default function SettingsModal() {
               <PlusIcon className="h-4 w-4" />
               新建配置
             </button>
-            <button type="button" disabled={!profile} onClick={() => { setOpenProfileManageMenu(null); renameProfile(purpose, profile) }} className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:hover:bg-white/[0.06]">
+            <button type="button" disabled={!profile || profile.source === 'assigned'} onClick={() => { setOpenProfileManageMenu(null); renameProfile(purpose, profile) }} className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:hover:bg-white/[0.06]">
               <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z" /></svg>
               重命名
             </button>
-            <button type="button" disabled={!profile || !canCreateApiProfile} onClick={() => { setOpenProfileManageMenu(null); duplicateActiveProfile(purpose) }} className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:hover:bg-white/[0.06]">
+            <button type="button" disabled={!profile || profile.source === 'assigned' || !canCreateApiProfile} onClick={() => { setOpenProfileManageMenu(null); duplicateActiveProfile(purpose) }} className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:hover:bg-white/[0.06]">
               <CopyIcon className="h-4 w-4" />
               复制一份
             </button>
-            <button type="button" disabled={!profile} onClick={() => { if (!profile) return; setOpenProfileManageMenu(null); confirmCopyProfileImportUrl(profile) }} className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:hover:bg-white/[0.06]">
+            <button type="button" disabled={!profile || profile.source === 'assigned'} onClick={() => { if (!profile) return; setOpenProfileManageMenu(null); confirmCopyProfileImportUrl(profile) }} className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:hover:bg-white/[0.06]">
               <LinkIcon className="h-4 w-4" />
               复制导入链接
             </button>
@@ -988,447 +1010,18 @@ export default function SettingsModal() {
   }
 
   const renderProfileBasics = (purpose: ProfilePurpose, profile: ApiProfile | null) => {
-    if (!profile) {
-      return <div className="rounded-2xl border border-dashed border-gray-200 px-3 py-5 text-center text-xs text-gray-400 dark:border-white/[0.1] dark:text-gray-500">暂无可用配置</div>
-    }
-    const isPlanner = purpose === 'planner'
-    const isReusingImageConnection = isPlanner && draft.plannerConnectionMode === 'reuse-image'
-    const apiUrl = isReusingImageConnection ? imageProfile.baseUrl : profile.baseUrl
-    const apiKey = isReusingImageConnection ? imageProfile.apiKey : profile.apiKey
-    const unifiedUrl = isPlanner ? guestUnifiedPlannerApiUrl : guestUnifiedImageApiUrl
-    const visibleApiUrl = unifiedUrl || apiUrl
-    const urlLocked = Boolean(unifiedUrl) || isReusingImageConnection || !canEditApiUrl
-    const profileValidation = validateApiProfile({ ...profile, baseUrl: apiUrl, apiKey })
-    const apiKeyVisible = visibleApiKeyProfileIds.has(profile.id)
-
-    return (
-      <div className="mt-4 space-y-3 border-t border-black/[0.06] pt-4 dark:border-white/[0.08]">
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-gray-600 dark:text-gray-300">配置名称</span>
-          <input
-            value={profile.name}
-            onChange={(event) => updateProfileById(profile.id, { name: event.target.value })}
-            onBlur={(event) => updateProfileById(profile.id, { name: event.target.value }, true)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') event.currentTarget.blur()
-            }}
-            type="text"
-            autoComplete="off"
-            aria-label={`${isPlanner ? 'AI 策划' : '图片生成'}配置名称`}
-            className="w-full rounded-xl bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:ring-2 focus:ring-blue-200 dark:bg-gray-950/30 dark:text-gray-200 dark:focus:ring-blue-500/20"
-          />
-        </label>
-
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-gray-600 dark:text-gray-300">{isPlanner ? '策划接口' : '图片服务'}</span>
-          {isPlanner ? (
-            <div className="flex min-h-10 items-center justify-between rounded-xl bg-white/70 px-3 text-sm text-gray-700 dark:bg-gray-950/30 dark:text-gray-200">
-              <span>{getApiModeLabel(profile.apiMode)}</span>
-              <span className="text-xs text-gray-400">{profile.provider === 'openai' ? 'OpenAI 兼容接口' : getApiProviderLabel(draft, profile.provider)}</span>
-            </div>
-          ) : (
-            <Select
-              value={profile.provider}
-              onChange={(value) => handleProviderTypeChangeForProfile(profile, purpose, value)}
-              onReorder={handleProviderReorder}
-              options={providerOptions}
-              disabled={!canEditApiProvider && !canCreateCustomProvider}
-              className="w-full rounded-xl bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:ring-2 focus:ring-blue-200 dark:bg-gray-950/30 dark:text-gray-200 dark:focus:ring-blue-500/20"
-            />
-          )}
-        </label>
-
-        {canViewApiUrl && (
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-gray-600 dark:text-gray-300">API URL</span>
-            <input
-              value={visibleApiUrl}
-              onChange={(event) => updateProfileById(profile.id, { baseUrl: event.target.value })}
-              onBlur={(event) => updateProfileById(profile.id, { baseUrl: event.target.value }, true)}
-              disabled={urlLocked}
-              className={`w-full rounded-xl bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:ring-2 focus:ring-blue-200 dark:bg-gray-950/30 dark:text-gray-200 dark:focus:ring-blue-500/20 ${urlLocked ? 'cursor-not-allowed opacity-60' : ''}`}
-              placeholder="https://api.openai.com/v1"
-            />
-          </label>
-        )}
-
-        <div className="block">
-          <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-xs font-medium text-gray-600 dark:text-gray-300">API Key</span>
-            {isReusingImageConnection && <span className="text-[11px] text-blue-600 dark:text-blue-300">复用图片配置</span>}
-          </div>
-          <div className="relative">
-            <input
-              value={isReusingImageConnection ? '••••••••••••••••' : apiKey}
-              onChange={(event) => updateProfileById(profile.id, { apiKey: event.target.value })}
-              onBlur={(event) => updateProfileById(profile.id, { apiKey: event.target.value }, true)}
-              disabled={isReusingImageConnection}
-              type={apiKeyVisible && !isReusingImageConnection ? 'text' : 'password'}
-              autoComplete="off"
-              spellCheck={false}
-              aria-label={`${isPlanner ? 'AI 策划' : '图片生成'} API Key`}
-              placeholder="sk-..."
-              className={`w-full select-text rounded-xl bg-white/70 px-3 py-2.5 pr-10 text-sm text-gray-700 outline-none transition focus:ring-2 focus:ring-blue-200 dark:bg-gray-950/30 dark:text-gray-200 dark:focus:ring-blue-500/20 ${isReusingImageConnection ? 'cursor-not-allowed opacity-60' : ''}`}
-            />
-            {!isReusingImageConnection && (
-              <ApiKeyVisibilityButton visible={apiKeyVisible} onToggle={() => toggleApiKeyVisibility(profile.id)} />
-            )}
-          </div>
-        </div>
-
-        {isPlanner && profile.provider === 'openai' && (
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-gray-600 dark:text-gray-300">策划接口</span>
-            <Select
-              value={profile.apiMode}
-              onChange={(value) => {
-                const apiMode = value as AppSettings['apiMode']
-                const model = isDefaultModelForModeSwitch(profile.model) ? getDefaultModelForMode(apiMode) : profile.model
-                updateProfileById(profile.id, { apiMode, model }, true)
-              }}
-              options={[
-                { label: 'Responses API (/v1/responses)', value: 'responses' },
-                { label: 'Chat Completions (/chat/completions)', value: 'chat' },
-              ]}
-              className="w-full rounded-xl bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none dark:bg-gray-950/30 dark:text-gray-200"
-            />
-          </label>
-        )}
-
-        <ModelIdInput
-          key={profile.id}
-          label={isPlanner ? '策划模型' : '图片模型'}
-          value={profile.model}
-          options={isPlanner ? adminAccess.plannerModelIds : adminAccess.modelIds}
-          onChange={(model) => updateProfileById(profile.id, { model })}
-          onCommit={(model) => updateProfileById(profile.id, { model }, true)}
-          placeholder={isPlanner ? getDefaultModelForMode(profile.apiMode) : DEFAULT_IMAGES_MODEL}
-        />
-
-        {profileValidation && <div className="text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">{profileValidation}</div>}
-      </div>
-    )
+    if (!profile) return <p className="text-xs text-gray-400">暂无可用配置</p>
+    const protectedProfile = profile.source === 'assigned' || profile.source === 'site'
+    const reuse = purpose === 'planner' && draft.plannerConnectionMode === 'reuse-image' && !protectedProfile && (!imageProfile.source || imageProfile.source === 'custom')
+    return <ApiProfileEditor key={profile.id} profile={profile} purpose={purpose}
+      modelOptions={platformSnapshot.enabled ? getPlatformModelOptions(purpose, profile.model) : purpose === 'image' ? adminAccess.modelIds : adminAccess.plannerModelIds}
+      permissions={{ hideConnection: protectedProfile, editName: profile.source !== 'assigned', showUrl: canViewApiUrl, editUrl: canEditApiUrl && !reuse, editKey: !reuse, editProvider: canEditApiProvider, createProvider: canCreateCustomProvider }}
+      providerOptions={providerOptions} onProviderChange={value => handleProviderTypeChangeForProfile(profile, purpose, value)} onProviderReorder={handleProviderReorder}
+      legacyProxy={!platform.enabled && apiProxyAvailable}
+      onChange={(patch, commit) => updateProfileById(profile.id, patch, commit)} />
   }
-
-  const commitProfileTimeout = (profile: ApiProfile) => {
-    if (!isOpenAICompatibleProvider(draft, profile.provider)) return
-    const rawValue = profileTimeoutInputs[profile.id] ?? String(profile.timeout)
-    const parsedValue = Number(rawValue)
-    const normalizedTimeout = rawValue.trim() === '' || Number.isNaN(parsedValue)
-      ? profile.timeout
-      : Math.min(600, Math.max(10, parsedValue))
-    setProfileTimeoutInputs((current) => ({ ...current, [profile.id]: String(normalizedTimeout) }))
-    updateProfileById(profile.id, { timeout: normalizedTimeout }, true)
-  }
-
-  const renderImageAdvancedSettings = (profile: ApiProfile | null) => {
-    if (!profile) return null
-    const isOpenAICompatible = isOpenAICompatibleProvider(draft, profile.provider)
-    const proxyChecked = profile.provider === 'openai' && (apiProxyLocked || profile.apiProxy)
-    const timeoutValue = profileTimeoutInputs[profile.id] ?? String(profile.timeout)
-    const imageApiOptions = [
-      { label: 'Images API (/v1/images)', value: 'images' },
-      ...(isOpenRouterImageGenerationProfile(profile)
-        ? [{ label: 'Chat Completions (/chat/completions)', value: 'chat' }]
-        : []),
-    ]
-
-    return (
-      <details open className="mt-4 rounded-2xl border border-emerald-200/70 bg-white/65 p-3 dark:border-emerald-400/20 dark:bg-white/[0.04]">
-        <summary className="cursor-pointer list-none text-sm font-semibold text-emerald-950 marker:hidden dark:text-emerald-100">
-          高级设置
-          <span className="ml-2 text-xs font-normal text-emerald-700/70 dark:text-emerald-200/70">生图专用</span>
-        </summary>
-        <div className="mt-3 space-y-4 border-t border-emerald-200/60 pt-3 dark:border-emerald-400/15">
-          {isOpenAICompatible && (
-            <label className="block">
-              <span className="mb-1.5 block text-xs font-medium text-emerald-950/80 dark:text-emerald-100/80">图片接口</span>
-              <Select
-                value={profile.apiMode}
-                onChange={(value) => {
-                  const apiMode = value as AppSettings['apiMode']
-                  const model = isDefaultModelForModeSwitch(profile.model) ? getDefaultModelForMode(apiMode) : profile.model
-                  updateProfileById(profile.id, { apiMode, model }, true)
-                }}
-                options={imageApiOptions}
-                className="w-full rounded-xl border border-emerald-200/70 bg-white/80 px-3 py-2.5 text-sm text-emerald-900 outline-none dark:border-emerald-400/20 dark:bg-gray-950/40 dark:text-emerald-100"
-              />
-              <span className="mt-1.5 block text-xs leading-relaxed text-emerald-800/70 dark:text-emerald-200/70">
-                普通生图和编辑使用 Images API；OpenRouter 图片模型也可以通过 Chat Completions 返回图片。
-              </span>
-            </label>
-          )}
-
-          {apiProxyAvailable && profile.provider === 'openai' && (
-            <div>
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <span className="text-sm text-emerald-950/80 dark:text-emerald-100/80">API 代理</span>
-                <button
-                  type="button"
-                  onClick={() => { if (!apiProxyLocked) updateProfileById(profile.id, { apiProxy: !profile.apiProxy }, true) }}
-                  disabled={apiProxyLocked}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${proxyChecked ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'} ${apiProxyLocked ? 'cursor-not-allowed opacity-70' : ''}`}
-                  role="switch"
-                  aria-checked={proxyChecked}
-                  aria-label="图片生成 API 代理"
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${proxyChecked ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
-                </button>
-              </div>
-              <p className="text-xs leading-relaxed text-emerald-800/70 dark:text-emerald-200/70">
-                {apiProxyLocked ? '当前部署已锁定 API 代理，图片请求会经由服务端转发。' : '默认直接请求 API URL，遇到浏览器跨域限制时可以开启代理。'}
-              </p>
-            </div>
-          )}
-
-          {isOpenAICompatible && (
-            <div>
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <span className="text-sm text-emerald-950/80 dark:text-emerald-100/80">返回 Base64 图片数据</span>
-                <button
-                  type="button"
-                  onClick={() => updateProfileById(profile.id, { responseFormatB64Json: !profile.responseFormatB64Json }, true)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${profile.responseFormatB64Json ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                  role="switch"
-                  aria-checked={!!profile.responseFormatB64Json}
-                  aria-label="返回 Base64 图片数据"
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${profile.responseFormatB64Json ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
-                </button>
-              </div>
-              <p className="text-xs leading-relaxed text-emerald-800/70 dark:text-emerald-200/70">开启后请求会优先要求返回 Base64 图片；图片 URL 跨域无法下载时可以尝试开启。</p>
-            </div>
-          )}
-
-          {profile.provider === 'openai' && (
-            <div>
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <span className="text-sm text-emerald-950/80 dark:text-emerald-100/80">Codex CLI 兼容模式</span>
-                <button
-                  type="button"
-                  onClick={() => updateProfileById(profile.id, { codexCli: !profile.codexCli }, true)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${profile.codexCli ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                  role="switch"
-                  aria-checked={profile.codexCli}
-                  aria-label="图片生成 Codex CLI 兼容模式"
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${profile.codexCli ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
-                </button>
-              </div>
-              <p className="text-xs leading-relaxed text-emerald-800/70 dark:text-emerald-200/70">仅在图片 API 来源为 Codex CLI 时开启。</p>
-            </div>
-          )}
-
-          {profile.apiMode === 'images' && (
-            <div className="rounded-xl border border-emerald-200/70 bg-emerald-50/60 px-3 py-3 dark:border-emerald-400/20 dark:bg-emerald-400/10">
-              <div className="text-sm font-medium text-emerald-950 dark:text-emerald-100">高级 A+ 连续母图能力</div>
-              <div className="mt-2 grid gap-3 sm:grid-cols-2">
-                <label className="block">
-                  <span className="mb-1.5 block text-xs text-emerald-800/70 dark:text-emerald-200/70">服务商支持状态</span>
-                  <Select
-                    value={profile.motherImageSupport ?? 'auto'}
-                    onChange={(value) => updateProfileById(profile.id, { motherImageSupport: value as ApiProfile['motherImageSupport'] }, true)}
-                    options={[{ label: '自动尝试', value: 'auto' }, { label: '确认支持', value: 'supported' }, { label: '不支持', value: 'unsupported' }]}
-                    className="w-full rounded-xl border border-emerald-200/70 bg-white/80 px-3 py-2.5 text-sm text-emerald-900 outline-none dark:border-emerald-400/20 dark:bg-gray-950/40 dark:text-emerald-100"
-                  />
-                </label>
-                <label className="block">
-                  <span className="mb-1.5 block text-xs text-emerald-800/70 dark:text-emerald-200/70">最大连续图片数</span>
-                  <Select
-                    value={Math.min(7, Math.max(2, profile.maxMotherSlices ?? 7))}
-                    onChange={(value) => updateProfileById(profile.id, { maxMotherSlices: Number(value) }, true)}
-                    disabled={profile.motherImageSupport === 'unsupported'}
-                    options={Array.from({ length: 6 }, (_, index) => ({ label: `${index + 2} 张`, value: index + 2 }))}
-                    className="w-full rounded-xl border border-emerald-200/70 bg-white/80 px-3 py-2.5 text-sm text-emerald-900 outline-none disabled:opacity-50 dark:border-emerald-400/20 dark:bg-gray-950/40 dark:text-emerald-100"
-                  />
-                </label>
-              </div>
-              <p className="mt-2 text-xs leading-relaxed text-emerald-800/70 dark:text-emerald-200/70">用于连续母图和 A+ 方案的纵向图片请求；不支持时会保留原有错误提示。</p>
-            </div>
-          )}
-
-          {profile.provider === 'openai' && (
-            <div className="space-y-3">
-              <div>
-                <div className="mb-1.5 flex items-center justify-between gap-3">
-                  <span className="text-sm text-emerald-950/80 dark:text-emerald-100/80">流式传输</span>
-                  <button
-                    type="button"
-                    onClick={() => updateProfileById(profile.id, { streamImages: !profile.streamImages }, true)}
-                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${profile.streamImages ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                    role="switch"
-                    aria-checked={!!profile.streamImages}
-                    aria-label="图片生成流式传输"
-                  >
-                    <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${profile.streamImages ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
-                  </button>
-                </div>
-                <p className="text-xs leading-relaxed text-emerald-800/70 dark:text-emerald-200/70">开启后图片请求可以通过流式响应返回中间结果。</p>
-              </div>
-              {profile.apiMode !== 'chat' && (
-                <label className={!profile.streamImages ? 'block opacity-60' : 'block'}>
-                  <span className="mb-1.5 block text-sm text-emerald-950/80 dark:text-emerald-100/80">生图中间步骤图片数</span>
-                  <Select
-                    value={normalizeStreamPartialImages(profile.streamPartialImages)}
-                    onChange={(value) => updateProfileById(profile.id, { streamPartialImages: normalizeStreamPartialImages(value) }, true)}
-                    disabled={!profile.streamImages}
-                    options={[{ label: '0，不请求', value: 0 }, { label: '1 张', value: 1 }, { label: '2 张', value: 2 }, { label: '3 张', value: 3 }]}
-                    className="w-full rounded-xl border border-emerald-200/70 bg-white/80 px-3 py-2.5 text-sm text-emerald-900 outline-none disabled:opacity-50 dark:border-emerald-400/20 dark:bg-gray-950/40 dark:text-emerald-100"
-                  />
-                </label>
-              )}
-            </div>
-          )}
-
-          {isOpenAICompatible && (
-            <label className="block">
-              <span className="mb-1.5 block text-sm text-emerald-950/80 dark:text-emerald-100/80">请求超时（秒）</span>
-              <input
-                value={timeoutValue}
-                onChange={(event) => setProfileTimeoutInputs((current) => ({ ...current, [profile.id]: event.target.value }))}
-                onBlur={() => commitProfileTimeout(profile)}
-                type="number"
-                min={10}
-                max={600}
-                className="w-full rounded-xl border border-emerald-200/70 bg-white/80 px-3 py-2.5 text-sm text-emerald-900 outline-none focus:border-emerald-400 dark:border-emerald-400/20 dark:bg-gray-950/40 dark:text-emerald-100"
-              />
-            </label>
-          )}
-
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200/60 bg-white/50 px-3 py-2.5 text-xs text-emerald-800/70 dark:border-emerald-400/15 dark:bg-white/[0.03] dark:text-emerald-200/70">
-            <span>分享或迁移这套生图配置，可使用标题栏“管理 → 复制导入链接”。</span>
-            <button type="button" onClick={() => confirmCopyProfileImportUrl(profile)} className="shrink-0 font-medium text-emerald-700 hover:underline dark:text-emerald-300">复制导入链接</button>
-          </div>
-        </div>
-      </details>
-    )
-  }
-
-  const renderPlannerAdvancedSettings = (profile: ApiProfile | null) => {
-    if (!profile) return null
-    const isReusingImageConnection = draft.plannerConnectionMode === 'reuse-image'
-    const isOpenAICompatible = isOpenAICompatibleProvider(draft, profile.provider)
-    const inheritedProfile = isReusingImageConnection ? imageProfile : profile
-    const proxyChecked = inheritedProfile.provider === 'openai' && (apiProxyLocked || inheritedProfile.apiProxy)
-    const timeoutValue = isReusingImageConnection
-      ? String(imageProfile.timeout)
-      : (profileTimeoutInputs[profile.id] ?? String(profile.timeout))
-
-    return (
-      <details open className="mt-4 rounded-2xl border border-blue-200/70 bg-white/65 p-3 dark:border-blue-400/20 dark:bg-white/[0.04]">
-        <summary className="cursor-pointer list-none text-sm font-semibold text-blue-950 marker:hidden dark:text-blue-100">
-          高级设置
-          <span className="ml-2 text-xs font-normal text-blue-700/70 dark:text-blue-200/70">策划专用</span>
-        </summary>
-        <div className="mt-3 space-y-4 border-t border-blue-200/60 pt-3 dark:border-blue-400/15">
-          {isReusingImageConnection && (
-            <div className="rounded-xl border border-blue-200/70 bg-blue-50/80 px-3 py-3 text-xs leading-relaxed text-blue-800 dark:border-blue-400/25 dark:bg-blue-500/10 dark:text-blue-100">
-              超时、代理和 Codex CLI 兼容设置也来自图片生成配置。这里仅修改策划接口和模型，不会改变图片模型。
-            </div>
-          )}
-
-          {apiProxyAvailable && profile.provider === 'openai' && (
-            <div>
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <span className="text-sm text-blue-950/80 dark:text-blue-100/80">API 代理</span>
-                <button
-                  type="button"
-                  onClick={() => { if (!isReusingImageConnection && !apiProxyLocked) updateProfileById(profile.id, { apiProxy: !profile.apiProxy }, true) }}
-                  disabled={isReusingImageConnection || apiProxyLocked}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${proxyChecked ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'} ${isReusingImageConnection || apiProxyLocked ? 'cursor-not-allowed opacity-70' : ''}`}
-                  role="switch"
-                  aria-checked={proxyChecked}
-                  aria-label="AI 策划 API 代理"
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${proxyChecked ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
-                </button>
-              </div>
-              <p className="text-xs leading-relaxed text-blue-800/70 dark:text-blue-200/70">{isReusingImageConnection ? '当前跟随图片生成配置。' : apiProxyLocked ? '当前部署已锁定 API 代理。' : '默认直接请求策划 API URL。'}</p>
-            </div>
-          )}
-
-          {profile.provider === 'openai' && (
-            <div>
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <span className="text-sm text-blue-950/80 dark:text-blue-100/80">流式传输</span>
-                <button
-                  type="button"
-                  onClick={() => updateProfileById(profile.id, { streamImages: !profile.streamImages }, true)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${profile.streamImages ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                  role="switch"
-                  aria-checked={!!profile.streamImages}
-                  aria-label="AI 策划流式传输"
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${profile.streamImages ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
-                </button>
-              </div>
-              <p className="text-xs leading-relaxed text-blue-800/70 dark:text-blue-200/70">策划请求通过 SSE 实时接收并显示返回文本。</p>
-            </div>
-          )}
-
-          {!isReusingImageConnection && isOpenAICompatible && (
-            <div>
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <span className="text-sm text-blue-950/80 dark:text-blue-100/80">返回 Base64 图片数据</span>
-                <button
-                  type="button"
-                  onClick={() => updateProfileById(profile.id, { responseFormatB64Json: !profile.responseFormatB64Json }, true)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${profile.responseFormatB64Json ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                  role="switch"
-                  aria-checked={!!profile.responseFormatB64Json}
-                  aria-label="AI 策划返回 Base64 图片数据"
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${profile.responseFormatB64Json ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
-                </button>
-              </div>
-              <p className="text-xs leading-relaxed text-blue-800/70 dark:text-blue-200/70">仅对支持图片输出的策划接口生效。</p>
-            </div>
-          )}
-
-          {profile.provider === 'openai' && (
-            <div>
-              <div className="mb-1.5 flex items-center justify-between gap-3">
-                <span className="text-sm text-blue-950/80 dark:text-blue-100/80">Codex CLI 兼容模式</span>
-                <button
-                  type="button"
-                  onClick={() => { if (!isReusingImageConnection) updateProfileById(profile.id, { codexCli: !profile.codexCli }, true) }}
-                  disabled={isReusingImageConnection}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${inheritedProfile.codexCli ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'} ${isReusingImageConnection ? 'cursor-not-allowed opacity-70' : ''}`}
-                  role="switch"
-                  aria-checked={inheritedProfile.codexCli}
-                  aria-label="AI 策划 Codex CLI 兼容模式"
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${inheritedProfile.codexCli ? 'translate-x-[14px]' : 'translate-x-[2px]'}`} />
-                </button>
-              </div>
-              <p className="text-xs leading-relaxed text-blue-800/70 dark:text-blue-200/70">{isReusingImageConnection ? '当前跟随图片生成配置。' : '仅在策划 API 来源为 Codex CLI 时开启。'}</p>
-            </div>
-          )}
-
-          {isOpenAICompatible && (
-            <label className="block">
-              <span className="mb-1.5 block text-sm text-blue-950/80 dark:text-blue-100/80">请求超时（秒）</span>
-              <input
-                value={timeoutValue}
-                onChange={(event) => { if (!isReusingImageConnection) setProfileTimeoutInputs((current) => ({ ...current, [profile.id]: event.target.value })) }}
-                onBlur={() => { if (!isReusingImageConnection) commitProfileTimeout(profile) }}
-                disabled={isReusingImageConnection}
-                type="number"
-                min={10}
-                max={600}
-                className={`w-full rounded-xl border border-blue-200/70 bg-white/80 px-3 py-2.5 text-sm text-blue-900 outline-none focus:border-blue-400 dark:border-blue-400/20 dark:bg-gray-950/40 dark:text-blue-100 ${isReusingImageConnection ? 'cursor-not-allowed opacity-60' : ''}`}
-              />
-            </label>
-          )}
-
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-200/60 bg-white/50 px-3 py-2.5 text-xs text-blue-800/70 dark:border-blue-400/15 dark:bg-white/[0.03] dark:text-blue-200/70">
-            <span>分享或迁移这套策划配置，可使用标题栏“管理 → 复制导入链接”。</span>
-            <button type="button" onClick={() => confirmCopyProfileImportUrl(profile)} className="shrink-0 font-medium text-blue-700 hover:underline dark:text-blue-300">复制导入链接</button>
-          </div>
-        </div>
-      </details>
-    )
-  }
+  const renderImageAdvancedSettings = (_profile: ApiProfile | null) => null
+  const renderPlannerAdvancedSettings = (_profile: ApiProfile | null) => null
 
   const handleProfileDragStart = (e: React.DragEvent, id: string) => {
     setDraggedProfileId(id)
@@ -1568,6 +1161,7 @@ export default function SettingsModal() {
   }
 
   const deleteProfile = (id: string) => {
+    if (draft.profiles.find(p => p.id === id)?.source === 'assigned') return
     if (draft.profiles.length <= 1) return
     if (id === reusedTaskApiProfileId) setReusedTaskApiProfile(null)
     const nextProfiles = draft.profiles.filter((item) => item.id !== id)
@@ -1629,6 +1223,7 @@ export default function SettingsModal() {
     const provider = String(value) as ApiProfile['provider']
     const customProvider = draft.customProviders.find((item) => item.id === provider)
     const nextProfile = switchApiProfileProvider(targetProfile, provider, customProvider)
+    if (!canEditApiUrl) nextProfile.baseUrl = targetProfile.baseUrl
     commitSettings({
       ...draft,
       profiles: draft.profiles.map((profile) => profile.id === targetProfile.id ? nextProfile : profile),
@@ -1820,6 +1415,7 @@ export default function SettingsModal() {
           {/* Sidebar */}
           <div className="w-full sm:w-48 shrink-0 flex flex-col border-b sm:border-b-0 sm:border-r border-gray-100 dark:border-white/[0.08] bg-gray-50/50 dark:bg-white/[0.02]">
             <nav className="flex-1 overflow-x-auto sm:overflow-y-auto custom-scrollbar p-3 space-x-1 sm:space-x-0 sm:space-y-1 flex sm:flex-col">
+              {platform.enabled && (['account', ...(isAdminAuthenticated ? ['admin'] : [])] as SettingsTab[]).map(tab => <button key={tab} onClick={() => setActiveTab(tab)} className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-xl transition-colors ${activeTab === tab ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}><svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="8" r="3" /><path d="M5 21v-3a7 7 0 0 1 14 0v3" /></svg>{tab === 'account' ? '账户与余额' : '管理员设置'}</button>)}
               <button
                 onClick={() => setActiveTab('api')}
                 className={`whitespace-nowrap flex-shrink-0 flex items-center gap-2.5 px-3 py-2.5 text-sm rounded-xl transition-colors ${activeTab === 'api' ? 'bg-white dark:bg-white/[0.08] shadow-sm text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100/80 dark:hover:bg-white/[0.04]'}`}
@@ -1852,7 +1448,9 @@ export default function SettingsModal() {
 
           {/* Content */}
           <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-transparent relative overflow-hidden">
-            <div className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar p-5 sm:p-6">
+            <div ref={settingsContentRef} className="flex-1 overflow-y-auto overscroll-contain custom-scrollbar p-5 sm:p-6">
+            {platform.enabled && activeTab === 'account' && <AccountSettings />}
+            {platform.enabled && isAdminAuthenticated && activeTab === 'admin' && <AdministratorSettings />}
             {activeTab === 'general' && (
               <div className="space-y-4">
                 <div className="hidden sm:block">
@@ -1989,6 +1587,8 @@ export default function SettingsModal() {
             
             {activeTab === 'api' && (
               <div className="space-y-4">
+                {platform.enabled && <p className="text-xs leading-relaxed text-gray-500 dark:text-gray-400">选择配置即可切换连接。“管理员配置”和“自定义配置”直接请求服务，不扣本站余额；“本站”配置通过本站代理并扣本站余额。</p>}
+                {newProfilePurpose && <div className={`${SETTINGS_CARD} space-y-3`}><h4 className="text-sm font-semibold text-gray-700 dark:text-gray-200">新建{newProfilePurpose === 'image' ? '生图' : '策划'}配置</h4><div className="grid gap-3 sm:grid-cols-2"><button className={`${SETTINGS_BUTTON} py-4 text-left`} disabled={!platform.connections?.policy.allowCustomDirect} onClick={() => createNewProfile(newProfilePurpose, 'custom')}><span className="block font-semibold">自定义直连</span><span className="mt-1 block text-xs opacity-70">填写自己的服务商、URL 和 Key</span></button><button className={`${SETTINGS_BUTTON} py-4 text-left`} onClick={() => createNewProfile(newProfilePurpose, 'site')}><span className="block font-semibold">走本站</span><span className="mt-1 block text-xs opacity-70">使用本站余额，自选模型与高级参数</span></button></div><button className={SETTINGS_BUTTON} onClick={() => setNewProfilePurpose(null)}>取消</button></div>}
                 {false && (
                 <div>
                   <div className="mb-1.5 flex items-center gap-1.5">
@@ -2191,6 +1791,7 @@ export default function SettingsModal() {
                     {renderProfileManagementMenu('image', imageProfile)}
                   </div>
                   <Select
+                    ariaLabel="图片生成配置"
                     value={imageProfile?.id ?? ''}
                     onChange={(value) => selectPurposeProfile('image', String(value))}
                     disabled={imageProfiles.length === 0}
@@ -2219,6 +1820,7 @@ export default function SettingsModal() {
                   {renderProfileManagementMenu('planner', plannerProfile)}
                 </div>
                 <Select
+                  ariaLabel="AI 策划配置"
                   value={plannerProfile?.id ?? ''}
                   onChange={(value) => selectPurposeProfile('planner', String(value))}
                   disabled={amazonPlannerProfiles.length === 0}
@@ -2226,14 +1828,14 @@ export default function SettingsModal() {
                   className="w-full rounded-xl border border-blue-200/70 bg-white/80 px-3 py-2.5 text-sm text-blue-900 outline-none transition focus:border-blue-300 dark:border-blue-400/20 dark:bg-gray-950/40 dark:text-blue-100 dark:focus:border-blue-500/50"
                 />
                 <div data-selectable-text className="mt-2 text-xs leading-relaxed text-blue-800 dark:text-blue-200">
-                  只用于首页 Amazon 面板的 AI 策划；普通生图只接受当前配置为 Images API。默认分为「生图」和「AI策划」两套配置：生图使用 Images API + gpt-image-2，AI 策划使用 Responses API + gpt-5.5。
+                  用于文案、AI 策划与知识库总结，不会改变图片生成配置。模型可以从推荐列表选择或手动填写，协议和高级参数需实际服务支持。
                 </div>
                 {selectedPlannerUsesOfficialDeepSeek && (
                   <div data-selectable-text className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100">
                     {DEEPSEEK_PLANNER_NOTICE}
                   </div>
                 )}
-                {plannerProfile && (
+                {plannerProfile && (!plannerProfile.source || plannerProfile.source === 'custom') && (!imageProfile.source || imageProfile.source === 'custom') && (
                   <div className="mt-4">
                     <div className="mb-2 text-sm font-medium text-blue-950 dark:text-blue-100">连接方式</div>
                     <div className="grid gap-2 sm:grid-cols-2">
@@ -2640,7 +2242,7 @@ export default function SettingsModal() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                   </svg>
                   <div className="text-[13px] leading-relaxed text-gray-500 dark:text-gray-400">
-                    所有的配置、任务记录和生成的图片均仅保存在您的浏览器本地（除非您使用的服务商存储了它们）。如果您需要清理浏览器站点数据、重置浏览器或使用其他设备，请先导出备份。
+                    任务记录、图片和个人配置保存在当前浏览器。平台模式下，管理员连接信息由后台维护，不包含在导出文件中；导出仅保留配置引用和自己的高级选项。清理浏览器站点数据或更换设备前，请先备份自己的数据。
                   </div>
                 </div>
 

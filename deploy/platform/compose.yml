@@ -1,0 +1,51 @@
+name: amazon-studio
+services:
+  web:
+    image: amazon-studio-web:local
+    build:
+      context: ../..
+      dockerfile: deploy/platform/Dockerfile.web
+    ports:
+      - "127.0.0.1:${STUDIO_WEB_PORT:-8091}:80"
+    depends_on:
+      - studio
+    restart: unless-stopped
+    logging: &logs
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  studio:
+    image: amazon-studio-server:local
+    build:
+      context: ../..
+      dockerfile: deploy/platform/Dockerfile.server
+    environment:
+      STUDIO_ORIGIN: ${STUDIO_ORIGIN:?Set the browser origin (HTTP localhost or production HTTPS)}
+      STUDIO_ENCRYPTION_KEY: ${STUDIO_ENCRYPTION_KEY:?Generate a 32-byte base64 key}
+      STUDIO_QUOTA_PER_CNY: ${STUDIO_QUOTA_PER_CNY:?Set quota per CNY}
+      STUDIO_IMAGE_MODEL: ${STUDIO_IMAGE_MODEL:-gpt-image-2}
+      STUDIO_PLANNER_MODEL: ${STUDIO_PLANNER_MODEL:-gpt-6.1-sol}
+      STUDIO_PLANNER_API_MODE: ${STUDIO_PLANNER_API_MODE:-responses}
+      STUDIO_DB_PATH: /app/data/studio.sqlite
+      NEW_API_URL: http://new-api:3000
+    volumes:
+      - studio-data:/app/data
+    depends_on:
+      - new-api
+    restart: unless-stopped
+    logging: *logs
+  new-api:
+    image: calciumion/new-api:v1.0.0-rc.46
+    environment:
+      TZ: Asia/Shanghai
+      SESSION_SECRET: ${NEW_API_SESSION_SECRET:?Generate a random session secret}
+    ports:
+      - "127.0.0.1:${NEW_API_ADMIN_PORT:-3003}:3000"
+    volumes:
+      - new-api-data:/data
+    restart: unless-stopped
+    logging: *logs
+volumes:
+  studio-data:
+  new-api-data:

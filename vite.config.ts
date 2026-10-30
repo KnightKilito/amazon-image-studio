@@ -28,7 +28,9 @@ export default defineConfig(({ command }) => {
     : null
   const clientApiProxyConfig = configApiProxy?.enabled ? configApiProxy : devProxyConfig
   const adminApiPort = String(adminConfig.adminServer.port)
-  const apiProxyUsesAdminServer = Boolean(configApiProxy?.enabled)
+  // The platform server never accepts arbitrary browser-supplied relay targets.
+  // Standalone development may still proxy a fixed development target through Vite.
+  const apiProxyUsesAdminServer = false
   const rewriteDevProxyPath = (path: string) => {
     const [pathname, search = ''] = path.split('?')
     const rewrittenPath = pathname.replace(
@@ -38,11 +40,15 @@ export default defineConfig(({ command }) => {
     return `${rewrittenPath}${search ? `?${search}` : ''}`
   }
   const proxy = {
+    '/studio-api': {
+      target: `http://localhost:${process.env.STUDIO_PORT || adminApiPort}`,
+      changeOrigin: true,
+    },
     '/admin-api': {
       target: `http://localhost:${adminApiPort}`,
       changeOrigin: true,
     },
-    ...(devProxyConfig?.enabled
+    ...(devProxyConfig?.enabled && devProxyConfig.target
       ? {
           [devProxyConfig.prefix]: {
             target: apiProxyUsesAdminServer ? `http://localhost:${adminApiPort}` : devProxyConfig.target,

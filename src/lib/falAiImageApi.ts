@@ -1,4 +1,5 @@
 import { fal } from '@fal-ai/client'
+import { requestProfile } from './platform'
 import type { ApiProfile, FalApiResponse, TaskParams } from '../types'
 import { DEFAULT_FAL_BASE_URL } from './apiProfiles'
 import {
@@ -201,6 +202,8 @@ export async function getFalQueuedImageResult(
   signal?: AbortSignal,
   onRawImageUrls?: CallApiOptions['onRawImageUrls'],
 ): Promise<CallApiResult> {
+  profile = requestProfile('image', profile)
+  if (profile.provider !== 'fal') throw new Error('恢复 Fal 任务需要选择原来的自定义直连配置')
   configureFal(profile)
   await fal.queue.subscribeToStatus(endpoint, { requestId, logs: true, abortSignal: signal })
   const result = await fal.queue.result(endpoint, { requestId })
@@ -208,6 +211,8 @@ export async function getFalQueuedImageResult(
 }
 
 export async function callFalAiImageApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
+  profile = requestProfile('image', profile)
+  if (profile.provider !== 'fal') throw new Error('Fal 接口仅支持自定义直连配置')
   try {
     if (opts.maskDataUrl) {
       assertMaskEditFileSize('遮罩主图文件', getDataUrlDecodedByteSize(opts.inputImageDataUrls[0] ?? ''))

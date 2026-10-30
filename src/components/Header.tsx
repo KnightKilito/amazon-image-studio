@@ -3,7 +3,6 @@ import { useStore } from '../store'
 import { useTooltip } from '../hooks/useTooltip'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { navigateToAppPage } from '../lib/appNavigation'
-import { loginAdmin, readAdminToken, saveAdminSettingsAndLogout, saveAdminToken } from '../lib/adminApi'
 import ViewportTooltip from './ViewportTooltip'
 import { HelpCircleIcon, InstallIcon, SettingsIcon } from './icons'
 
@@ -19,336 +18,19 @@ function isInstalledPwa() {
   return window.matchMedia('(display-mode: standalone)').matches || nav.standalone === true
 }
 
-function AdminModal({ onClose }: { onClose: () => void }) {
-  const adminAccess = useStore((s) => s.adminAccess)
-  const isAdminAuthenticated = useStore((s) => s.isAdminAuthenticated)
-  const setAdminAccess = useStore((s) => s.setAdminAccess)
-  const setAdminAuthenticated = useStore((s) => s.setAdminAuthenticated)
-  const syncAdminAccess = useStore((s) => s.syncAdminAccess)
-  const flushAdminAccessSave = useStore((s) => s.flushAdminAccessSave)
-  const [username, setUsername] = useState('')
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [isChecking, setIsChecking] = useState(false)
-  const [modelIdInputs, setModelIdInputs] = useState({ image: '', planner: '' })
-
-  const handleLogin = async () => {
-    setError('')
-    setIsChecking(true)
-    try {
-      const result = await loginAdmin(username, password)
-      saveAdminToken(result.token)
-      setAdminAccess(result.adminAccess, { persist: false })
-      setAdminAuthenticated(true)
-      setPassword('')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setIsChecking(false)
-    }
-  }
-
-  const handleLogout = async () => {
-    const token = readAdminToken()
-    setError('')
-    setIsChecking(true)
-    try {
-      await flushAdminAccessSave()
-      const result = await saveAdminSettingsAndLogout(token, useStore.getState().adminAccess)
-      setAdminAccess(result.adminAccess, { persist: false })
-      saveAdminToken('')
-      setAdminAuthenticated(false)
-      await syncAdminAccess()
-    } catch (err) {
-      setError(`退出前保存管理员设置失败，已取消退出：${err instanceof Error ? err.message : String(err)}`)
-    } finally {
-      setIsChecking(false)
-    }
-  }
-
-  const addModelId = (kind: 'image' | 'planner') => {
-    const modelId = modelIdInputs[kind].trim()
-    if (!modelId) return
-    const existing = kind === 'image' ? adminAccess.modelIds : adminAccess.plannerModelIds
-    if (existing.includes(modelId)) {
-      setModelIdInputs((current) => ({ ...current, [kind]: '' }))
-      return
-    }
-    if (kind === 'image') setAdminAccess({ modelIds: [...existing, modelId] })
-    else setAdminAccess({ plannerModelIds: [...existing, modelId] })
-    setModelIdInputs((current) => ({ ...current, [kind]: '' }))
-  }
-
-  const removeModelId = (kind: 'image' | 'planner', modelId: string) => {
-    if (kind === 'image') setAdminAccess({ modelIds: adminAccess.modelIds.filter((item) => item !== modelId) })
-    else setAdminAccess({ plannerModelIds: adminAccess.plannerModelIds.filter((item) => item !== modelId) })
-  }
-
-  return (
-    <div
-      data-no-drag-select
-      className="fixed inset-0 z-[120] flex items-center justify-center p-4"
-      onClick={onClose}
-    >
-      <div className="absolute inset-0 bg-black/20 backdrop-blur-md dark:bg-black/40" />
-      <div
-        className="relative z-10 max-h-[85vh] w-full max-w-sm overflow-y-auto rounded-2xl border border-white/50 bg-white/95 p-5 shadow-[0_8px_40px_rgb(0,0,0,0.12)] ring-1 ring-black/5 dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-bold text-gray-800 dark:text-gray-100">管理员</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg px-2 py-1 text-sm text-gray-500 transition hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-white/[0.06]"
-          >
-            关闭
-          </button>
-        </div>
-
-        {isAdminAuthenticated ? (
-          <div className="space-y-4">
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-200">
-              已登录管理员
-            </div>
-            <div className="space-y-3">
-              <label className="flex items-center justify-between gap-4 rounded-xl border border-gray-200/70 px-3 py-3 dark:border-white/[0.08]">
-                <span className="text-sm text-gray-700 dark:text-gray-200">允许游客修改 API 请求地址</span>
-                <button
-                  type="button"
-                  onClick={() => setAdminAccess({ allowGuestEditApiUrl: !adminAccess.allowGuestEditApiUrl })}
-                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${adminAccess.allowGuestEditApiUrl ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                  role="switch"
-                  aria-checked={adminAccess.allowGuestEditApiUrl}
-                >
-                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${adminAccess.allowGuestEditApiUrl ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                </button>
-              </label>
-              <label className="flex items-center justify-between gap-4 rounded-xl border border-gray-200/70 px-3 py-3 dark:border-white/[0.08]">
-                <span className="text-sm text-gray-700 dark:text-gray-200">允许游客查看 API 请求地址</span>
-                <button
-                  type="button"
-                  onClick={() => setAdminAccess({ allowGuestViewApiUrl: !adminAccess.allowGuestViewApiUrl })}
-                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${adminAccess.allowGuestViewApiUrl ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                  role="switch"
-                  aria-checked={adminAccess.allowGuestViewApiUrl}
-                >
-                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${adminAccess.allowGuestViewApiUrl ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                </button>
-              </label>
-              <label className="flex items-center justify-between gap-4 rounded-xl border border-gray-200/70 px-3 py-3 dark:border-white/[0.08]">
-                <span className="text-sm text-gray-700 dark:text-gray-200">允许游客创建新 API 配置</span>
-                <button
-                  type="button"
-                  onClick={() => setAdminAccess({ allowGuestCreateApiProfile: !adminAccess.allowGuestCreateApiProfile })}
-                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${adminAccess.allowGuestCreateApiProfile ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                  role="switch"
-                  aria-checked={adminAccess.allowGuestCreateApiProfile}
-                >
-                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${adminAccess.allowGuestCreateApiProfile ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                </button>
-              </label>
-              <label className="flex items-center justify-between gap-4 rounded-xl border border-gray-200/70 px-3 py-3 dark:border-white/[0.08]">
-                <span className="text-sm text-gray-700 dark:text-gray-200">允许游客修改服务商类型</span>
-                <button
-                  type="button"
-                  onClick={() => setAdminAccess({ allowGuestEditApiProvider: !adminAccess.allowGuestEditApiProvider })}
-                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${adminAccess.allowGuestEditApiProvider ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                  role="switch"
-                  aria-checked={adminAccess.allowGuestEditApiProvider}
-                >
-                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${adminAccess.allowGuestEditApiProvider ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                </button>
-              </label>
-              <label className="flex items-center justify-between gap-4 rounded-xl border border-gray-200/70 px-3 py-3 dark:border-white/[0.08]">
-                <span className="text-sm text-gray-700 dark:text-gray-200">允许游客创建自定义服务商</span>
-                <button
-                  type="button"
-                  onClick={() => setAdminAccess({ allowGuestCreateCustomProvider: !adminAccess.allowGuestCreateCustomProvider })}
-                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${adminAccess.allowGuestCreateCustomProvider ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                  role="switch"
-                  aria-checked={adminAccess.allowGuestCreateCustomProvider}
-                >
-                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${adminAccess.allowGuestCreateCustomProvider ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                </button>
-              </label>
-              <div className="rounded-xl border border-gray-200/70 px-3 py-3 dark:border-white/[0.08]">
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-sm text-gray-700 dark:text-gray-200">统一游客 AI 策划 API URL</span>
-                  <button
-                    type="button"
-                    onClick={() => setAdminAccess({ unifiedGuestPlannerApiUrlEnabled: !adminAccess.unifiedGuestPlannerApiUrlEnabled })}
-                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${adminAccess.unifiedGuestPlannerApiUrlEnabled ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                    role="switch"
-                    aria-checked={adminAccess.unifiedGuestPlannerApiUrlEnabled}
-                  >
-                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${adminAccess.unifiedGuestPlannerApiUrlEnabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                  </button>
-                </div>
-                {adminAccess.unifiedGuestPlannerApiUrlEnabled && (
-                  <input
-                    value={adminAccess.unifiedGuestPlannerApiUrl}
-                    onChange={(event) => setAdminAccess({ unifiedGuestPlannerApiUrl: event.target.value })}
-                    type="text"
-                    placeholder="https://api.example.com/v1"
-                    className="mt-3 w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200"
-                  />
-                )}
-              </div>
-              <div className="rounded-xl border border-gray-200/70 px-3 py-3 dark:border-white/[0.08]">
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-sm text-gray-700 dark:text-gray-200">统一游客 AI 生图 API URL</span>
-                  <button
-                    type="button"
-                    onClick={() => setAdminAccess({ unifiedGuestImageApiUrlEnabled: !adminAccess.unifiedGuestImageApiUrlEnabled })}
-                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${adminAccess.unifiedGuestImageApiUrlEnabled ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                    role="switch"
-                    aria-checked={adminAccess.unifiedGuestImageApiUrlEnabled}
-                  >
-                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${adminAccess.unifiedGuestImageApiUrlEnabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                  </button>
-                </div>
-                {adminAccess.unifiedGuestImageApiUrlEnabled && (
-                  <input
-                    value={adminAccess.unifiedGuestImageApiUrl}
-                    onChange={(event) => setAdminAccess({ unifiedGuestImageApiUrl: event.target.value })}
-                    type="text"
-                    placeholder="https://api.example.com/v1"
-                    className="mt-3 w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200"
-                  />
-                )}
-              </div>
-              <label className="block rounded-xl border border-gray-200/70 px-3 py-3 dark:border-white/[0.08]">
-                <span className="mb-2 block text-sm text-gray-700 dark:text-gray-200">上传参考图上限数量</span>
-                <input
-                  value={adminAccess.referenceImageUploadLimit}
-                  onChange={(event) => setAdminAccess({ referenceImageUploadLimit: event.target.valueAsNumber })}
-                  type="number"
-                  min={1}
-                  max={64}
-                  step={1}
-                  className="w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200"
-                />
-              </label>
-              {([
-                { kind: 'image' as const, title: '图片模型下拉选项', placeholder: 'gpt-image-2', ids: adminAccess.modelIds },
-                { kind: 'planner' as const, title: '策划模型下拉选项', placeholder: 'gpt-5.5', ids: adminAccess.plannerModelIds },
-              ]).map(({ kind, title, placeholder, ids }) => (
-                <div key={kind} className="rounded-xl border border-gray-200/70 px-3 py-3 dark:border-white/[0.08]">
-                  <span className="mb-2 block text-sm text-gray-700 dark:text-gray-200">{title}</span>
-                  <div className="flex gap-2">
-                    <input
-                      value={modelIdInputs[kind]}
-                      onChange={(event) => setModelIdInputs((current) => ({ ...current, [kind]: event.target.value }))}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          addModelId(kind)
-                        }
-                      }}
-                      type="text"
-                      aria-label={`新增${kind === 'image' ? '图片' : '策划'}模型 ID`}
-                      placeholder={placeholder}
-                      className="min-w-0 flex-1 rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => addModelId(kind)}
-                      className="shrink-0 rounded-xl bg-blue-500 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-600"
-                    >
-                      新增
-                    </button>
-                  </div>
-                  {ids.length > 0 && (
-                    <div className="mt-3 space-y-2">
-                      {ids.map((modelId) => (
-                        <div key={modelId} className="flex items-center justify-between gap-2 rounded-lg bg-gray-50 px-2.5 py-2 text-sm text-gray-700 dark:bg-white/[0.04] dark:text-gray-200">
-                          <span className="min-w-0 truncate font-mono text-xs">{modelId}</span>
-                          <button
-                            type="button"
-                            onClick={() => removeModelId(kind, modelId)}
-                            aria-label={`删除${kind === 'image' ? '图片' : '策划'}模型 ${modelId}`}
-                            className="shrink-0 rounded-md px-2 py-1 text-xs text-red-500 transition hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-500/10"
-                          >
-                            删除
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-            {error && (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-200">
-                {error}
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={() => void handleLogout()}
-              disabled={isChecking}
-              className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/[0.08] dark:text-gray-300 dark:hover:bg-white/[0.06]"
-            >
-              {isChecking ? '保存并退出中...' : '退出管理员'}
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <label className="block">
-              <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">账号</span>
-              <input
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-                type="text"
-                autoComplete="username"
-                className="w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200"
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">密码</span>
-              <input
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') void handleLogin()
-                }}
-                type="password"
-                autoComplete="current-password"
-                className="w-full rounded-xl border border-gray-200/70 bg-white/70 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200"
-              />
-            </label>
-            {error && <div className="text-sm text-red-500">{error}</div>}
-            <button
-              type="button"
-              onClick={() => void handleLogin()}
-              disabled={isChecking}
-              className="w-full rounded-xl bg-blue-500 px-3 py-2.5 text-sm font-medium text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isChecking ? '登录中...' : '登录'}
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
 
 export default function Header() {
   const setShowSettings = useStore((s) => s.setShowSettings)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
-  const isAdminAuthenticated = useStore((s) => s.isAdminAuthenticated)
   const appPage = useStore((s) => s.appPage)
   const setAppPage = useStore((s) => s.setAppPage)
   const [showHelp, setShowHelp] = useState(false)
-  const [showAdmin, setShowAdmin] = useState(false)
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [isPwaInstalled, setIsPwaInstalled] = useState(isInstalledPwa)
 
   const installTooltip = useTooltip()
   const helpTooltip = useTooltip()
   const settingsTooltip = useTooltip()
-  const adminTooltip = useTooltip()
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (event: Event) => {
@@ -466,7 +148,7 @@ export default function Header() {
               </div>
             )}
             <div
-              className="relative hidden md:block"
+              className="relative"
               {...helpTooltip.handlers}
             >
               <button
@@ -498,25 +180,6 @@ export default function Header() {
                 设置
               </ViewportTooltip>
             </div>
-            <div
-              className="relative"
-              {...adminTooltip.handlers}
-            >
-              <button
-                onClick={() => {
-                  dismissAllTooltips()
-                  setShowAdmin(true)
-                }}
-                className={`rounded-lg px-1.5 py-2 text-[11px] font-semibold transition-colors sm:px-2.5 sm:text-xs ${isAdminAuthenticated ? 'bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-400/10 dark:text-blue-300 dark:hover:bg-blue-400/15' : 'text-gray-600 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-900'}`}
-                aria-label="管理员登录"
-              >
-                <span className="sm:hidden">管理</span>
-                <span className="hidden sm:inline">{isAdminAuthenticated ? '管理员' : '管理员登录'}</span>
-              </button>
-              <ViewportTooltip visible={adminTooltip.visible} className="whitespace-nowrap">
-                管理游客权限
-              </ViewportTooltip>
-            </div>
           </div>
         </div>
       </header>
@@ -529,7 +192,6 @@ export default function Header() {
           <HelpModal onClose={() => setShowHelp(false)} />
         </Suspense>
       )}
-      {showAdmin && <AdminModal onClose={() => setShowAdmin(false)} />}
     </>
   )
 }

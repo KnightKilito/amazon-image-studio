@@ -25,6 +25,12 @@ import {
 } from './apiProfiles'
 
 describe('mergeImportedSettings', () => {
+  it('defaults planner protocols to gpt-6.1-sol without overwriting saved models', () => {
+    expect(DEFAULT_RESPONSES_MODEL).toBe('gpt-6.1-sol')
+    expect(DEFAULT_CHAT_MODEL).toBe('gpt-6.1-sol')
+    expect(getAmazonPlannerProfile(DEFAULT_SETTINGS)?.model).toBe('gpt-6.1-sol')
+    expect(normalizeApiProfile(createDefaultOpenAIProfile({ model: 'gpt-5.5', apiMode: 'responses' })).model).toBe('gpt-5.5')
+  })
   it('shows retry buttons by default and preserves an explicit opt-out', () => {
     expect(normalizeSettings({}).alwaysShowRetryButton).toBe(true)
     expect(DEFAULT_SETTINGS.alwaysShowRetryButton).toBe(true)

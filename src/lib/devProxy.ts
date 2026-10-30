@@ -1,4 +1,5 @@
 import { readRuntimeEnv } from './runtimeEnv'
+import { getPlatformState } from './platform'
 
 export interface DevProxyConfig {
   enabled: boolean
@@ -94,6 +95,9 @@ export function buildApiUrl(
   useApiProxy = false,
   options: BuildApiUrlOptions = {},
 ): string {
+  if (getPlatformState().enabled && baseUrl === '/studio-api/ai') {
+    return `/studio-api/ai/v1/${path.replace(/^\/+/, '').replace(/^v1\//, '')}`
+  }
   const prefixV1 = options.prefixV1 !== false
   const normalizedBaseUrl = prefixV1 ? normalizeBaseUrl(baseUrl) : normalizeBaseUrlPreservePath(baseUrl)
   const endpointPath = path.replace(/^\/+/, '')
@@ -149,6 +153,7 @@ export function shouldUseApiProxy(
   proxyConfig: DevProxyConfig | null = readClientDevProxyConfig(),
   _baseUrl = '',
 ): boolean {
+  if (getPlatformState().enabled) return false
   if (!isApiProxyAvailable(proxyConfig)) return false
   if (apiProxy || isApiProxyLocked(proxyConfig)) return true
   return false

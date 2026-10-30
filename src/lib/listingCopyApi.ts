@@ -6,6 +6,7 @@ import { getApiErrorMessage } from './imageApiShared'
 import { readPlannerResponseText, type PlannerAttemptInfo, type PlannerRequestStatus } from './listingPlannerApi'
 import { normalizeListingLongDescriptionText, validateListingCopyResult } from './listingCopy'
 import type { AmazonMarketplace } from '../types'
+import { requestProfile, profileHeaders } from './platform'
 
 const BILINGUAL_SCHEMA = {
   type: 'object',
@@ -229,7 +230,7 @@ async function performRequest(options: {
     {
       method: 'POST',
       signal: options.signal,
-      headers: { Authorization: `Bearer ${profile.apiKey}`, 'Content-Type': 'application/json' },
+      headers: { ...profileHeaders(profile), 'Content-Type': 'application/json' },
       cache: 'no-store',
       body: JSON.stringify(chat ? {
         model,
@@ -258,6 +259,7 @@ async function performRequest(options: {
 }
 
 export async function generateListingCopy(options: Parameters<typeof performRequest>[0]) {
+  options = { ...options, profile: requestProfile('planner', options.profile) }
   let firstRaw = ''
   let firstIssues: string[] = []
   let usableReferenceImages = options.referenceImageDataUrls
@@ -265,7 +267,7 @@ export async function generateListingCopy(options: Parameters<typeof performRequ
     try {
       firstRaw = await performRequest(options)
     } catch (error) {
-      if (options.signal?.aborted || !options.referenceImageDataUrls.length) throw error
+      if (options.profile.platformRoute || options.signal?.aborted || !options.referenceImageDataUrls.length) throw error
       options.onAttemptStart?.({ label: '参考图请求失败，纯文本重试', apiMode: options.profile.apiMode === 'chat' ? 'chat' : 'responses', streaming: Boolean(options.profile.streamImages) })
       usableReferenceImages = []
       firstRaw = await performRequest({ ...options, referenceImageDataUrls: [] })
@@ -283,7 +285,7 @@ export async function generateListingCopy(options: Parameters<typeof performRequ
   try {
     repairedRaw = await performRequest({ ...options, referenceImageDataUrls: usableReferenceImages, previousRaw: firstRaw || '{}', repairIssues: firstIssues })
   } catch (error) {
-    if (options.signal?.aborted || !usableReferenceImages.length) throw error
+    if (options.profile.platformRoute || options.signal?.aborted || !usableReferenceImages.length) throw error
     options.onAttemptStart?.({ label: '带图修复失败，纯文本重试', apiMode: options.profile.apiMode === 'chat' ? 'chat' : 'responses', streaming: Boolean(options.profile.streamImages) })
     repairedRaw = await performRequest({ ...options, referenceImageDataUrls: [], previousRaw: firstRaw || '{}', repairIssues: firstIssues })
   }

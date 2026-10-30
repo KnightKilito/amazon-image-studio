@@ -2,6 +2,8 @@ import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES, type ApiP
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import { appendOutputResolutionToPrompt, getApiErrorMessage, getPromptOutputResolution, MIME_MAP, normalizeBase64Image, pickActualParams } from './imageApiShared'
 import { prepareReferenceImageAndMaskPayload, prepareReferenceImagePayload } from './referenceImagePayload'
+import { requestProfile, profileHeaders, getPlatformState } from './platform'
+import { getAmazonPlannerProfile } from './apiProfiles'
 
 export interface AgentApiMessage {
   role: 'user' | 'assistant'
@@ -86,7 +88,7 @@ const AGENT_TITLE_MAX_LENGTH = 28
 
 function createHeaders(profile: ApiProfile): Record<string, string> {
   return {
-    Authorization: `Bearer ${profile.apiKey}`,
+    ...profileHeaders(profile),
     'Content-Type': 'application/json',
   }
 }
@@ -659,6 +661,7 @@ export async function callAgentResponsesApi(opts: {
   onImagePartialImage?: (event: { toolCallId: string; image: string; partialImageIndex?: number; outputIndex?: number }) => void | Promise<void>
   onImageToolCompleted?: (image: AgentApiResultImage) => void | Promise<void>
 }): Promise<AgentApiResult> {
+  opts = { ...opts, profile: requestProfile('image', opts.profile) }
   const { settings, profile, params, input, maskDataUrl, signal, onTextDelta, onOutputItems, onImageToolStarted, onImagePartialImage, onImageToolCompleted } = opts
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
@@ -724,6 +727,7 @@ export async function callAgentConversationTitleApi(opts: {
   imageDataUrls?: string[]
   signal?: AbortSignal
 }): Promise<string> {
+  opts = { ...opts, profile: requestProfile('planner', getPlatformState().enabled ? getAmazonPlannerProfile(opts.settings) || opts.profile : opts.profile) }
   const { settings, profile, prompt, imageDataUrls, signal } = opts
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig, profile.baseUrl)
@@ -742,11 +746,16 @@ export async function callAgentConversationTitleApi(opts: {
       content.push({ type: 'input_image', image_url: dataUrl })
     }
 
-    const response = await fetch(buildApiUrl(profile.baseUrl, 'responses', proxyConfig, useApiProxy), {
+    const chat = profile.apiMode === 'chat'
+    const response = await fetch(buildApiUrl(profile.baseUrl, chat ? 'chat/completions' : 'responses', proxyConfig, useApiProxy), {
       method: 'POST',
       headers: createHeaders(profile),
       cache: 'no-store',
-      body: JSON.stringify({
+      body: JSON.stringify(chat ? {
+        model: profile.model || settings.model,
+        messages: [{ role: 'system', content: AGENT_TITLE_INSTRUCTIONS }, { role: 'user', content: content.map(item => item.type === 'input_image' ? { type: 'image_url', image_url: { url: item.image_url } } : { type: 'text', text: item.text }) }],
+        max_tokens: 32,
+      } : {
         model: profile.model || settings.model,
         instructions: AGENT_TITLE_INSTRUCTIONS,
         input: [{ role: 'user', content }],
@@ -759,6 +768,10 @@ export async function callAgentConversationTitleApi(opts: {
       throw new Error(await getApiErrorMessage(response))
     }
 
+    if (chat) {
+      const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> }
+      return parseAgentConversationTitleXml(payload.choices?.[0]?.message?.content || '')
+    }
     const payload = await response.json() as ResponsesApiResponse
     return parseAgentConversationTitleXml(extractText(payload))
   } finally {
@@ -801,6 +814,7 @@ export async function callBatchImageSingle(opts: {
   onPartialImage?: (event: { image: string; partialImageIndex?: number }) => void | Promise<void>
   onImageToolCompleted?: (image: AgentApiResultImage) => void | Promise<void>
 }): Promise<BatchImageCallResult> {
+  opts = { ...opts, profile: requestProfile('image', opts.profile) }
   const { profile, params, batchItemId, prompt, referenceImageDataUrls, referenceIds, signal, onImageToolStarted, onPartialImage, onImageToolCompleted } = opts
   const promptWithOutputResolution = appendOutputResolutionToPrompt(prompt, params.size)
   const mime = MIME_MAP[params.output_format] || 'image/png'

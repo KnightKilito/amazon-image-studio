@@ -18,12 +18,13 @@ import type {
 } from '../types'
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES } from '../types'
 import { readRuntimeEnv } from './runtimeEnv'
+import { displayProfile, getPlatformState, mergePlatformProfiles, managedProviderDefinition, runtimeProvider, runtimeBaseUrl } from './platform'
 
 const DEFAULT_BASE_URL = readRuntimeEnv(import.meta.env.VITE_DEFAULT_API_URL) || 'https://api.openai.com/v1'
 const DEFAULT_OPENAI_API_PROXY = readRuntimeEnv(import.meta.env.VITE_API_PROXY_LOCKED) === 'true'
 export const DEFAULT_IMAGES_MODEL = 'gpt-image-2'
-export const DEFAULT_RESPONSES_MODEL = 'gpt-5.5'
-export const DEFAULT_CHAT_MODEL = 'gpt-5.5'
+export const DEFAULT_RESPONSES_MODEL = 'gpt-6.1-sol'
+export const DEFAULT_CHAT_MODEL = 'gpt-6.1-sol'
 export const DEFAULT_FAL_BASE_URL = 'https://fal.run'
 export const DEFAULT_FAL_MODEL = 'openai/gpt-image-2'
 export const DEFAULT_OPENAI_PROFILE_ID = 'default-openai'
@@ -447,6 +448,7 @@ function normalizeProviderDrafts(input: unknown, customProviderIds: Set<string>)
 }
 
 export function isAmazonPlannerProfile(profile: Pick<ApiProfile, 'provider' | 'apiMode'>): boolean {
+  if ((profile as ApiProfile).purpose) return (profile as ApiProfile).purpose === 'planner'
   return profile.provider === 'openai' && (profile.apiMode === 'responses' || profile.apiMode === 'chat')
 }
 
@@ -548,8 +550,8 @@ function mergeImportedCustomStyleReferences(current: CustomStyleReference[], imp
 }
 
 export function isOfficialDeepSeekPlannerProfile(profile: Pick<ApiProfile, 'provider' | 'baseUrl' | 'apiMode'>): boolean {
-  if (profile.provider !== 'openai' || (profile.apiMode !== 'responses' && profile.apiMode !== 'chat')) return false
-  const rawBaseUrl = profile.baseUrl.trim()
+  if (runtimeProvider(profile.provider) !== 'openai' || (profile.apiMode !== 'responses' && profile.apiMode !== 'chat')) return false
+  const rawBaseUrl = runtimeBaseUrl(profile).trim()
   if (!rawBaseUrl) return false
 
   const input = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(rawBaseUrl)
@@ -564,8 +566,8 @@ export function isOfficialDeepSeekPlannerProfile(profile: Pick<ApiProfile, 'prov
 }
 
 export function isOpenRouterImageGenerationProfile(profile: Pick<ApiProfile, 'provider' | 'baseUrl' | 'apiMode'>): boolean {
-  if (profile.provider !== 'openai' || (profile.apiMode !== 'images' && profile.apiMode !== 'chat')) return false
-  const rawBaseUrl = profile.baseUrl.trim()
+  if (runtimeProvider(profile.provider) !== 'openai' || (profile.apiMode !== 'images' && profile.apiMode !== 'chat')) return false
+  const rawBaseUrl = runtimeBaseUrl(profile).trim()
   if (!rawBaseUrl) return false
 
   const input = /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(rawBaseUrl)
@@ -581,6 +583,7 @@ export function isOpenRouterImageGenerationProfile(profile: Pick<ApiProfile, 'pr
 }
 
 export function canApiProfileGenerateImages(profile: Pick<ApiProfile, 'provider' | 'baseUrl' | 'apiMode'>): boolean {
+  if ((profile as ApiProfile).purpose) return (profile as ApiProfile).purpose === 'image'
   return profile.apiMode === 'images' || isOpenRouterImageGenerationProfile(profile)
 }
 
@@ -676,13 +679,16 @@ function normalizeDefaultProfileSet(
 export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfile>, customProviderIds = new Set<string>()): ApiProfile {
   const record = input && typeof input === 'object' ? input as Record<string, unknown> : {}
   const rawProvider = typeof record.provider === 'string' ? record.provider : ''
-  const provider: ApiProvider = rawProvider === 'fal' || customProviderIds.has(rawProvider) ? rawProvider : 'openai'
+  const provider: ApiProvider = record.source === 'assigned' ? `managed-provider-${record.managedId}` : record.source === 'site' ? 'site' : rawProvider === 'fal' || customProviderIds.has(rawProvider) ? rawProvider : 'openai'
   const defaults = provider === 'fal' ? createDefaultFalProfile(fallback) : createDefaultOpenAIProfile(fallback)
   const apiMode: ApiMode = record.apiMode === 'responses' || record.apiMode === 'chat' ? record.apiMode : 'images'
   const rawBaseUrl = typeof record.baseUrl === 'string' ? record.baseUrl : defaults.baseUrl
 
   return {
     ...defaults,
+    ...(record.source === 'assigned' || record.source === 'site' || record.source === 'custom' ? { source: record.source } : {}),
+    ...(record.purpose === 'image' || record.purpose === 'planner' ? { purpose: record.purpose } : {}),
+    ...(typeof record.managedId === 'string' ? { managedId: record.managedId, managedOverrides: record.managedOverrides as ApiProfile['managedOverrides'] || {}, unavailable: !!record.unavailable } : {}),
     id: typeof record.id === 'string' && record.id.trim() ? record.id : defaults.id,
     name: typeof record.name === 'string' && record.name.trim() ? record.name : defaults.name,
     provider,
@@ -742,15 +748,18 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown, options
     !hasExplicitProfiles && hasTopLevelProfileFields(record),
     splitDefaultProfiles,
   )
-  const activeProfileId = typeof record.activeProfileId === 'string' && profiles.some((p) => p.id === record.activeProfileId)
+  let activeProfileId = typeof record.activeProfileId === 'string' && profiles.some((p) => p.id === record.activeProfileId)
     ? record.activeProfileId
     : profiles[0].id
-  const amazonPlannerProfileId = resolveAmazonPlannerProfileId(profiles, record.amazonPlannerProfileId)
+  let amazonPlannerProfileId = resolveAmazonPlannerProfileId(profiles, record.amazonPlannerProfileId)
+  const merged = mergePlatformProfiles({ profiles, activeProfileId, amazonPlannerProfileId, platformProfilesVersion: record.platformProfilesVersion as number | undefined })
+  profiles = merged.profiles; activeProfileId = merged.activeProfileId; amazonPlannerProfileId = merged.amazonPlannerProfileId
   const plannerConnectionMode: PlannerConnectionMode = record.plannerConnectionMode === 'reuse-image' ? 'reuse-image' : 'separate'
   const active = profiles.find((p) => p.id === activeProfileId) ?? profiles[0]
 
   return {
     baseUrl: active.baseUrl,
+    ...(getPlatformState().enabled ? { platformProfilesVersion: 2 } : {}),
     apiKey: active.apiKey,
     model: active.model,
     timeout: active.timeout,
@@ -780,11 +789,15 @@ export function normalizeSettings(input: Partial<AppSettings> | unknown, options
 }
 
 export function getCustomProviderDefinition(settings: Partial<AppSettings> | unknown, provider: ApiProvider): CustomProviderDefinition | null {
+  const managed = managedProviderDefinition(provider)
+  if (managed) return managed
   const normalized = normalizeSettings(settings)
   return normalized.customProviders.find((item) => item.id === provider) ?? null
 }
 
 export function getApiProviderLabel(settings: Partial<AppSettings> | unknown, provider: ApiProvider): string {
+  if (provider === 'managed' || provider.startsWith('managed-provider-')) return '管理员配置'
+  if (provider === 'site') return '本站'
   if (provider === 'fal') return 'fal.ai'
   if (provider === 'openai') return 'OpenAI'
   return getCustomProviderDefinition(settings, provider)?.name ?? provider
@@ -854,7 +867,7 @@ export function importCustomProviderDefinitionFromJson(jsonText: string, existin
   return result.customProviders[0]
 }
 
-export function getActiveApiProfile(settings: Partial<AppSettings> | unknown): ApiProfile {
+function getLocalActiveApiProfile(settings: Partial<AppSettings> | unknown): ApiProfile {
   const record = settings && typeof settings === 'object' ? settings as Record<string, unknown> : {}
   const normalized = normalizeSettings(settings)
   const requestedProfile = normalized.profiles.find((p) => p.id === normalized.activeProfileId)
@@ -864,7 +877,7 @@ export function getActiveApiProfile(settings: Partial<AppSettings> | unknown): A
     ?? requestedProfile
     ?? normalized.profiles[0]
     ?? createDefaultOpenAIProfile()
-  const useLegacyTopLevelFields = !Array.isArray(record.profiles) || record.activeProfileId === profile.id
+  const useLegacyTopLevelFields = !profile.source && (!Array.isArray(record.profiles) || record.activeProfileId === profile.id)
 
   return {
     ...profile,
@@ -880,24 +893,30 @@ export function getActiveApiProfile(settings: Partial<AppSettings> | unknown): A
   }
 }
 
+export function getActiveApiProfile(settings: Partial<AppSettings> | unknown): ApiProfile {
+  return displayProfile('image', getLocalActiveApiProfile(settings))
+}
+
 export function getAmazonPlannerProfile(settings: Partial<AppSettings> | unknown): ApiProfile | null {
   const normalized = normalizeSettings(settings)
   const planner = normalized.profiles.find((profile) => profile.id === normalized.amazonPlannerProfileId && isAmazonPlannerProfile(profile))
-  if (!planner) return null
-  if (normalized.plannerConnectionMode !== 'reuse-image') return planner
+  if (!planner) return getPlatformState().enabled ? displayProfile('planner', createDefaultOpenAIProfile({ apiMode: 'responses' })) : null
+  if (normalized.plannerConnectionMode !== 'reuse-image' || planner.source === 'assigned' || planner.source === 'site') return displayProfile('planner', planner)
 
-  const imageProfile = getActiveApiProfile(normalized)
-  return {
+  const imageProfile = getLocalActiveApiProfile(normalized)
+  if (imageProfile.source === 'assigned' || imageProfile.source === 'site') return displayProfile('planner', planner)
+  return displayProfile('planner', {
     ...planner,
     baseUrl: imageProfile.baseUrl,
     apiKey: imageProfile.apiKey,
     timeout: imageProfile.timeout,
     apiProxy: imageProfile.apiProxy,
     codexCli: imageProfile.codexCli,
-  }
+  })
 }
 
 export function validateApiProfile(profile: ApiProfile): string | null {
+  if (profile.source === 'assigned' || profile.source === 'site') return profile.unavailable ? '管理员配置尚未分配或已撤销' : profile.model.trim() ? null : '缺少模型 ID'
   if (!profile.name.trim()) return '缺少名称'
   if (profile.provider !== 'fal' && !profile.baseUrl.trim()) return '缺少 API URL'
   if (!profile.apiKey.trim()) return '缺少 API Key'

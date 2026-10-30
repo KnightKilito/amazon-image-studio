@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { accountStorageKey, getPlatformState, displayProfile, assignedProfiles, runtimeProvider } from './lib/platform'
 import type {
   AgentConversation,
   AgentMessage,
@@ -283,7 +284,7 @@ function isErrorToastTitle(title: string): boolean {
   return /(?:失败|错误|异常|报错|无法|不能|超时|中断|断开|请先|请输入|已达上限|不存在|已丢失)$/.test(title)
 }
 
-export type SettingsTab = 'general' | 'agent' | 'api' | 'data' | 'about'
+export type SettingsTab = 'general' | 'agent' | 'api' | 'data' | 'about' | 'account' | 'admin'
 
 const TIMEOUT_STREAMING_HINT = '也可尝试打开「流式传输」，并提高「请求中间步骤图像数」来维持连接。'
 const TIMEOUT_PARTIAL_IMAGES_ZERO_HINT = '官方流式接口不发送心跳，当前「请求中间步骤图像数」为 0，连接可能因无数据传输而断开。建议提高到 2 或 3。'
@@ -884,6 +885,7 @@ export function applyGuestUnifiedApiUrl(
   adminAccess: AdminAccessSettings,
   isAdminAuthenticated: boolean,
 ): ApiProfile {
+  if (getPlatformState().enabled) return displayProfile(kind, profile)
   if (isAdminAuthenticated) return profile
   const unifiedApiUrl = getGuestUnifiedApiUrl(adminAccess, kind)
   return unifiedApiUrl ? { ...profile, baseUrl: unifiedApiUrl } : profile
@@ -1445,7 +1447,7 @@ export const useStore = create<AppState>()(
           : [...st.dismissedCodexCliPrompts, key],
       })),
       adminAccess: { ...DEFAULT_ADMIN_ACCESS },
-      isAdminAuthenticated: false,
+      isAdminAuthenticated: (getPlatformState().user?.role ?? 0) >= 10,
       syncAdminAccess: async () => {
         try {
           const { adminAccess } = await fetchAdminSettings()
@@ -1828,7 +1830,7 @@ export const useStore = create<AppState>()(
       },
     }),
     {
-      name: 'amazon-image-studio',
+      name: accountStorageKey('amazon-image-studio'),
       partialize: getPersistedState,
       merge: mergePersistedState,
     },
@@ -1943,7 +1945,7 @@ export function showCodexCliPrompt(force = false, reason = '接口返回的提�
 
 function getFalRecoveryProfile(settings: AppSettings, task: TaskRecord) {
   const taskProfile = getTaskApiProfile(settings, task)
-  if (taskProfile?.provider === 'fal') {
+  if (taskProfile?.provider === 'fal' || (taskProfile?.source === 'assigned' && assignedProfiles().find(p => p.id === taskProfile.managedId)?.provider === 'fal')) {
     const { adminAccess, isAdminAuthenticated } = useStore.getState()
     return applyGuestUnifiedApiUrl(taskProfile, 'image', adminAccess, isAdminAuthenticated)
   }
@@ -1967,7 +1969,8 @@ export function getTaskApiProfile(settings: AppSettings, task: TaskRecord): ApiP
 
   if (!task.apiProfileId) return null
 
-  const byId = normalized.profiles.find((profile) => profile.id === task.apiProfileId)
+  const byId = normalized.profiles.find((profile) => profile.id === task.apiProfileId || (getPlatformState().enabled && profile.source === 'assigned' && profile.managedId === task.apiProfileId))
+  if (getPlatformState().enabled && byId?.source === 'assigned') return byId
   if (byId && (!provider || byId.provider === provider)) return byId
   return null
 }
@@ -2182,7 +2185,7 @@ async function recoverFalTask(taskId: string) {
   const runtime = taskRuntimeContexts.get(taskId)
   const settings = runtime?.settings ?? useStore.getState().settings
   const task = tasks.find((item) => item.id === taskId)
-  if (!task || (task.status !== 'running' && !task.falRecoverable) || task.apiProvider !== 'fal' || !task.falRequestId || !task.falEndpoint) return
+  if (!task || (task.status !== 'running' && !task.falRecoverable) || runtimeProvider(task.apiProvider) !== 'fal' || !task.falRequestId || !task.falEndpoint) return
 
   const profile = getFalRecoveryProfile(settings, task)
   if (!profile) {
@@ -2286,7 +2289,7 @@ export async function initStore() {
   showSupportPromptForExistingLocalData(tasks)
   for (const task of tasks) {
     if (
-      task.apiProvider === 'fal' &&
+      runtimeProvider(task.apiProvider) === 'fal' &&
       task.falRequestId &&
       task.falEndpoint &&
       (task.status === 'running' || task.falRecoverable)
@@ -2809,6 +2812,7 @@ export async function submitTask(options: SubmitTaskOptions = {}): Promise<boole
     id: taskId,
     prompt: trimmedPrompt,
     params: normalizedParams,
+    connectionRoute: activeProfile.platformRoute,
     apiProvider: activeProfile.provider,
     apiProfileId: activeProfile.id,
     apiProfileName: activeProfile.name,
@@ -3595,7 +3599,7 @@ export async function submitAgentMessage() {
   const normalizedSettings = normalizeSettings(settings)
   const activeProfile = getAmazonPlannerProfile(normalizedSettings)
 
-  if (!activeProfile || activeProfile.provider !== 'openai' || activeProfile.apiMode !== 'responses') {
+  if (!activeProfile || runtimeProvider(activeProfile.provider) !== 'openai' || activeProfile.apiMode !== 'responses') {
     state.setAppMode('agent')
     return
   }
@@ -3745,7 +3749,7 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
   const normalizedSettings = normalizeSettings(settings)
   const activeProfile = getAmazonPlannerProfile(normalizedSettings)
 
-  if (!activeProfile || activeProfile.provider !== 'openai' || activeProfile.apiMode !== 'responses') {
+  if (!activeProfile || runtimeProvider(activeProfile.provider) !== 'openai' || activeProfile.apiMode !== 'responses') {
     state.setAppMode('agent')
     return
   }
@@ -3918,6 +3922,7 @@ async function executeAgentRound(
         id: genId(),
         prompt: taskPrompt,
         params: { ...params, n: 1 },
+        connectionRoute: activeProfile.platformRoute,
         apiProvider: activeProfile.provider,
         apiProfileId: activeProfile.id,
         apiProfileName: activeProfile.name,
@@ -4219,6 +4224,7 @@ async function executeAgentRound(
           id: genId(),
           prompt: image.revisedPrompt ?? round?.prompt ?? userMessage.content,
           params,
+          connectionRoute: activeProfile.platformRoute,
           apiProvider: activeProfile.provider,
           apiProfileId: activeProfile.id,
           apiProfileName: activeProfile.name,
@@ -4465,7 +4471,7 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
     ? { taskId: task.customTaskId }
     : null
 
-  if (taskProvider !== 'fal' && !isAsyncCustomProviderTask(requestSettings, taskProvider, task.inputImageIds.length > 0)) {
+  if (runtimeProvider(taskProvider) !== 'fal' && !isAsyncCustomProviderTask(requestSettings, taskProvider, task.inputImageIds.length > 0)) {
     scheduleOpenAIWatchdog(taskId, activeProfile.timeout, activeProfile)
   }
 
@@ -4539,7 +4545,7 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
       cacheImage(imgId, dataUrl)
       outputIds.push(imgId)
     }
-    const isAsyncCustomTask = taskProvider !== 'fal' && taskProvider !== 'openai' && Boolean(customTaskInfo)
+    const isAsyncCustomTask = runtimeProvider(taskProvider) !== 'fal' && taskProvider !== 'openai' && Boolean(customTaskInfo)
     const actualParamsList = taskProvider === 'fal'
       ? await resolveImageSizeParamsList(result.images, result.actualParamsList)
       : isAsyncCustomTask
@@ -4550,7 +4556,7 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
       if (isAsyncCustomTask) return firstActualParams(actualParamsList)
       return { ...result.actualParams, n: outputIds.length }
     })()
-    const shouldStoreRevisedPrompts = taskProvider !== 'fal' && !isAsyncCustomTask
+    const shouldStoreRevisedPrompts = runtimeProvider(taskProvider) !== 'fal' && !isAsyncCustomTask
     const actualParamsByImage = mapActualParamsByImage(outputIds, actualParamsList)
     const revisedPromptByImage = shouldStoreRevisedPrompts ? result.revisedPrompts?.reduce<Record<string, string>>((acc, revisedPrompt, index) => {
       const imgId = outputIds[index]
@@ -4658,7 +4664,7 @@ async function executeTask(taskId: string, options: { referenceImageLimit?: numb
       })
       return
     }
-    if (latestTask.apiProvider === 'fal' && latestFalRequestInfo && isFalConnectionRecoverableError(err)) {
+    if (runtimeProvider(latestTask.apiProvider) === 'fal' && latestFalRequestInfo && isFalConnectionRecoverableError(err)) {
       updateTaskInStore(taskId, {
         status: 'error',
         error: '与 fal.ai 的连接已断开，之后会继续查询任务结果。',
@@ -5110,6 +5116,7 @@ export async function retryTask(task: TaskRecord) {
     id: taskId,
     prompt: task.prompt,
     params: normalizedParams,
+    connectionRoute: activeProfile.platformRoute,
     apiProvider: activeProfile.provider,
     apiProfileId: activeProfile.id,
     apiProfileName: activeProfile.name,

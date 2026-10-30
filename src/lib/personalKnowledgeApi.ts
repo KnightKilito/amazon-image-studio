@@ -1,4 +1,5 @@
 import type { ApiProfile } from '../types'
+import { requestProfile, profileHeaders } from './platform'
 import { DEFAULT_CHAT_MODEL, DEFAULT_RESPONSES_MODEL, validateApiProfile } from './apiProfiles'
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import { createLinkedAbortController, getApiErrorMessage } from './imageApiShared'
@@ -6,6 +7,7 @@ import { readPlannerResponseText } from './listingPlannerApi'
 import { MAX_KNOWLEDGE_SUMMARY_LENGTH } from './personalKnowledge'
 
 export async function summarizePersonalKnowledge(text: string, profile: ApiProfile, signal?: AbortSignal): Promise<string> {
+  profile = requestProfile('planner', profile)
   const error = validateApiProfile(profile)
   if (error) throw new Error(`AI 策划配置不完整：${error}`)
   if (profile.apiMode !== 'chat' && profile.apiMode !== 'responses') throw new Error('请选择 Chat Completions 或 Responses 模式的 AI 策划配置。')
@@ -19,7 +21,7 @@ export async function summarizePersonalKnowledge(text: string, profile: ApiProfi
   const linked = createLinkedAbortController(profile.timeout, signal)
   try {
     const response = await fetch(buildApiUrl(profile.baseUrl, chat ? 'chat/completions' : 'responses', proxy, useProxy, chat ? { prefixV1: false } : undefined), {
-      method: 'POST', headers: { Authorization: `Bearer ${profile.apiKey}`, 'Content-Type': 'application/json' }, cache: 'no-store', signal: linked.controller.signal,
+      method: 'POST', headers: { ...profileHeaders(profile), 'Content-Type': 'application/json' }, cache: 'no-store', signal: linked.controller.signal,
       body: JSON.stringify(chat ? { model: profile.model.trim() || DEFAULT_CHAT_MODEL, messages: [{ role: 'system', content: instructions }, { role: 'user', content: input }], stream: false }
         : { model: profile.model.trim() || DEFAULT_RESPONSES_MODEL, instructions, input: [{ role: 'user', content: [{ type: 'input_text', text: input }] }], stream: false }),
     })

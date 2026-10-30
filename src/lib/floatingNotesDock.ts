@@ -1,3 +1,4 @@
+import { accountStorageKey } from './platform'
 export type FloatingNotesDockSide = 'left' | 'right'
 
 export interface FloatingNotesDockPosition {
@@ -20,7 +21,7 @@ export interface FloatingNotesDockStorage {
   setItem(key: string, value: string): void
 }
 
-export const FLOATING_NOTES_DOCK_STORAGE_KEY = 'amazon-image-studio.floating-notes-dock.v1'
+export const FLOATING_NOTES_DOCK_STORAGE_KEY = accountStorageKey('amazon-image-studio.floating-notes-dock.v1')
 export const FLOATING_NOTES_LAUNCHER_SIZE = 48
 export const FLOATING_NOTES_EDGE_GAP = 12
 export const FLOATING_NOTES_PANEL_GAP = 12

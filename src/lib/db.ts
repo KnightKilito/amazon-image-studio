@@ -1,6 +1,7 @@
 import type { AmazonPlannerSession, ListingCopySession, PersonalKnowledgeDocument, TaskRecord, StoredImage, StoredImageThumbnail } from '../types'
 
-const DB_NAME = 'amazon-image-studio'
+import { accountStorageKey } from './platform'
+const DB_NAME = accountStorageKey('amazon-image-studio')
 const DB_VERSION = 5
 const STORE_TASKS = 'tasks'
 const STORE_IMAGES = 'images'

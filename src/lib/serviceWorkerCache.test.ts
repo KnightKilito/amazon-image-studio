@@ -119,7 +119,7 @@ describe('service worker cache boundaries', () => {
 
   it('does not intercept APIs, POSTs, cross-origin images or its own worker script', () => {
     const runtime = worker()
-    for (const request of [runtime.request('/admin-api/settings'), runtime.request('/api-proxy/images/generations'), runtime.request('assets/index.js', 'cors', 'POST'), runtime.request('https://images.example/a.png'), runtime.request('sw.js')]) {
+    for (const request of [runtime.request('/studio-api/admin/docs/guide'), runtime.request('/studio-api/me/connections'), runtime.request('/admin-api/settings'), runtime.request('/api-proxy/images/generations'), runtime.request('assets/index.js', 'cors', 'POST'), runtime.request('https://images.example/a.png'), runtime.request('sw.js')]) {
       expect(runtime.dispatch('fetch', { request }).response).toBeUndefined()
     }
     expect(runtime.caches.open).not.toHaveBeenCalled()

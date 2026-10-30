@@ -5,9 +5,17 @@ log
 .git
 .gitignore
 config.yaml
+.env
+.env.*
+**/.env
+**/.env.*
+data
+.planning
+dev-proxy.config.json
 *.md
 !src/docs/*.md
 !docs/knowledge/*.md
+!docs/admin-guide.md
 **/【笔记】20250813-标题1.md
 **/【笔记】20251013-标题2.md
 **/SKU标题.docx

@@ -25,8 +25,22 @@ import ImageEditorWorkspace from './components/ImageEditorWorkspace'
 import ListingCopyWorkspace from './components/ListingCopyWorkspace'
 import FloatingNotes from './components/FloatingNotes'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
+import { getPlatformState, subscribePlatform } from './lib/platform'
+import { normalizeSettings } from './lib/apiProfiles'
 
 export default function App() {
+  useEffect(() => {
+    let previous = getPlatformState()
+    return subscribePlatform(() => {
+      const next = getPlatformState()
+      if (next.user && (next.connections !== previous.connections || next.selections !== previous.selections || next.user.role !== previous.user?.role)) {
+        // Existing workspaces memoize profiles from settings. Invalidate those views
+        // without copying runtime-assigned credentials into the persisted store.
+        useStore.setState(current => ({ settings: normalizeSettings(current.settings), isAdminAuthenticated: next.user!.role >= 10 }))
+      }
+      previous = next
+    })
+  }, [])
   const setSettings = useStore((s) => s.setSettings)
   const appPage = useStore((s) => s.appPage)
   const setAppPage = useStore((s) => s.setAppPage)

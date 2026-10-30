@@ -4,6 +4,7 @@ import { formatAmazonAPlusReferenceMaterial, formatAmazonListingReferenceMateria
 import { buildApiUrl, readClientDevProxyConfig, shouldUseApiProxy } from './devProxy'
 import { getApiErrorMessage } from './imageApiShared'
 import type { AmazonPromptDraft } from './amazonPrompt'
+import { getPlatformState, requestProfile, profileHeaders } from './platform'
 import {
   DEFAULT_LISTING_IMAGE_COUNT,
   getAmazonListingImageSlots,
@@ -1028,6 +1029,8 @@ export async function callAmazonPlannerApi(options: {
   onStatusChange?: (status: PlannerRequestStatus) => void
   onTextDelta?: (delta: string) => void
 }): Promise<PlannerApiResult> {
+  options = { ...options, profile: requestProfile('planner', options.profile) }
+  if (getPlatformState().enabled) options.model = options.profile.model
   const model = options.model?.trim() || options.profile.model.trim() || (options.profile.apiMode === 'chat' ? DEFAULT_CHAT_MODEL : DEFAULT_RESPONSES_MODEL)
   const mode = options.mode ?? 'listing'
   const aPlusType = options.aPlusType ?? 'standard-large'
@@ -1077,7 +1080,7 @@ export async function callAmazonPlannerApi(options: {
       method: 'POST',
       signal: options.signal,
       headers: {
-        Authorization: `Bearer ${options.profile.apiKey}`,
+        ...profileHeaders(options.profile),
         'Content-Type': 'application/json',
       },
       cache: 'no-store',
@@ -1155,7 +1158,7 @@ export async function callAmazonPlannerApi(options: {
     return await performPlannerRequest(false, options.profile.apiMode, false, canRetryWithoutReferences ? '带参考图策划' : 'AI 策划')
   } catch (err) {
     errors.push({ label: canRetryWithoutReferences ? 'Reference image attempt' : 'Planner attempt', error: err })
-    if (options.signal?.aborted || isPlannerStreamReadError(err) || !shouldRetryPlannerWithoutReferenceImages(err)) throw err
+    if (options.profile.platformRoute || options.signal?.aborted || isPlannerStreamReadError(err) || !shouldRetryPlannerWithoutReferenceImages(err)) throw err
     if (!canRetryWithoutReferences && options.profile.apiMode === 'chat') throw err
   }
 

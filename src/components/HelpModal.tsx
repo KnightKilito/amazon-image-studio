@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
-import { documentationDocuments } from '../lib/documentation'
+import { documentationDocuments, parseDocumentationFile, type DocumentationDocument } from '../lib/documentation'
+import { getPlatformState, subscribePlatform, platformRequest } from '../lib/platform'
 import MarkdownDocument from './help/MarkdownDocument'
 import { BookOpenIcon, ChevronRightIcon, CloseIcon, HistoryIcon, PhotoIcon } from './icons'
 
@@ -27,6 +28,10 @@ function DocumentIcon({ icon }: { icon: string }) {
 }
 
 export default function HelpModal({ onClose }: HelpModalProps) {
+  const platform = useSyncExternalStore(subscribePlatform, getPlatformState)
+  const isAdmin = platform.enabled && (platform.user?.role ?? 0) >= 10
+  const [adminDocument, setAdminDocument] = useState<DocumentationDocument | null>(null)
+  const [adminError, setAdminError] = useState('')
   const [activeDocumentId, setActiveDocumentId] = useState(documentationDocuments[0].id)
   const modalRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLElement>(null)
@@ -38,7 +43,16 @@ export default function HelpModal({ onClose }: HelpModalProps) {
     contentRef.current?.scrollTo({ top: 0 })
   }, [activeDocumentId])
 
-  const activeDocument = documentationDocuments.find((document) => document.id === activeDocumentId) ?? documentationDocuments[0]
+  useEffect(() => {
+    setAdminDocument(null); setAdminError('')
+    if (!isAdmin) { setActiveDocumentId(current => current === 'admin-guide' ? documentationDocuments[0].id : current); return }
+    if (activeDocumentId !== 'admin-guide') return
+    let alive = true
+    platformRequest<{ markdown: string }>('/studio-api/admin/docs/guide').then(data => { if (alive) setAdminDocument(parseDocumentationFile(data.markdown, 'docs/admin-guide.md')) }).catch(e => { if (alive) setAdminError(e.message) })
+    return () => { alive = false }
+  }, [isAdmin, platform.user?.id, activeDocumentId])
+  const privateActive = isAdmin && activeDocumentId === 'admin-guide'
+  const activeDocument = privateActive ? adminDocument : documentationDocuments.find((document) => document.id === activeDocumentId) ?? documentationDocuments[0]
 
   return createPortal(
     <div data-no-drag-select className="fixed inset-0 z-[100] bg-gray-50 dark:bg-gray-950">
@@ -64,6 +78,7 @@ export default function HelpModal({ onClose }: HelpModalProps) {
           <aside className="shrink-0 border-b border-gray-200 bg-white dark:border-white/[0.08] dark:bg-gray-950 md:w-64 md:border-b-0 md:border-r">
             <div className="hidden px-5 pb-3 pt-7 text-[11px] font-semibold uppercase text-gray-400 dark:text-gray-500 md:block">文档导航</div>
             <nav className="flex gap-2 overflow-x-auto p-3 md:block md:space-y-1 md:overflow-visible md:px-3 md:py-0">
+              {isAdmin && <button className={`min-w-[150px] rounded-lg px-3 py-3 text-left text-sm font-semibold md:w-full ${privateActive ? 'bg-blue-600 text-white' : 'text-blue-600'}`} onClick={() => setActiveDocumentId('admin-guide')}>管理员手册 · 仅管理员</button>}
               {documentationDocuments.map((document) => {
                 const active = activeDocumentId === document.id
                 return (
@@ -92,7 +107,7 @@ export default function HelpModal({ onClose }: HelpModalProps) {
 
           <main ref={contentRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-6 custom-scrollbar sm:px-7 md:px-10 md:py-9">
             <div className="mx-auto max-w-4xl">
-              <MarkdownDocument document={activeDocument} />
+              {activeDocument ? <MarkdownDocument document={activeDocument} /> : <p role={adminError ? 'alert' : 'status'}>{adminError || '正在加载管理员手册…'}</p>}
             </div>
           </main>
         </div>

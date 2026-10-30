@@ -1,8 +1,10 @@
 import type { AdminAccessSettings } from '../types'
+import { getPlatformState, platformRequest } from './platform'
 
 const ADMIN_TOKEN_STORAGE_KEY = 'amazon-image-studio.admin-token'
 
 export function readAdminToken() {
+  if (getPlatformState().enabled) return (getPlatformState().user?.role ?? 0) >= 10 ? 'studio-session' : ''
   try {
     return window.localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) || ''
   } catch {
@@ -20,6 +22,7 @@ export function saveAdminToken(token: string) {
 }
 
 async function requestJson<T>(path: string, options: RequestInit = {}): Promise<T> {
+  if (getPlatformState().enabled) return platformRequest<T>(path, options)
   const response = await fetch(path, {
     ...options,
     headers: {
